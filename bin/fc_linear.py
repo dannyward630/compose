@@ -1,5 +1,6 @@
-import json, os, sys, threading, time, urllib.error, urllib.request
+import json, os, re, sys, threading, time, urllib.error, urllib.request
 from pathlib import Path
+from typing import Callable, Optional
 import fc_core, fc_config, fc_plan, fc_tasks
 
 
@@ -162,6 +163,39 @@ def linear_comment(issue, body):
     linear_gql("mutation($id: String!, $b: String!) { commentCreate(input: {issueId: $id, body: $b}) { success } }",
                {"id": issue["id"], "b": body})
 
+MERGED = "Merged into {id} ({title})."
+
+def linear_cancel(ident: str, comment: str, into: Optional[str] = None, done: tuple = (), on_step: Optional[Callable] = None) -> bool:
+    """Cancel an issue with a reason. The comment goes first, then the duplicate relation when `into` is given, and the move to the
+    team's canceled state goes last. False, nothing written, when it is already canceled; a finished or reasonless cancel raises.
+    A caller resuming after a failure names the steps already written in `done` ("comment", "relation"); `on_step` hears each step as it lands."""
+    issue = linear_issue(ident)
+    state = issue["state"]
+    if state["type"] == "canceled":
+        return False
+    if state["type"] == "completed":
+        raise RuntimeError(f"{issue['identifier']} is {state['name']}: a finished ticket is never canceled")
+    if "comment" not in done and not (comment or "").strip():
+        raise RuntimeError("a cancel needs a reason comment")
+    target = [n for n in issue["team"]["states"]["nodes"] if n["type"] == "canceled" and (n["name"] or "").lower() in fc_tasks.CANCELED]
+    if not target:
+        raise RuntimeError(f"{issue['identifier']}: the team has no canceled state")
+    other = linear_issue(into) if into else None
+    if other and other["id"] == issue["id"]:
+        raise RuntimeError(f"{issue['identifier']} cannot be merged into itself")
+    if other and other["state"]["type"] == "canceled":
+        raise RuntimeError(f"{other['identifier']} is {other['state']['name']}: a ticket is merged only into an open or finished one")
+    if "comment" not in done:
+        linear_comment(issue, comment.strip())
+        on_step and on_step("comment")
+    if other and "relation" not in done:
+        linear_gql("mutation($id: String!, $o: String!) { issueRelationCreate(input: {issueId: $id, relatedIssueId: $o, type: duplicate}) { success } }",
+                   {"id": issue["id"], "o": other["id"]})
+        on_step and on_step("relation")
+    linear_gql("mutation($id: String!, $s: String!) { issueUpdate(id: $id, input: {stateId: $s}) { success } }",
+               {"id": issue["id"], "s": target[0]["id"]})
+    return True
+
 def linear_ready():
     """True when the workspace has a Linear key; otherwise say once how to set it, and the caller skips Linear."""
     if fc_config.LINEAR_KEY:
@@ -183,16 +217,16 @@ def linear_note(meta, body):
 LINEAR_BLOCKERS = "query($id: String!) { issue(id: $id) { inverseRelations { nodes { id type issue { id identifier } } } } }"
 
 def linear_blocked_by(issue, want):
-    """Make exactly the issues in `want` (identifiers) block `issue`."""
+    """Make exactly the issues in `want` (identifiers) block `issue`: creates first, then deletes, so a failed create never leaves it under-blocked."""
     rels = [r for r in linear_gql(LINEAR_BLOCKERS, {"id": issue["id"]})["issue"]["inverseRelations"]["nodes"] if r["type"] == "blocks"]
     have = {r["issue"]["identifier"]: r["id"] for r in rels}
-    for ident, rid in have.items():
-        if ident not in want:
-            linear_gql("mutation($id: String!) { issueRelationDelete(id: $id) { success } }", {"id": rid})
     for ident in want:
         if ident not in have:
             linear_gql("mutation($a: String!, $b: String!) { issueRelationCreate(input: {issueId: $a, relatedIssueId: $b, type: blocks}) { success } }",
                        {"a": linear_issue(ident)["id"], "b": issue["id"]})
+    for ident, rid in have.items():
+        if ident not in want:
+            linear_gql("mutation($id: String!) { issueRelationDelete(id: $id) { success } }", {"id": rid})
 
 def linear_restore(ident, fields):
     """Put an issue's title, description, state, and blockers back as `fields` names them."""
@@ -333,35 +367,49 @@ def linear_reconcile(proj, verified=False):
     except Exception as e:  # noqa: BLE001
         fc_core.say(f"linear {feature}: update failed ({str(e)[:200]})")
 
+NEEDS_SHAPING = "needs-shaping"
 
 def ready_ids(issues):
     """The identifiers, in input order, of the issues that can start now: state Todo or Backlog and every `blocks`
-    blocker finished (Done or Canceled, or In Review carrying the Design label)."""
+    blocker finished (Done or Canceled, or In Review carrying the Design label), and none carries the needs-shaping label."""
     return [i["identifier"] for i in issues
             if (i["state"]["name"] or "").lower() in ("todo", "backlog")
+            and NEEDS_SHAPING not in [l["name"].lower() for l in i["labels"]["nodes"]]
             and all(fc_tasks.blocker_finished(r["issue"]["state"]["name"], [l["name"] for l in r["issue"]["labels"]["nodes"]])
                     for r in i["inverseRelations"]["nodes"] if r["type"] == "blocks")]
 
+def open_questions(description):
+    """The list items (`-` or `*` bullets) of the `## Open questions` section: an H2 heading with an optional suffix, running to the
+    next H1 or H2 heading, so bullets under an H3 child count. An H3 `### Open questions` elsewhere does not. [] when the section
+    is absent, empty or says None."""
+    m = re.search(r"^##[ \t]+Open questions\b[^\n]*$(.*?)(?=^#{1,2}[ \t]|\Z)", description or "", re.M | re.S)
+    items = [b.group(1) for b in map(re.compile(r"^\s*[-*]\s+(.*\S)").match, (m.group(1) if m else "").splitlines()) if b]
+    return [i for i in items if i.strip().rstrip(".").lower() != "none"]
+
 LINEAR_READY_TREE = """query($id: String!) { issue(id: $id) { team { labels { nodes { id name } } }
-  children { nodes { ...ReadyNode } } parent { children { nodes { ...ReadyNode } } } } }
-fragment ReadyNode on Issue { id identifier title state { name } labels { nodes { id name } } children { nodes { state { name } } }
+  children { nodes { ...ReadyNode } } parent { children { nodes { ...ReadyNode } } }
+  inverseRelations(first: 50) { nodes { type issue { identifier state { name } labels { nodes { name } } } } } } }
+fragment ReadyNode on Issue { id identifier title description state { name } labels { nodes { id name } } children { nodes { state { name } } }
   inverseRelations(first: 250) { nodes { type issue { identifier state { name } labels { nodes { name } } } } } }"""
 
 def linear_mark_ready(feature):
     """Set the team's Ready label on the feature's children that can start now and take it off the rest, the same for the
     epic's children when the feature has one; one read, then one update per issue whose labels change. A story with no task
     that is not Canceled has nothing to start, so it is not ready; a feature needs no story. Returns the ready issues, the
-    feature's children first."""
+    feature's children first. No story is ready while a feature that blocks this one is not built yet. An issue with open questions waits."""
     tree = linear_gql(LINEAR_READY_TREE, {"id": feature})["issue"]
     ready_label = next((l["id"] for l in tree["team"]["labels"]["nodes"] if l["name"].lower() == "ready"), None)
     if not ready_label:
         raise RuntimeError("team has no label 'Ready'; compose linear labels --create Ready makes it")
     update = "mutation($id: String!, $labels: [String!]!) { issueUpdate(id: $id, input: {labelIds: $labels}) { success } }"
     out = []
+    waiting = any(r["type"] == "blocks" and not fc_plan.base_built(r["issue"]["state"]["name"] or "", [l["name"] for l in r["issue"]["labels"]["nodes"]])
+                  for r in tree["inverseRelations"]["nodes"])
     groups = [(tree["children"]["nodes"], True), *([(tree["parent"]["children"]["nodes"], False)] if tree["parent"] else [])]
     for group, stories in groups:
         cut = {n["identifier"] for n in group if any((c["state"]["name"] or "").lower() != "canceled" for c in n["children"]["nodes"])}
-        ready = {i for i in ready_ids(group) if i in cut or not stories}
+        asking = {n["identifier"] for n in group if open_questions(n.get("description"))}
+        ready = {i for i in ready_ids(group) if (i in cut or not stories) and i not in asking and not (stories and waiting)}
         for n in group:
             have = [l["id"] for l in n["labels"]["nodes"]]
             if n["identifier"] in ready:

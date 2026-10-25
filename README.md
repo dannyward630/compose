@@ -85,7 +85,9 @@ You don't have to start from an idea.
 Hand the engineering manager a ticket that already exists, and it starts the right teammate for it in its own pane.
 
 - `/compose:planner <issue or Linear project link>` plans that feature, story, or task from where it stands.
+- `/compose:reconcile <Linear project link>` sorts every open ticket of a messy project into keep, cancel, or verify with you, and changes Linear only on your go.
 - `/compose:designer <ticket> [--figma <file url or key>]` continues the ticket's design work in Figma; without a stored file, it asks you for one.
+- `/compose:delivery [seed | reconcile]` writes or changes the product delivery plan with you: the order across every feature, in parallel tracks.
 
 The engineering manager relays their questions to you, and you can answer there or in the teammate's own tab.
 

@@ -17,6 +17,7 @@ fc_linear
 fc_evidence
 fc_ledger
 fc_linear_cmd
+fc_delivery
 fc_policy
 fc_routectx
 fc_routerec
@@ -43,6 +44,7 @@ fc_layers
 fc_blockers
 fc_stack
 fc_change
+fc_readiness
 fc_frame0
 fc_f0pages
 fc_ask
@@ -71,6 +73,7 @@ fc_testred
 fc_planner_brief
 fc_briefs
 fc_buildercheck
+fc_reconcile
 fc_libapi
 fc_green
 fc_gate

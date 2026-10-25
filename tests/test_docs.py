@@ -488,8 +488,12 @@ class LinearCommands(unittest.TestCase):
     def test_docs_describe_the_verbs(self):
         cli = [l for l in read("docs/cli.md").splitlines() if l.startswith("| `linear <verb>`")]
         self.assertEqual(len(cli), 1)
-        for word in ("get <id>", "--section", "labels [--create <name>]", "doc create", "--any-project"):
+        for word in ("get <id>", "--section", "labels [--create <name>]", "doc create", "--any-project",
+                     "cancel <id> --file <reason> [--into <id>]", "--add-label", "--drop-label"):
             self.assertIn(word, cli[0])
+        self.assertIn("`get`, `update`, `comment`, `cancel`, and `doc update` refuse an issue or document in another project unless `--any-project`", cli[0])
+        self.assertIn("`create`, `update`, `comment`, and `cancel` drop the cached reads", cli[0])
+        self.assertIn("`cancel` refuses while any compose project of the repo is under away or yolo", cli[0])
 
 
 class NoLinearMcpToolName(unittest.TestCase):
@@ -607,6 +611,7 @@ class BrainstormShape(unittest.TestCase):
         "Before writing the design, bring the two or three approaches that survived, each with what it changes and costs, and the one you recommend with why, as one question; the choice goes under Decided by the product owner, or under My calls when they hand it to you, and a change small enough to approve in chat skips this.",
         "Outside herdr, give the printed brief to a fresh harness subagent with no conversation context and read its one report.",
         "The product owner approves the tech doc, and that is recorded the same way: `compose decide --project <slug> --issue <id> --new \"the tech doc on <id> is approved\" --quote \"<their words>\"`.",
+        "When the issue carries the `needs-shaping` label, drop it in the same step: `compose linear update <id> --drop-label needs-shaping`.",
     ]
     LOOKUP = [
         "1. the feature issue's Decisions so far and Notes, and the description and comments of the feature, its epic, and the story at hand",
@@ -640,6 +645,7 @@ class BrainstormShape(unittest.TestCase):
         at = self.lines.index
         self.assertLess(at("**How it gets made.**"), at(self.ONCE[17]))
         self.assertLess(at(self.ONCE[17]), at("**Play it back.**"))
+        self.assertEqual(self.lines.index(self.ONCE[-1]), next(n for n, x in enumerate(self.lines) if "the design on <id> is approved" in x) + 1)
         self.assertLess(at(self.ONCE[6]), at(self.ONCE[18]))
         self.assertLess(at(self.ONCE[18]), at("Hand nothing over until it is back."))
         self.assertLess(at(self.ONCE[14]), at(self.ONCE[19]))
@@ -1128,8 +1134,28 @@ class ConfigKeysDocs(unittest.TestCase):
         self.assertNotRegex(self.text, r"\bgraft\b")
 
 
+class ReadinessDocs(unittest.TestCase):
+    def test_readiness_row_config_row_and_0b_paragraph(self):
+        rows = [l for l in read("docs/cli.md").splitlines() if l.startswith("| `readiness`")]
+        self.assertEqual(len(rows), 1)
+        self.assertIn("A story labeled `needs-shaping` prints `not ready: needs shaping`, with no judge call and no open questions written.", rows[0])
+        for word in ("Jev", "deep-dive", "models.readiness", "## Open questions", "(readiness check, <date>)", "--refresh", "--dry-run", "--json", ".compose/readiness.json"):
+            self.assertIn(word, rows[0])
+        cfg = [l for l in read("docs/config.md").splitlines() if l.startswith("| `models.readiness`")]
+        self.assertEqual(len(cfg), 1)
+        for word in ("claude:claude-opus-5-5", "high"):
+            self.assertIn(word, cfg[0])
+        text = read("sections/0b.md")
+        for line in (
+            "A story the readiness check judged not ready carries its questions under `## Open questions`, each tagged `(readiness check, <date>)`.",
+            "Planning that story starts from those questions, asked one at a time like any other, and each answer goes into the story itself, never only into the conversation.",
+            "Remove a question's line once its answer is on the story; the next check judges the story again.",
+        ):
+            self.assertEqual(text.count(line + "\n"), 1, line)
+
+
 class ReadyDocs(unittest.TestCase):
-    TASKS = ["sync", "linear <verb>", "tasks", "route", "quick <id>...", "run", "done", "triage", "resume", "reflect", "hold", "change start\\|done\\|undo", "spec-check", "ready", "bench"]
+    TASKS = ["sync", "linear <verb>", "tasks", "route", "quick <id>...", "run", "done", "triage", "resume", "reflect", "hold", "change start\\|done\\|undo", "spec-check", "ready", "delivery", "readiness", "bench"]
 
     def tasks_rows(self):
         sec = read("docs/cli.md").split("### Tasks\n", 1)[1].split("### Verify and stack", 1)[0]
@@ -1151,7 +1177,7 @@ class ReadyDocs(unittest.TestCase):
         row = rows[0]
         for word in ("`Ready`", "story", "feature", "epic", "Todo", "Backlog", "blocker", "Done", "Canceled", "Design", "In Review"):
             self.assertIn(word, row)
-        for word in ("can start now:", "results/ready.json", "compose linear labels --create Ready"):
+        for word in ("can start now:", "results/ready.json", "compose linear labels --create Ready", "## Open questions"):
             self.assertIn(word, row)
         self.assertNotIn("\u2014", row)
 
@@ -1270,7 +1296,7 @@ class TellWhatCanStart(unittest.TestCase):
 
 
 class ReadyEventDocs(unittest.TestCase):
-    PROJECTS = ["setup", "update", "doctor", "init", "projects", "status", "clean", "trail"]
+    PROJECTS = ["setup", "update", "doctor", "init", "projects", "status", "clean", "trail", "reconcile"]
 
     def rows(self, start, end):
         sec = read("docs/cli.md").split(start + "\n", 1)[1].split(end, 1)[0]
@@ -1690,6 +1716,7 @@ PLAN_LINES = [
     "The planner rewrites its judgment sections (Outside waits, How this maps to compose, Priority when something has to give) at each re-plan, with `compose linear doc update <id> --section \"<heading>\" --file <path>`.",
     "Priority is the ranked list under Priority when something has to give; Linear's priority field stays unused.",
     "The team lead and the engineering manager never edit the delivery plan by hand: the CLI rewrites its data sections and the planner its judgment sections.",
+    "A change to the order across features goes through the product delivery plan (sections/0p.md).",
 ]
 REPLAN = [
     "**Re-plan.**",
@@ -1706,9 +1733,9 @@ class PlanOwnership(unittest.TestCase):
     def setUp(self):
         self.lines = read("sections/8.md").splitlines()
 
-    def test_four_lines_and_a_blank_right_before_undo(self):
+    def test_the_plan_lines_and_a_blank_right_before_undo(self):
         i = self.lines.index("**Undo and update.**")
-        self.assertEqual(self.lines[i - 5:i], PLAN_LINES + [""])
+        self.assertEqual(self.lines[i - len(PLAN_LINES) - 1:i], PLAN_LINES + [""])
 
     def test_each_line_written_once(self):
         for line in PLAN_LINES:
@@ -2274,6 +2301,145 @@ class UserDocsShaping(unittest.TestCase):
         self.assertNotRegex(read("docs/herdr.md"), r"compose architect --project <slug> --extra")
 
 
+class ReconcileFlow(unittest.TestCase):
+    FRONT = ("---\ndescription: Reconcile a messy Linear project - sort every open ticket into keep, cancel, or verify, and apply it on your go\n"
+             'argument-hint: "<Linear project link>"\nallowed-tools: Bash(compose:*), Bash(herdr:*), Bash(trail:*)\n---\n')
+    LINES = (
+        "### 0k. Reconcile an existing project",
+        "A reconcile is the one-time cleanup of a messy Linear project: every open ticket ends up kept, canceled, merged into the ticket it joins, or left for the product owner to verify.",
+        "It never fixes build order or blockers, and a missing design, PRD, or delivery plan is not its job: say so in the report and leave it to planning.",
+        "Research first, in parallel, with one helper per source: the code (the trunk and every unmerged `compose/*` branch), the designs, and Linear (every open ticket from `compose reconcile list`, its body, and the project's documents).",
+        "Write what they found to a Linear document titled `<project name>: reconcile research <date>`: what the product is, what is built, designed, and planned, the contradictions, and the tickets that look stale.",
+        "Sort with the product owner one question at a time, a group of tickets per question; a ticket a recorded decision already settles is your call, named with that decision.",
+        "Write the sheet and its reason files outside the repo, then run `compose reconcile check --file <sheet>` until it passes.",
+        'Write the proposal with `compose reconcile show | compose linear doc create --title "<project name>: reconcile <date>"`, give the product owner its link and the counts, and ask for their go.',
+        'On their go, run `compose reconcile apply --go "<their words>"`; report every skipped or FAILED line as it is, and run apply again for the failed ones.',
+        "Never delete or re-parent a ticket: a ticket that belongs elsewhere goes in the report for the product owner.",
+        'Then run `compose reconcile notices` and send each live team lead its lines with `herdr agent prompt <slug>-orchestrator "<message>"`.',
+        "The message asks it to stop work on what was canceled and wind down the teammates on it, save what is worth keeping under the main checkout's `.compose/<slug>`, update its plan and Decisions so far, merge nothing, delete no branch, worktree, or ticket, cancel no ticket itself, and report back what it changed and what is worth salvaging.",
+        "Under away or yolo, research and the sheet go ahead, and the apply waits for the product owner.",
+    )
+
+    def test_command_file(self):
+        text = read("commands/reconcile.md")
+        self.assertTrue(text.startswith(self.FRONT))
+        body = text[len(self.FRONT):].splitlines()
+        self.assertIn("You are the engineering manager for `$ARGUMENTS`.", body)
+        self.assertIn("Follow sections/0k.md from its first step.", body)
+
+    def test_section_lines_appear_once(self):
+        lines = read("sections/0k.md").splitlines()
+        self.assertEqual(lines[0], self.LINES[0])
+        for want in self.LINES:
+            self.assertEqual(lines.count(want), 1, want)
+
+    def test_fix_round_one_wording(self):
+        text = read("sections/0k.md")
+        self.assertNotIn("is the only thing that writes to Linear", text)
+        self.assertIn("Linear is written only through the compose CLI: `compose reconcile`, plus `compose linear doc create` for the two documents.", text.splitlines())
+        self.assertIn('File that document with `compose linear doc create --title "<project name>: reconcile research <date>"`.', text.splitlines())
+        self.assertIn("A kept ticket can also carry a new `title`, which renames it.", text.splitlines())
+        self.assertIn("A `new` entry takes `deep_dive` too.", text.splitlines())
+
+    def test_the_figma_key_is_read_from_each_projects_linear_json(self):
+        lines = read("sections/0k.md").splitlines()
+        self.assertIn("The designs come from the Figma file in the `figma` key of each project's `.compose/<slug>/linear.json`, or the one the product owner names.", lines)
+        self.assertNotIn("`.compose/linear.json`'s `figma`", read("sections/0k.md"))
+
+    def test_plain_dashes_and_one_sentence_per_line(self):
+        for rel in ("sections/0k.md", "commands/reconcile.md"):
+            for line in read(rel).splitlines():
+                self.assertNotIn("\u2014", line)
+                if not line.startswith(("#", "---", "description:", "argument-hint:", "allowed-tools:", "- ", "  ")):
+                    self.assertNotRegex(line, r"[.!?] [A-Z]", line)
+
+
+class ReconcileUserDocs(unittest.TestCase):
+    def test_user_docs_describe_the_reconcile(self):
+        rows = [l for l in read("docs/cli.md").splitlines() if l.startswith("| `reconcile` |")]
+        self.assertEqual(len(rows), 1)
+        for word in ("list", "check --file", "show", "apply --go", "notices", "~/.compose/reconcile/"):
+            self.assertIn(word, rows[0])
+        ready = [l for l in read("docs/cli.md").splitlines() if l.startswith("| `ready`")]
+        self.assertEqual(len(ready), 1)
+        self.assertIn("needs-shaping", ready[0])
+        self.assertIn("- `/compose:reconcile <Linear project link>` sorts every open ticket of a messy project into keep, cancel, or verify with you, and changes Linear only on your go.", read("README.md").splitlines())
+        how = read("docs/how-it-works.md")
+        self.assertIn("## Cleaning up an existing project", how.splitlines())
+        self.assertIn("A reconcile never deletes a ticket: every cancel carries its reason as a comment.", how.splitlines())
+
+
+ZERO_P = [
+    "The product delivery plan is one Linear document, `Product delivery plan`, in the repo's Linear project; its Tracks section is the order across every feature, and the track list order is the priority when something has to give.",
+    "A track is a line of features built one after another; tracks run in parallel unless a track says what it comes after, and the CLI computes the waves from that.",
+    "When there is none, start with `compose delivery seed`: it lists the open features, their own delivery plans, and a guess at the tracks from the blocks relations Linear holds today.",
+    "Shape it with the product owner as sections/0b.md shapes anything: one question at a time, the guess played back as a guess, and every track settled in their words.",
+    "Write the tracks with `compose delivery tracks --file <path> --quote \"<their words>\"`; it refuses without their words, under away and yolo too.",
+    "Put both files under `.compose/delivery/` in the repo, the one place this command writes without asking.",
+    "The delivery plan wins: `compose delivery reconcile` fixes the blocks relations between plan features and the Ready labels, and only proposes what would cancel, delete, or re-parent a ticket.",
+    "Bring every proposed fix to the product owner with its reason; never cancel, delete, or re-parent a ticket for the plan without their yes.",
+    "When a re-plan adds, drops, or reorders features, play the new tracks back and write them again.",
+    "Never edit the Waves, Start today, Proposed fixes, or History sections by hand: the CLI writes them.",
+]
+DELIVERY_ROW = "| `delivery` |"
+README_DELIVERY = "- `/compose:delivery [seed | reconcile]` writes or changes the product delivery plan with you: the order across every feature, in parallel tracks."
+HOW_LINE = "One product delivery plan in Linear sets the order across features, in parallel tracks; `compose delivery reconcile` makes Linear follow it and proposes anything destructive."
+
+
+class ProductDeliveryPlan(unittest.TestCase):
+    def body(self, rel):
+        text = read(rel)
+        return text.split("---\n", 2)[2].splitlines() if text.startswith("---\n") else text.splitlines()
+
+    def test_section_0p_holds_each_line_once(self):
+        lines = read("sections/0p.md").splitlines()
+        self.assertEqual(lines[0], "### 0p. The product delivery plan sets the order across features")
+        for line in ZERO_P:
+            self.assertEqual(lines.count(line), 1, line)
+
+    def test_section_0p_names_who_runs_it_and_the_writes(self):
+        text = read("sections/0p.md")
+        for need in ("The engineering manager runs it (outside herdr the product owner's own session), never the team lead.",
+                     "Why this order is written with `compose linear doc update <id> --section \"## Why this order\" --file <path>`.",
+                     "A reconcile runs after every `tracks` write and before a new feature project starts."):
+            self.assertEqual(text.splitlines().count(need), 1, need)
+
+    def test_section_8_ends_its_delivery_block_with_the_pointer(self):
+        self.assertEqual(read("sections/8.md").splitlines().count("A change to the order across features goes through the product delivery plan (sections/0p.md)."), 1)
+
+    def test_command_file(self):
+        text = read("commands/delivery.md")
+        head = text.split("---\n", 2)[1].splitlines()
+        self.assertEqual(head, ["description: Write or change the product delivery plan with the product owner - the order across every feature, in parallel tracks",
+                                'argument-hint: "[seed | reconcile]"',
+                                "allowed-tools: Bash(compose delivery:*), Bash(compose linear:*), Write(.compose/delivery/**)"])  # Write: the --file for tracks and Why this order, and nothing else
+        body = self.body("commands/delivery.md")
+        for line in ("Follow sections/0p.md.", "In this session, never plan stories or cut tasks."):
+            self.assertEqual(body.count(line), 1, line)
+        for need in ("compose delivery seed", "compose delivery reconcile --dry-run", "steps 0 and 0j"):
+            self.assertIn(need, text)
+
+    def test_cli_row_and_how_it_works(self):
+        rows = [l for l in read("docs/cli.md").splitlines() if l.startswith(DELIVERY_ROW)]
+        self.assertEqual(len(rows), 1)
+        for word in ("`seed`", "`order`", "`reconcile`", "`tracks`", "`--quote`", "`--dry-run`"):
+            self.assertIn(word, rows[0])
+        self.assertEqual(read("docs/how-it-works.md").splitlines().count(HOW_LINE), 1)
+        ready = [l for l in read("docs/cli.md").splitlines() if l.startswith("| `ready` |")][0]
+        self.assertIn("a story is not Ready while its feature waits on a feature that is not built", ready)
+
+    def test_readme_lists_the_slash_command(self):
+        lines = read("README.md").splitlines()
+        self.assertEqual(lines.count(README_DELIVERY), 1)
+        self.assertEqual(lines[lines.index(README_DELIVERY) - 1][:17], "- `/compose:desig")
+
+    def test_house_rules(self):
+        for rel in ("sections/0p.md", "commands/delivery.md", "sections/8.md", "docs/cli.md", "docs/how-it-works.md"):
+            self.assertNotIn("\u2014", read(rel), rel)
+        for rel in ("sections/0p.md", "commands/delivery.md"):
+            for line in self.body(rel)[1 if rel.startswith("sections") else 0:]:
+                self.assertNotRegex(line, r"[.!?] [A-Z]", line)
+
+
 if __name__ == "__main__":
     unittest.main()
-

@@ -105,6 +105,8 @@ Handed a story, the planner writes that story's tasks only.
 Handed a task, it lints and re-splits it, and that task is dispatched alone.
 Like the team lead, the planner's tab is denied edits, so it plans and never writes code.
 
+One product delivery plan in Linear sets the order across features, in parallel tracks; `compose delivery reconcile` makes Linear follow it and proposes anything destructive.
+
 You can also start it yourself from the engineering manager with `/compose:planner <issue or Linear project link>`.
 Its model is the `planner` entry under `models.crew`, as [workspaces.md](workspaces.md#crew-models) describes.
 
@@ -148,6 +150,17 @@ Work lives at five levels in Linear:
 You can hand `compose` a link to any of these levels, and it creates the missing ones.
 It asks for the repo's Linear project link once and keeps it in `.compose/linear.json` in the repo's main checkout, which every worktree of the repo reads.
 Each task moves to In Progress when it is dispatched, In Review when its layer passes, and Done when its PR merges.
+
+## Cleaning up an existing project
+
+Run `/compose:reconcile <Linear project link>` on a project whose tickets have piled up.
+It researches the project, then sorts every open ticket into keep, cancel, or verify with you.
+Nothing in Linear changes until you give your go in your own words.
+A reconcile never deletes a ticket: every cancel carries its reason as a comment.
+A cancel that merges a ticket into another also relates the two as duplicates.
+A ticket that needs more shaping gets the `needs-shaping` label, and the ready check skips it.
+When it is applied, each affected project's team lead hears what changed.
+It never touches the order of tickets or what blocks what.
 
 ## Changing course
 
