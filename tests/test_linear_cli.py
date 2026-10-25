@@ -155,6 +155,21 @@ class LinearStates(unittest.TestCase):
         self.done("004")
         self.assertEqual([self.lin.state[i] for i in ("ENG-4", "ENG-2", "ENG-1")], ["In Review", "In Review", "In Progress"])
 
+    def test_done_by_hand_records_in_review_in_the_stored_tasks_before_the_next_sync(self):
+        (self.proj / "results").mkdir(exist_ok=True)
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"tasks": [
+            {"id": "003", "title": "a", "linear": "ENG-3", "linear_state": "Todo"}, {"id": "004", "title": "b", "linear": "ENG-4", "linear_state": "Todo"}]}))
+        with redirect_stdout(io.StringIO()), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj):
+            fc.fc_status.cmd_done(SimpleNamespace(repo=str(self.proj), only="003", note="by hand"))
+        self.assertEqual([m["linear_state"] for m in fc.fc_tasks.linear_cache(self.proj)["tasks"]], ["In Review", "Todo"])
+
+    def test_done_by_hand_without_a_key_leaves_the_stored_state_alone(self):
+        (self.proj / "results").mkdir(exist_ok=True)
+        (self.proj / "results" / "tasks.json").write_text(json.dumps({"tasks": [{"id": "003", "title": "a", "linear": "ENG-3", "linear_state": "Todo"}]}))
+        with redirect_stdout(io.StringIO()), mock.patch.object(fc.fc_config, "LINEAR_KEY", None), mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj):
+            fc.fc_status.cmd_done(SimpleNamespace(repo=str(self.proj), only="003", note="by hand"))
+        self.assertEqual(fc.fc_tasks.linear_cache(self.proj)["tasks"][0]["linear_state"], "Todo")
+
     def test_done_by_hand_closes_the_pi_pane_its_earlier_attempts_left(self):
         with mock.patch.object(fc.fc_herdr, "herdr_close_task") as close:
             self.done("003,004")
