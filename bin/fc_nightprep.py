@@ -227,12 +227,12 @@ def run_prep(repo, ident) -> dict:
         if found["drop"] or not found["questions"]:
             url = write_section(repo, ident, title, None)
             _outcome(repo, ident, "dropped")
-            fc_factorystate.add_event(repo, f"event factory=prep-dropped ticket={ident}  (no question is left for the product owner{': ' + url if url else ''})")
+            fc_factorystate.add_event(repo, f"event factory=prep-dropped ticket={ident}  (no question is left for the product owner{': ' + _q(url) if url else ''})")
             return {"ticket": ident, "status": "dropped"}
         text = render({"id": ident, "title": title, "layer": layer}, found, fc_claude.claude_id(model), time.strftime("%Y-%m-%d %H:%M"))
         url = write_section(repo, ident, title, text)
         _outcome(repo, ident, "prepared")
-        fc_factorystate.add_event(repo, f"event factory=prepared ticket={ident} questions={len(found['questions'])}  (ready for the next planning session: {url})")
+        fc_factorystate.add_event(repo, f"event factory=prepared ticket={ident} questions={len(found['questions'])}  (ready for the next planning session: {_q(url)})")
         return {"ticket": ident, "status": "prepared", "questions": len(found["questions"])}
     except ERRORS as e:
         fc_factorystate.add_event(repo, f'event factory=prep-failed ticket={ident} why="{_q(str(e) or type(e).__name__, 120)}"')
