@@ -263,6 +263,12 @@ def refresh(repo, state, lines, now, out) -> None:
                 rec["print"] = None
         except ERRORS:
             continue
+    try:  # a worker's late write can bring back a section refresh dropped: nothing in state names it, so it goes
+        for ident in dict.fromkeys(re.findall(r"^## ([A-Z][A-Z0-9]*-\d+):", _find_doc(repo)[1], re.M)):
+            if ident not in prep:
+                write_section(repo, ident, ident, None)
+    except ERRORS:
+        pass
 
 def _requeue_stuck(repo, prep, now) -> None:
     """A worker that died without a prepared or dropped outcome is tried once more, half an hour after it began."""

@@ -582,6 +582,12 @@ class Prep(unittest.TestCase):
         fp.refresh(self.repo, self.state, ["event factory=dispatched story=NEB-12"], 100.0, self.out)
         self.assertEqual(self.state["prep"], {}); self.assertNotIn("NEB-12", self.docs[fp.PREP_TITLE])
 
+    def test_refresh_drops_sections_of_ids_that_state_no_longer_holds(self):
+        self.state["prep"] = {"NEB-12": {"print": self.print_of("NEB-12"), "at": 1.0, "pid": None}}
+        self.docs[fp.PREP_TITLE] = "intro\n\n## NEB-11: Sign in\n\nx\n\n## NEB-12: Billing\n\ny\n"
+        fp.refresh(self.repo, self.state, ["event factory=verified story=NEB-10"], 100.0, self.out)
+        self.assertNotIn("NEB-11", self.docs[fp.PREP_TITLE]); self.assertIn("## NEB-12: Billing", self.docs[fp.PREP_TITLE])
+
     def test_refresh_waits_for_its_trigger_or_the_clock(self):
         self.state["prep"] = {"NEB-12": {"print": "old", "at": 1.0, "pid": None}}; self.state["prep_checked"] = 100.0
         fp.refresh(self.repo, self.state, ["event factory=offer ticket=NEB-12"], 200.0, self.out)
