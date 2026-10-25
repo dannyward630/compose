@@ -263,6 +263,10 @@ class DesignerModels(unittest.TestCase):
             fc.fc_config.apply_config()
         for k in ("CREW_MODELS", "CREW_EFFORT", "CREW_FALLBACK"): self.addCleanup(setattr, fc.fc_config, k, {})
 
+    def test_builder_check_defaults_to_opus_high_with_no_user_config(self):
+        self.config(fc_defaults.DEFAULT_MODELS["crew"])
+        self.assertEqual(fc.fc_crew.fc_crewpick.crew_pick("builder-check")[:2], ("claude:claude-opus-5-5", "high"))
+
     def test_design_roles_use_the_design_entry_else_default(self):
         self.config({**CREW, "design": {"model": "claude:claude-opus-5-5", "effort": "high"}})
         for role in ("design-003", "design-review"):

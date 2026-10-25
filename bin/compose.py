@@ -240,7 +240,7 @@ def main():
         if name in ("groundwork", "architect", "explore", "planner", "buildercheck", "designer"):
             s.add_argument("--extra", help="project-specific notes appended to the brief; `-` reads them from stdin")
         if name in ("planner", "buildercheck"):
-            s.add_argument("--issue", help="the ticket to plan (default: the project's feature)")
+            s.add_argument("--issue", help="the ticket to plan or check (default: the project's feature)")
         if name == "designer":
             s.add_argument("--figma", help="the target Figma file's url or key: stored in linear.json before the brief prints")
         if name == "designcrews":
