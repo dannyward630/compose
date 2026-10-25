@@ -2513,12 +2513,14 @@ NIGHT_0N = [
     "`compose factory stop` at night drains: nothing new starts and running work finishes; a second `compose factory stop` stops at once and keeps the work paused on its ref.",
     "When planning a ticket that has a section in the night prep document, open with its questions and still adapt to every answer (0b).",
     "Night never plans: it never writes stories, deep dives, tracks, or Ready, and never answers its own prepared questions.",
+    "Relay any other `event factory=night-ended` and each `event factory=draining` to the product owner in one line; on `event factory=usage-wait`, `usage-resumed`, `woke`, `prepared`, `prep-dropped`, `prep-failed`, or a `judge-failed` on the stop condition, do nothing, because the digest lists them.",
 ]
 NIGHT_FILES = {
     "sections/0f.md": ["Overnight, `compose factory night` switches the factory to night (sections/0n.md)."],
     "commands/factory.md": [
         'argument-hint: "[stop [--now] [--hold <why>] | status | pace <n> | night [--until HH:MM] [--budget <dollars>] [--stop-when <words>] | day | digest]"',
-        "When `$ARGUMENTS` starts with `night`, `day`, or `digest`, run `compose factory $ARGUMENTS`, show its output as is, and follow sections/0n.md.",
+        "When `$ARGUMENTS` is `stop --now`, run `compose factory stop --now` and show its output as is.",
+        "When `$ARGUMENTS` starts with `night`, `day`, or `digest`, run `compose factory $ARGUMENTS` with any `--stop-when \"<words>\"` quoted as one argument, show its output as is, and follow sections/0n.md.",
     ],
     "commands/away.md": ["When `compose factory status` says the factory runs for this repo, run `compose factory night` instead (an end time or budget in the words go to `--until` and `--budget`) and follow sections/0n.md; `off` then means `compose factory day`."],
     "docs/how-it-works.md": ["At night (`/compose:factory night`) it keeps building inside the end time and dollar budget you set, answers questions on approved tickets with a one-time frontier answerer, prepares questions for your next planning session, and greets you with one morning digest."],
@@ -2546,6 +2548,14 @@ class NightMode(unittest.TestCase):
             got = read(rel).splitlines()
             for line in lines:
                 self.assertEqual(got.count(line), 1, f"{rel}: {line}")
+
+    def test_every_night_event_named_in_0n_is_one_the_code_says(self):
+        text = read("sections/0n.md")
+        said = set(re.findall(r"factory=([\w-]+)", "".join(p.read_text() for p in (ROOT / "bin").glob("fc_*.py"))))
+        line = next(l for l in text.splitlines() if l.startswith("Relay any other"))
+        named = re.findall(r"`(?:event factory=)?([a-z][\w-]*)`", line)
+        self.assertEqual(len(named), 9, named)
+        self.assertEqual([n for n in named if n not in said], [])
 
     def test_cli_row_names_night(self):
         rows = [l for l in read("docs/cli.md").splitlines() if l.startswith("| `factory`")]
