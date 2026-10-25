@@ -78,3 +78,83 @@ class Gates(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+import json  # noqa: E402
+import fc_claude, fc_models  # noqa: E402
+from unittest import mock  # noqa: E402
+
+STATE = {"story": {"id": "ENG-7", "title": "Pay", "description": STORY}, "feature": FEATURE, "epic": "", "tech_docs": []}
+
+
+class Judge(unittest.TestCase):
+    def setUp(self):
+        self.jev, self.asked = {}, []
+
+        def ask(env, cfg, state, questions, label):
+            self.asked = list(questions)
+            return {"answers": {k: {"choice": c, "probabilities": {c: p}} for k, (c, p) in self.jev.items() if k in questions}}
+        for p in (mock.patch.object(fc_models, "jev_ask", ask), mock.patch.object(fc_models, "fast_env", return_value={"TYPESAFE_API_KEY": "k"})):
+            p.start(); self.addCleanup(p.stop)
+        p = mock.patch.object(fc_claude, "claude_json"); self.strong = p.start(); self.addCleanup(p.stop)
+
+    def test_jev_judges_a_product_story_and_a_weak_ready_counts_as_missing(self):
+        self.jev = {"intent": ("READY", 0.9), "scope": ("READY", 0.55), "testable": ("UNCLEAR", 0.7), "context": ("READY", 0.8), "kind": ("PRODUCT", 0.9)}
+        out = fc_readiness.judge(STATE, "ENG-7", deep_dive=False)
+        self.assertEqual(out["judge"], "jev")
+        self.assertFalse(out["technical"])
+        self.assertEqual([m["question"] for m in out["missing"]],
+                         ["Where does ENG-7 stop: what is in it and what is left out?", "How would we check each acceptance criterion on ENG-7?"])
+        self.assertEqual(sorted(self.asked), ["context", "intent", "kind", "scope", "testable"])
+        self.strong.assert_not_called()
+
+    def test_a_technical_story_is_judged_again_by_the_stronger_model_whose_verdict_wins(self):
+        self.jev = {**{k: ("READY", 0.9) for k in ("intent", "scope", "testable", "context")}, "kind": ("TECHNICAL", 0.7)}
+        self.strong.return_value = json.dumps({"items": {"intent": {"ready": True, "missing": ""}, "scope": {"ready": True, "missing": ""},
+                                                         "testable": {"ready": True, "missing": ""}, "context": {"ready": False, "missing": "Which queue carries the retries?"}}})
+        out = fc_readiness.judge(STATE, "ENG-7", deep_dive=False)
+        self.assertEqual((out["technical"], out["judge"]), (True, "claude:claude-opus-5-5"))
+        self.assertEqual(out["missing"], [{"item": "context", "issue": "ENG-7", "question": "Which queue carries the retries?"}])
+        self.assertEqual(self.strong.call_args.kwargs["effort"], "high")
+
+    def test_deep_dive_asks_grounding_and_goes_to_the_stronger_model_whatever_jev_says(self):
+        self.jev = {"kind": ("PRODUCT", 0.95)}
+        items = {k: {"ready": True, "missing": ""} for k in ("intent", "scope", "testable", "context", "grounding")}
+        self.strong.return_value = json.dumps({"items": items})
+        out = fc_readiness.judge(STATE, "ENG-7", deep_dive=True)
+        self.assertIn("grounding", self.asked)
+        self.assertIn("grounding", json.loads(self.strong.call_args.args[1])["items"])
+        self.assertTrue(out["technical"])
+        self.assertEqual(out["missing"], [])
+
+    def test_a_judge_that_cannot_answer_raises(self):
+        with mock.patch.object(fc_models, "jev_ask", side_effect=RuntimeError("HTTP 503")), self.assertRaisesRegex(RuntimeError, "503"):
+            fc_readiness.judge(STATE, "ENG-7", deep_dive=False)
+        self.jev = {"kind": ("TECHNICAL", 0.9)}
+        self.strong.return_value = "not json"
+        with self.assertRaises(RuntimeError):
+            fc_readiness.judge(STATE, "ENG-7", deep_dive=False)
+        self.strong.return_value = json.dumps({"items": {k: {"ready": True, "missing": ""} for k in ("intent", "testable", "context")}})
+        with self.assertRaisesRegex(RuntimeError, "scope"):
+            fc_readiness.judge(STATE, "ENG-7", deep_dive=False)
+
+    def test_the_state_keeps_the_story_whole_and_cuts_the_tech_docs_first(self):
+        doc = {"title": "ENG-7: tech doc", "content": "x" * 40000, "url": "u"}
+        chain = fc_readiness.story_chain(tree(labels_=("deep-dive",), docs=[doc]))
+        state = fc_readiness.judge_state(chain)
+        self.assertLessEqual(len(json.dumps(state)), fc_readiness.STATE_CAP)
+        self.assertIn("Pay by card.", state["story"]["description"])
+        self.assertIn("A shop.", state["feature"])
+        asked = STORY + "\n## Open questions\n\n* Which brands?\n"
+        self.assertNotIn("Open questions", fc_readiness.judge_state(fc_readiness.story_chain(tree(story=asked)))["story"]["description"])
+
+
+class ClaudeJson(unittest.TestCase):
+    def test_claude_json_passes_effort(self):
+        for effort, want in (("high", True), (None, False)):
+            with mock.patch.object(fc_claude.fc_proc, "run", return_value=mock.Mock(stdout='{"result": "{}"}', stderr="", returncode=0)) as run:
+                fc_claude.claude_json("s", "u", "claude:claude-opus-5-5", effort=effort)
+            cmd = run.call_args.args[0]
+            self.assertEqual("--effort" in cmd, want)
+            if want:
+                self.assertEqual(cmd[cmd.index("--effort") + 1], "high")
