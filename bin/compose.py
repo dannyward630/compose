@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fc_cost, fc_mcp  # noqa: E402
-import fc_core, fc_proc, fc_readguard, fc_libapi, fc_green, fc_gate, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_route, fc_quick, fc_herdr, fc_worktree, fc_layers, fc_blockers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_decide, fc_hooks, fc_pin, fc_reports, fc_crew, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_format, fc_implement, fc_shrink, fc_jev, fc_accept, fc_verify, fc_taskreview, fc_ship, fc_prove, fc_run, fc_status, fc_tiers, fc_tierpin, fc_budget, fc_spec, fc_watch, fc_history, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
+import fc_core, fc_proc, fc_readguard, fc_libapi, fc_green, fc_gate, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_route, fc_quick, fc_herdr, fc_worktree, fc_layers, fc_blockers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_decide, fc_hooks, fc_pin, fc_reports, fc_crew, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_buildercheck, fc_format, fc_implement, fc_shrink, fc_jev, fc_accept, fc_verify, fc_taskreview, fc_ship, fc_prove, fc_run, fc_status, fc_tiers, fc_tierpin, fc_budget, fc_spec, fc_watch, fc_history, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
 
 DETACHED = ("run", "verify", "resume")  # the long commands: a closed tab or a crashed session must not end them
 
@@ -112,6 +112,7 @@ def main():
                             ("trail", fc_init.cmd_trail, "set trail up in the project's worktree again: wire it for Claude Code and build the graph"),
                             ("architect", fc_briefs.cmd_architect, "print the architect teammate's brief (questions on one Lavish page); --extra adds the project's notes"),
                             ("planner", fc_briefs.cmd_planner, "print the planner teammate's brief; --issue is the ticket (default: the project's feature); --extra adds the project's notes"),
+                            ("buildercheck", fc_buildercheck.cmd_buildercheck, "print the builder check's brief: a fresh builder reads --issue (default: the project's feature) cold and reports the ranked questions it would still need answered; --extra adds the project's notes"),
                             ("testcrews", fc_briefs.cmd_testcrews, "start one test-writing teammate per task in parallel from the groundwork contract"),
                             ("designer", fc_figma.cmd_designer, "print the designer teammate's brief; --figma stores the file key, --extra adds notes"),
                             ("designcrews", fc_figma.cmd_designcrews, "start one design-NNN builder per open design task"),
@@ -236,9 +237,9 @@ def main():
             s.add_argument("--parallel", type=int, default=4)
             s.add_argument("--tests", action="store_true", help="measure test writers instead: each model writes each task's protected test")
             s.add_argument("--base", help="with --tests: the revision the protected tests are reset to and scored against")
-        if name in ("groundwork", "architect", "explore", "planner", "designer"):
+        if name in ("groundwork", "architect", "explore", "planner", "buildercheck", "designer"):
             s.add_argument("--extra", help="project-specific notes appended to the brief; `-` reads them from stdin")
-        if name == "planner":
+        if name in ("planner", "buildercheck"):
             s.add_argument("--issue", help="the ticket to plan (default: the project's feature)")
         if name == "designer":
             s.add_argument("--figma", help="the target Figma file's url or key: stored in linear.json before the brief prints")

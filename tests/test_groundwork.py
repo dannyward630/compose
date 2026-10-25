@@ -146,6 +146,22 @@ class Groundwork(unittest.TestCase):
         self.assertTrue(brief.rstrip().endswith("Story NEB-12 only."))
         self.assertNotIn("Project notes", self.planner(extra=None))
 
+    def test_builder_check_brief_reads_the_artifact_cold_and_reports_ranked_questions(self):
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "NEB-9"}))
+        def brief(**kw):
+            out = io.StringIO()
+            with self.patched()[0], self.patched()[1], mock.patch("sys.stdout", out), mock.patch("sys.stdin", io.StringIO("")):
+                fc.fc_buildercheck.cmd_buildercheck(SimpleNamespace(repo=str(self.repo), project="p", **{"issue": None, "extra": None, **kw}))
+            return out.getvalue()
+        text = brief(issue="NEB-4")
+        for s in ("NEB-4", "compose linear get NEB-4 --body", "compose linear doc list", "with no one to ask", "Rank them by importance",
+                  "nothing important left", "compose report", "never write Linear", "p-builder-check"):
+            self.assertIn(s, text)
+        self.assertNotRegex(text, r"(?i)superpowers|plugins/cache")
+        self.assertNotIn("\u2014", text)
+        self.assertIn("NEB-9", brief())  # default: the project's feature
+        self.assertTrue(brief(extra="Mind the API.").rstrip().endswith("Mind the API."))
+
     def test_planner_is_a_command_with_issue_and_extra(self):
         def help(*argv):
             out = io.StringIO()

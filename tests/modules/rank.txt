@@ -68,6 +68,7 @@ fc_figmanodes
 fc_figma
 fc_testred
 fc_briefs
+fc_buildercheck
 fc_libapi
 fc_green
 fc_gate
