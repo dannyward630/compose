@@ -84,7 +84,7 @@ class PauseTask(unittest.TestCase):
     """fc_proc.pause_task: one task's groups die, the rest of the run goes on."""
 
     def setUp(self):
-        for f in (fc.fc_proc.PAUSED, fc.fc_proc.TASK_GROUPS, fc.fc_proc.HOOKS):
+        for f in (fc.fc_proc.PAUSED, fc.fc_proc.KILLED, fc.fc_proc.TASK_GROUPS, fc.fc_proc.HOOKS):
             f.clear(); self.addCleanup(f.clear)
         fc.fc_proc.STOP.clear(); self.addCleanup(fc.fc_proc.STOP.clear)
         self.addCleanup(setattr, fc.fc_proc.TASK, "id", None)
@@ -114,6 +114,37 @@ class PauseTask(unittest.TestCase):
         fc.fc_proc.resume_task("004")
         self.assertEqual(fc.fc_proc.run(["true"]).returncode, 0)
         self.assertEqual(fc.fc_proc.TASK_GROUPS.get("004", set()), set())
+
+    def test_a_group_killed_by_a_pause_raises_paused_even_when_resumed_at_once(self):
+        out = {}
+        def worker():
+            fc.fc_proc.TASK.id = "004"
+            try:
+                out["r"] = fc.fc_proc.run(["sleep", "30"]).returncode
+            except fc.fc_proc.Paused:
+                out["r"] = "paused"
+        real = fc.fc_proc.kill_group
+        def kill_then_resume(pid):
+            real(pid); fc.fc_proc.resume_task("004")
+        t = threading.Thread(target=worker); t.start(); time.sleep(0.5)
+        with mock.patch.object(fc.fc_proc, "kill_group", kill_then_resume):
+            fc.fc_proc.pause_task("004"); t.join(6)
+        self.assertEqual(out, {"r": "paused"})
+        self.assertEqual(fc.fc_proc.KILLED, set())
+
+    def test_a_pause_landing_right_after_the_spawn_kills_the_new_group_and_raises_paused(self):
+        real, spawned = subprocess.Popen, []
+        def popen(*a, **k):
+            p = real(*a, **k); spawned.append(p.pid)
+            fc.fc_proc.PAUSED.add("004")  # the pause lands after the spawn, before the group is registered
+            return p
+        fc.fc_proc.TASK.id = "004"
+        with mock.patch.object(fc.fc_proc.subprocess, "Popen", popen), self.assertRaises(fc.fc_proc.Paused):
+            fc.fc_proc.run(["sleep", "30"])
+        time.sleep(0.2)
+        with self.assertRaises(ProcessLookupError):
+            os.killpg(spawned[0], 0)
+        self.assertEqual((fc.fc_proc.KILLED, fc.fc_proc.TASK_GROUPS.get("004", set())), (set(), set()))
 
     def test_pause_calls_the_named_hook_only(self):
         called = []

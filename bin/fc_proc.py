@@ -15,6 +15,7 @@ RUNNING = set()  # pids of the groups `run` is waiting on
 TASK = threading.local()  # a caller sets TASK.id around the commands it wants pausable; a thread without .id is no task
 TASK_GROUPS = {}  # task id -> pids of the groups `run` is waiting on for that task
 PAUSED = set()  # task ids paused now
+KILLED = set()  # pids of groups a pause killed: `run` raises Paused for them even when the task was resumed before it noticed
 _LOCK = threading.Lock()  # guards PAUSED and TASK_GROUPS
 
 
@@ -33,25 +34,28 @@ def run(cmd, cwd=None, env=None, timeout=None, input=None):
     p = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL if input is None else subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                          text=True, start_new_session=True)
     RUNNING.add(p.pid)
+    late = False
     if tid is not None:
         with _LOCK:
             TASK_GROUPS.setdefault(tid, set()).add(p.pid)
             late = tid in PAUSED  # paused between the check above and now: pause_task did not see this group
-        if late:
-            kill_group(p.pid)
+            if late:
+                KILLED.add(p.pid)
     try:
+        if tid is not None and late:
+            kill_group(p.pid)
         try:
             out, err = p.communicate(input, timeout=timeout)
         except subprocess.TimeoutExpired as e:
             kill_group(p.pid)
             e.stdout, e.stderr = p.communicate()  # what the command printed before it was killed
-            if tid is not None and tid in PAUSED and not STOP.is_set():
+            if (p.pid in KILLED or (tid is not None and tid in PAUSED)) and not STOP.is_set():
                 raise Paused
             raise
         except KeyboardInterrupt:  # Ctrl-C or a SIGINT to this process: the command is part of what is being stopped
             kill_group(p.pid)
             raise
-        if tid is not None and tid in PAUSED:
+        if p.pid in KILLED or (tid is not None and tid in PAUSED):
             raise Paused
         if STOP.is_set():
             raise Stopped
@@ -60,6 +64,7 @@ def run(cmd, cwd=None, env=None, timeout=None, input=None):
         RUNNING.discard(p.pid)
         if tid is not None:
             with _LOCK:
+                KILLED.discard(p.pid)
                 TASK_GROUPS.get(tid, set()).discard(p.pid)
 
 
@@ -124,6 +129,7 @@ def pause_task(tid, hook=None):
             return False
         PAUSED.add(tid)
         pids = list(TASK_GROUPS.get(tid, ()))
+        KILLED.update(pids)
     fn = HOOKS.get(hook) if hook else None
     for pid in pids:
         kill_group(pid)
