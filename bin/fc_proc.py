@@ -1,5 +1,6 @@
 """Implementer commands in process groups the run can stop: each child starts in its own session, so a stop (Ctrl-C) kills
-the whole group, tool children included, and nothing new starts after it. Stdlib only, no fc_ module."""
+the whole group, tool children included, and nothing new starts after it. A pause kills one task's groups the same way, and `run` raises
+`Paused` in that task's thread. Stdlib only, no fc_ module."""
 import contextlib, fcntl, os, shutil, re, signal, subprocess, sys, threading, time
 
 STOP = threading.Event()  # set once the run is stopped
@@ -11,31 +12,55 @@ class Stopped(Exception):
 
 HOOKS = {}  # name -> zero-argument callable stop() calls: herdr agents register their esc and pane close here
 RUNNING = set()  # pids of the groups `run` is waiting on
+TASK = threading.local()  # a caller sets TASK.id around the commands it wants pausable; a thread without .id is no task
+TASK_GROUPS = {}  # task id -> pids of the groups `run` is waiting on for that task
+PAUSED = set()  # task ids paused now
+_LOCK = threading.Lock()  # guards PAUSED and TASK_GROUPS
+
+
+class Paused(Exception):
+    """Raised by `run` in the thread of a paused task, instead of starting a command or after its group was killed."""
 
 
 def run(cmd, cwd=None, env=None, timeout=None, input=None):
     """Like subprocess.run(cmd, capture_output=True, text=True, stdin=DEVNULL), but in a session of its own and tracked in
-    RUNNING while it runs. `input` goes in on stdin instead. Returns a subprocess.CompletedProcess; raises Stopped after the stop, TimeoutExpired past `timeout`."""
+    RUNNING while it runs. `input` goes in on stdin instead. Returns a subprocess.CompletedProcess; raises Stopped after the stop, Paused when the calling thread's task (TASK.id) is paused, TimeoutExpired past `timeout`."""
+    tid = getattr(TASK, "id", None)
     if STOP.is_set():
         raise Stopped
+    if tid is not None and tid in PAUSED:
+        raise Paused
     p = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL if input is None else subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                          text=True, start_new_session=True)
     RUNNING.add(p.pid)
+    if tid is not None:
+        with _LOCK:
+            TASK_GROUPS.setdefault(tid, set()).add(p.pid)
+            late = tid in PAUSED  # paused between the check above and now: pause_task did not see this group
+        if late:
+            kill_group(p.pid)
     try:
         try:
             out, err = p.communicate(input, timeout=timeout)
         except subprocess.TimeoutExpired as e:
             kill_group(p.pid)
             e.stdout, e.stderr = p.communicate()  # what the command printed before it was killed
+            if tid is not None and tid in PAUSED and not STOP.is_set():
+                raise Paused
             raise
         except KeyboardInterrupt:  # Ctrl-C or a SIGINT to this process: the command is part of what is being stopped
             kill_group(p.pid)
             raise
+        if tid is not None and tid in PAUSED:
+            raise Paused
         if STOP.is_set():
             raise Stopped
         return subprocess.CompletedProcess(cmd, p.returncode, out, err)
     finally:
         RUNNING.discard(p.pid)
+        if tid is not None:
+            with _LOCK:
+                TASK_GROUPS.get(tid, set()).discard(p.pid)
 
 
 def run_limited(cmd, cwd=None, env=None, timeout=None):
@@ -89,6 +114,33 @@ def on_termination(cleanup):
         os._exit(128 + sig)
     for sig in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, terminated)
+
+
+def pause_task(tid, hook=None):
+    """Pause task `tid`: its later commands raise Paused, every group in TASK_GROUPS[tid] is killed, and HOOKS[hook] is called
+    when present (taken first, as stop() does). False when `tid` was already paused."""
+    with _LOCK:
+        if tid in PAUSED:
+            return False
+        PAUSED.add(tid)
+        pids = list(TASK_GROUPS.get(tid, ()))
+    fn = HOOKS.get(hook) if hook else None
+    for pid in pids:
+        kill_group(pid)
+    if fn:
+        fn()
+    return True
+
+
+def task_paused(tid):
+    """Whether task `tid` is paused."""
+    return tid in PAUSED
+
+
+def resume_task(tid):
+    """Let task `tid` start commands again."""
+    with _LOCK:
+        PAUSED.discard(tid)
 
 
 def restore_sigint():
