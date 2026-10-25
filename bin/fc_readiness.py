@@ -211,7 +211,7 @@ def _asked(description):
 
 def _result(story, **kw):
     out = {"id": story["identifier"], "title": story.get("title") or "", "state": story["state"]["name"], "ready": False, "specced": None,
-           "unblocked": None, "blocked_by": [], "has_tasks": False, "technical": False, "judge": None, "missing": [], "cached": False, "error": None}
+           "unblocked": None, "blocked_by": [], "has_tasks": False, "technical": False, "judge": None, "missing": [], "cached": False, "error": None, "needs_shaping": False}
     return {**out, **kw}
 
 
@@ -226,6 +226,8 @@ def story_readiness(repo, story, refresh=False, write=True):
         return out
     holds = [r["issue"]["identifier"] for r in node["inverseRelations"]["nodes"]
              if r["type"] == "blocks" and not fc_tasks.blocker_finished(r["issue"]["state"]["name"], [l["name"] for l in r["issue"]["labels"]["nodes"]])]
+    if fc_linear.NEEDS_SHAPING in _labels(node):  # its design waits on the product owner in 0b: no judge spent and nothing written
+        return {**out, "specced": False, "unblocked": not holds, "blocked_by": holds, "needs_shaping": True}
     out.update(unblocked=bool(fc_linear.ready_ids([node])), blocked_by=holds)
     gaps = gates(chain)
     deep = any(DEEP_DIVE in _labels(i) for i in (node, chain["feature"], chain["epic"]))
@@ -266,7 +268,7 @@ def story_readiness(repo, story, refresh=False, write=True):
 
 
 def readiness_line(r):
-    """One line for a story's result: ready, not ready (with what blocks it and what it lacks), not judged, or not open."""
+    """One line for a story's result: ready, not ready (with what blocks it and what it lacks, or that it needs shaping), not judged, or not open."""
     if r.get("error"):
         return f"{r['id']} not judged: {r['error']}"
     if r.get("specced") is None:
@@ -274,6 +276,8 @@ def readiness_line(r):
     if r["ready"]:
         return f"{r['id']} ready" + ("" if r["has_tasks"] else " (no tasks yet: the planner cuts them)")
     held = f" (blocked by {', '.join(r['blocked_by'])})" if r["blocked_by"] else ""
+    if r.get("needs_shaping"):
+        return f"{r['id']} not ready{held}: needs shaping"
     asked = "; ".join(f"{x['item']}: {x['question']}" for x in r["missing"])
     return f"{r['id']} not ready{held}" + (f": {asked}" if asked else "")
 

@@ -1,5 +1,6 @@
 import json, os, re, sys, threading, time, urllib.error, urllib.request
 from pathlib import Path
+from typing import Callable, Optional
 import fc_core, fc_config, fc_plan, fc_tasks
 
 
@@ -161,6 +162,39 @@ def linear_move(issue, state):
 def linear_comment(issue, body):
     linear_gql("mutation($id: String!, $b: String!) { commentCreate(input: {issueId: $id, body: $b}) { success } }",
                {"id": issue["id"], "b": body})
+
+MERGED = "Merged into {id} ({title})."
+
+def linear_cancel(ident: str, comment: str, into: Optional[str] = None, done: tuple = (), on_step: Optional[Callable] = None) -> bool:
+    """Cancel an issue with a reason. The comment goes first, then the duplicate relation when `into` is given, and the move to the
+    team's canceled state goes last. False, nothing written, when it is already canceled; a finished or reasonless cancel raises.
+    A caller resuming after a failure names the steps already written in `done` ("comment", "relation"); `on_step` hears each step as it lands."""
+    issue = linear_issue(ident)
+    state = issue["state"]
+    if state["type"] == "canceled":
+        return False
+    if state["type"] == "completed":
+        raise RuntimeError(f"{issue['identifier']} is {state['name']}: a finished ticket is never canceled")
+    if "comment" not in done and not (comment or "").strip():
+        raise RuntimeError("a cancel needs a reason comment")
+    target = [n for n in issue["team"]["states"]["nodes"] if n["type"] == "canceled" and (n["name"] or "").lower() in fc_tasks.CANCELED]
+    if not target:
+        raise RuntimeError(f"{issue['identifier']}: the team has no canceled state")
+    other = linear_issue(into) if into else None
+    if other and other["id"] == issue["id"]:
+        raise RuntimeError(f"{issue['identifier']} cannot be merged into itself")
+    if other and other["state"]["type"] == "canceled":
+        raise RuntimeError(f"{other['identifier']} is {other['state']['name']}: a ticket is merged only into an open or finished one")
+    if "comment" not in done:
+        linear_comment(issue, comment.strip())
+        on_step and on_step("comment")
+    if other and "relation" not in done:
+        linear_gql("mutation($id: String!, $o: String!) { issueRelationCreate(input: {issueId: $id, relatedIssueId: $o, type: duplicate}) { success } }",
+                   {"id": issue["id"], "o": other["id"]})
+        on_step and on_step("relation")
+    linear_gql("mutation($id: String!, $s: String!) { issueUpdate(id: $id, input: {stateId: $s}) { success } }",
+               {"id": issue["id"], "s": target[0]["id"]})
+    return True
 
 def linear_ready():
     """True when the workspace has a Linear key; otherwise say once how to set it, and the caller skips Linear."""
@@ -333,12 +367,14 @@ def linear_reconcile(proj, verified=False):
     except Exception as e:  # noqa: BLE001
         fc_core.say(f"linear {feature}: update failed ({str(e)[:200]})")
 
+NEEDS_SHAPING = "needs-shaping"
 
 def ready_ids(issues):
     """The identifiers, in input order, of the issues that can start now: state Todo or Backlog and every `blocks`
-    blocker finished (Done or Canceled, or In Review carrying the Design label)."""
+    blocker finished (Done or Canceled, or In Review carrying the Design label), and none carries the needs-shaping label."""
     return [i["identifier"] for i in issues
             if (i["state"]["name"] or "").lower() in ("todo", "backlog")
+            and NEEDS_SHAPING not in [l["name"].lower() for l in i["labels"]["nodes"]]
             and all(fc_tasks.blocker_finished(r["issue"]["state"]["name"], [l["name"] for l in r["issue"]["labels"]["nodes"]])
                     for r in i["inverseRelations"]["nodes"] if r["type"] == "blocks")]
 
