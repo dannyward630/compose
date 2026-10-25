@@ -7,7 +7,7 @@ A frontier model plans and checks the work, cheap fast models write the code in 
 
 ```
   TEAM LEAD (Claude, frontier)
-  explore the code ─▶ architect page ─▶ plan in Linear ─▶ task issues + failing tests ─▶ your go
+  explore the code ─▶ design with you ─▶ plan in Linear ─▶ task issues + failing tests ─▶ your go
                                                                                         │
                                                                              compose run│
   ┌─────────────────────────────────────────────────────────────────────────────────────▼───┐
@@ -56,13 +56,22 @@ A provider that runs out of credit halts the run, and [workspaces.md](workspaces
 In a repo that already has code, an explore teammate maps it through trail first and adds a short codebase brief to the feature.
 Questions and planning both wait for that brief.
 
-Next, one architect teammate writes every open decision as a card on the feature issue: the question, why it matters, the options with what each affects, and a recommendation.
-The engineering manager names the open cards in one line, and you read them on one page per project with `compose decisions`.
-A card you would understand better by seeing it (a wireframe, a layout comparison, a diagram) goes on a Lavish page as well.
-You answer them all at once, or accept every recommendation with one word.
-Your answers go to the feature issue's "Decisions so far" through `compose decide`, with your words attached, so no decision is recorded that you did not make.
+Next, the engineering manager shapes each feature with you.
+The engineering manager shapes each feature with you in one conversation, one question at a time, and writes the design to the feature issue.
+It starts with one open question about a real moment, and every message after it ends with one question that follows from your last answer.
+As each part is understood it plays that part back, with its guesses marked, and you correct it.
+A choice it makes for you is written under "My calls", never as something you agreed to.
+Every decision you make is recorded at once with your words through `compose decide`, as a numbered line under the feature issue's "Decisions so far", so no decision is recorded that you did not make.
+Before you see the design, a builder check reads it cold, as a builder with no one to ask.
+A builder check reads the design before you do.
+It reports once, and the engineering manager brings you the few questions only you can answer in one message.
+The design is approved only when you say so, and the plan starts after that.
 
-A question about how a screen should look comes with a low-fi wireframe, drawn in Frame0 and shown on its card.
+A story or epic that needs a technical deep dive carries the Linear label `deep-dive`, which you can add or remove.
+The engineering manager runs that deep dive with you the same way, and writes it as a Linear document titled `<issue id>: tech doc`, which a builder check reads like any design.
+A question you would understand better by seeing it (a wireframe, a layout comparison, a diagram) is shown, on a Lavish page when it is a comparison.
+
+A question about how a screen should look comes with a low-fi wireframe, drawn in Frame0 and shown to you.
 Each project has its own Frame0 app on `.compose/<project>/design.f0`, so parallel sessions never draw into each other's window.
 These commands manage it:
 
@@ -88,8 +97,8 @@ If Frame0 does not answer `frame0 save` or `down`, a dialog is open in its windo
 
 ## Planning
 
-Once architect reports done, the team lead starts a planner teammate in its own tab instead of writing the plan itself.
-The planner reads the feature's map and its Decisions so far, plus `DESIGN.md`, a PRD, or whatever the repo already had.
+Once you approve the design, the team lead starts a planner teammate in its own tab instead of writing the plan itself.
+The planner reads the feature's design and its Decisions so far, plus `DESIGN.md`, a PRD, or whatever the repo already had.
 It writes the plan as a `## Plan` section in the feature issue's description, never as a file, and does not reopen a settled decision.
 When the feature has no stories, it first proposes them as one list for you, one per user-visible slice with acceptance criteria, and creates them on your go.
 Then it cuts the task issues under each story, and the team lead reviews that cut before anything is dispatched.
@@ -115,7 +124,7 @@ The team lead starts it for a feature or story whose project it runs, and the en
 4. It starts one `design-NNN` builder per design task, each in its own tab, and gates each build with `compose figma tree` and `compose figma judge`.
 5. A `design-review` teammate then checks one image per story, and the result is handed to the code tasks as Framelink data.
 
-Every open design decision reaches you as a card with a recommendation, the same way architect's do.
+Every open design decision reaches you as a card with a recommendation.
 The designer and its crew are Claude sessions, because Figma serves writes only to its allowlisted clients.
 Writes go through the official Figma connector, and every read goes through Framelink, which keeps reads off the connector's daily cap.
 The designer requires Framelink; [requirements.md](requirements.md#for-the-designer) shows how to set it up, and the designer's start stops with the install steps when it is missing.
@@ -133,7 +142,7 @@ Work lives at five levels in Linear:
 | Level | Is |
 |---|---|
 | project | the repo |
-| epic | a architect map, when the work is bigger than one feature |
+| epic | a short design, when the work is bigger than one feature |
 | feature | one `compose` project and one stack; its description is the plan |
 | story | one user-visible slice of the feature |
 | task | one stack layer; see [tasks.md](tasks.md) |

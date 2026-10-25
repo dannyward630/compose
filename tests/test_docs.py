@@ -2202,6 +2202,26 @@ class ShapingIsTheManagersBrainstorm(unittest.TestCase):
             self.assertNotIn(gone, text)
         self.assertIn(self.ASK_ONCE, text)
 
+class UserDocsShaping(unittest.TestCase):
+    def test_user_docs_describe_shaping_as_a_conversation(self):
+        how = read("docs/how-it-works.md")
+        for line in (
+            "The engineering manager shapes each feature with you in one conversation, one question at a time, and writes the design to the feature issue.",
+            "A builder check reads the design before you do.",
+        ):
+            self.assertIn(line + "\n", how)
+        rows = [l for l in read("docs/cli.md").splitlines()]
+        decide = [l for l in rows if l.startswith("| `decide`")]
+        self.assertEqual(len(decide), 1)
+        self.assertIn("--new", decide[0])
+        self.assertEqual(len([l for l in rows if l.startswith("| `buildercheck`")]), 1)
+        for rel in ("docs/how-it-works.md", "README.md", "docs/herdr.md", "docs/tasks.md", "docs/requirements.md", "docs/workspaces.md"):
+            text = read(rel).lower()
+            self.assertNotIn("wayfinder", text, rel)
+            self.assertNotIn("card set", text, rel)
+        self.assertNotRegex(read("docs/herdr.md"), r"compose architect --project <slug> --extra")
+
 
 if __name__ == "__main__":
     unittest.main()
+
