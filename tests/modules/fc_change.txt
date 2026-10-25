@@ -37,6 +37,10 @@ change_start
 change_done
 undo_edits
 change_undo
+paused_tasks
+SETTLE_KEYS
+settle
+unsettle
 cmd_change
 cmd_reflect
 reflect_counts

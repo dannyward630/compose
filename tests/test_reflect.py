@@ -606,10 +606,10 @@ def git_repo(branches):
     return repo, git
 
 
-def change(proj, repo, action, cid=None, why=None):
+def change(proj, repo, action, cid=None, why=None, files=None):
     out = io.StringIO()
     with mock.patch.object(fc.fc_core, "project_dir", lambda a: proj), redirect_stdout(out):
-        fc.fc_change.cmd_change(SimpleNamespace(repo=str(repo), action=action, id=cid, why=why))
+        fc.fc_change.cmd_change(SimpleNamespace(repo=str(repo), action=action, id=cid, why=why, files=files))
     return out.getvalue()
 
 
@@ -722,6 +722,75 @@ class Changes(unittest.TestCase):
 
 
 STATE_TYPES = {"Todo": "unstarted", "In Progress": "started", "In Review": "started", "Done": "completed", "Canceled": "canceled"}
+
+
+class SettlePaused(unittest.TestCase):
+    def setUp(self):
+        self.proj = project()
+        self.repo, self.git = git_repo(("004", "005", "006"))
+        for mod, name, value in ((fc.fc_core, "say", lambda m: None), (fc.fc_config, "LINEAR_KEY", None)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+        synced(self.proj, MAP, {f"ENG-{n}": issue(t, "Goal.") for n, t in ((4, "004"), (5, "005"), (6, "006"))})
+        for t in ("004", "005", "006"):
+            self.write(t, {"id": t, "status": "paused", "paused": {"ref": f"refs/compose/hw/paused/{t}", "base": "abc", "files": ["a.txt", "b.txt"]}})
+
+    def write(self, tid, data):
+        (self.proj / "results" / f"{tid}.json").write_text(json.dumps(data))
+
+    def result(self, tid):
+        return json.loads((self.proj / "results" / f"{tid}.json").read_text())
+
+    def test_done_refuses_until_every_paused_task_is_settled(self):
+        change(self.proj, self.repo, "start", why="D2 changed")
+        with self.assertRaises(SystemExit) as e:
+            change(self.proj, self.repo, "done")
+        self.assertIn("paused and not settled: 004, 005, 006", str(e.exception))
+
+    def test_keep_part_and_discard_are_recorded_on_the_change_and_the_result(self):
+        change(self.proj, self.repo, "start", why="D2 changed")
+        self.assertEqual(fc.fc_change.settle(self.proj, "004", "keep"), "004 keep  2 files")
+        self.assertEqual(fc.fc_change.settle(self.proj, "005", "part", ("a.txt",)), "005 part  a.txt")
+        fc.fc_change.settle(self.proj, "006", "discard")
+        rec = fc.fc_change.open_change(self.proj)
+        rec = fc.fc_change.load_change(self.proj, rec)
+        self.assertEqual({t: s["choice"] for t, s in rec["settled"].items()}, {"004": "keep", "005": "part", "006": "discard"})
+        self.assertEqual(self.result("005")["paused"]["keep"], ["a.txt"])
+        self.assertEqual(self.result("004")["paused"]["choice"], "keep")
+        synced(self.proj, MAP, {f"ENG-{n}": issue(t, "Goal.") for n, t in ((4, "004"), (5, "005"), (6, "006"))}, ahead=2)
+        out = change(self.proj, self.repo, "done")
+        self.assertIn("Paused work: 004 kept, 005 part (a.txt), 006 discarded.", out)
+
+    def test_cmd_change_maps_the_actions_and_checks_files(self):
+        change(self.proj, self.repo, "start", why="D2 changed")
+        self.assertIn("005 part  a.txt", change(self.proj, self.repo, "part", cid="005", files="a.txt"))
+        for action, files in (("part", None), ("keep", "a.txt")):
+            with self.assertRaises(SystemExit):
+                change(self.proj, self.repo, action, cid="004", files=files)
+
+    def test_part_refuses_a_file_the_paused_work_did_not_touch_and_settle_needs_an_open_change(self):
+        with self.assertRaises(SystemExit) as e:
+            fc.fc_change.settle(self.proj, "004", "keep")
+        self.assertIn("no change is open", str(e.exception))
+        change(self.proj, self.repo, "start", why="D2 changed")
+        with self.assertRaises(SystemExit) as e:
+            fc.fc_change.settle(self.proj, "005", "part", ("x.txt",))
+        self.assertIn("005 paused with a.txt, b.txt; x.txt is not among them", str(e.exception))
+        with self.assertRaises(SystemExit):
+            fc.fc_change.settle(self.proj, "007", "keep")
+        self.assertNotIn("settled", fc.fc_change.load_change(self.proj, "C1"))
+
+    def test_undo_puts_the_paused_records_back_unsettled(self):
+        change(self.proj, self.repo, "start", why="D2 changed")
+        for t in ("004", "005", "006"):
+            fc.fc_change.settle(self.proj, t, "discard")
+        synced(self.proj, MAP, {f"ENG-{n}": issue(t, "Goal.") for n, t in ((4, "004"), (5, "005"), (6, "006"))}, ahead=2)
+        change(self.proj, self.repo, "done")
+        self.write("006", {"id": "006", "status": "passed"})
+        synced(self.proj, MAP, {f"ENG-{n}": issue(t, "Goal.") for n, t in ((4, "004"), (5, "005"), (6, "006"))}, ahead=3)
+        out = change(self.proj, self.repo, "undo", cid="C1")
+        self.assertNotIn("choice", self.result("004")["paused"])
+        self.assertEqual(self.result("006")["status"], "passed")
+        self.assertIn("006 ran since C1; its paused work stays on refs/compose/", out)
 
 
 class LinearIssues:

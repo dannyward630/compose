@@ -314,6 +314,10 @@ def change_comment(rec):
     parts = ([f"Superseded: {'; '.join(d['superseded'])}."] if d["superseded"] else []) + \
             [f"{name} {', '.join(issue_label(i, issues.get(i)) for i in d[key])}."
              for name, key in (("Canceled", "canceled"), ("New", "new"), ("Edited", "edited")) if d[key]]
+    if rec.get("settled"):
+        words = {"keep": "kept", "part": "part", "discard": "discarded"}
+        parts.append("Paused work: " + ", ".join(f"{t} {words[s['choice']]}" + (f" ({', '.join(s['keep'])})" if s["choice"] == "part" else "")
+                                                for t, s in sorted(rec["settled"].items())) + ".")
     return f"{rec['id']}: {rec['why']}. {' '.join(parts) or 'No changes: the plan stays as it was.'} Evidence: {rec.get('reflect') or 'none recorded'}."
 
 def change_start(a, proj, repo):
@@ -327,6 +331,9 @@ def change_done(a, proj, repo):
     if not cid:
         sys.exit('no change is open; `compose change start --why "<one line>"` opens one')
     rec, cache = load_change(proj, cid), fc_tasks.linear_cache(proj)
+    open_ids = sorted(set(paused_tasks(proj)) - set(rec.get("settled", {})))
+    if open_ids:
+        sys.exit(f"paused and not settled: {', '.join(open_ids)}: compose change keep|part|discard <id>")
     if (cache.get("synced_at") or "") <= rec["started_at"]:
         sys.exit(f"sync after your Linear edits: {cid} is read from a sync newer than its start ({rec['started_at']})")
     rec["after"] = {"feature": cache["feature"], "issues": cache.get("issues", {})}
@@ -387,6 +394,7 @@ def change_undo(a, proj, repo):
             if tid in rec.get("results", {}):
                 fc_core.atomic_write((proj / "results" / f"{tid}.json"), json.dumps(rec["results"][tid], indent=2))
             reset.append(tid)
+    unsettle(proj, rec, a.id)
     if reset:
         fc_core.say(f"{cid} reset {', '.join(reset)} to their tips from before {a.id}")
         try:
@@ -414,12 +422,73 @@ def change_undo(a, proj, repo):
             print(f"  {ident}: {json.dumps(fields)}")
     print(f"{cid} open: undo {a.id}. Sync, then `compose change done`.")
 
+def paused_tasks(proj):
+    """{task id: its result's `paused` block} for the results whose status is `paused`; an unreadable result is skipped."""
+    found = {}
+    for f in sorted((proj / "results").glob("*.json")):
+        try:
+            data = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get("status") == "paused" and isinstance(data.get("paused"), dict):
+            found[f.stem] = data["paused"]
+    return found
+
+SETTLE_KEYS = ("choice", "keep", "change")
+
+def settle(proj, tid, choice, files=()):
+    """Decide what the open change does with a paused task's kept work: `keep` all of it, `part` of it (`files`), or `discard`
+    it (it stays on its ref). Recorded on the change and in the result's `paused` block, where the task's next run reads it."""
+    cid = open_change(proj)
+    if not cid:
+        sys.exit('no change is open; `compose change start --why "<one line>"` opens one')
+    res = proj / "results" / f"{tid}.json"
+    block = paused_tasks(proj).get(tid)
+    if not block:
+        sys.exit(f"{tid} is not paused: only paused work is settled")
+    if choice == "part":
+        stray = [f for f in files if f not in block["files"]]
+        if stray or not files:
+            sys.exit(f"{tid} paused with {', '.join(block['files'])}; {', '.join(stray) or 'no file'} is not among them")
+    keep = list(block["files"]) if choice == "keep" else list(files) if choice == "part" else []
+    rec = load_change(proj, cid)
+    original = {k: v for k, v in block.items() if k not in SETTLE_KEYS}
+    rec.setdefault("settled", {})[tid] = {"choice": choice, "keep": keep, "paused": original}
+    write_change(proj, rec)
+    data = json.loads(res.read_text())
+    data["paused"] = {**original, "choice": choice, "keep": keep, "change": cid}
+    fc_core.atomic_write(res, json.dumps(data, indent=2))
+    return f"{tid} {choice}  " + {"keep": f"{len(keep)} files", "part": ", ".join(keep),
+                                   "discard": f"its work stays on {block['ref']} until clean"}[choice]
+
+def unsettle(proj, rec, undone):
+    """Put the paused blocks a change settled back as they were, in a result still paused (or released and running on them);
+    a task that has run since keeps its result, and the line says its work stays on the ref."""
+    for tid, s in sorted(rec.get("settled", {}).items()):
+        res = proj / "results" / f"{tid}.json"
+        try:
+            data = json.loads(res.read_text())
+        except (OSError, ValueError):
+            data = {}
+        field = "paused" if data.get("status") == "paused" else "kept_from" if data.get("status") == "running" and data.get("kept_from") else None
+        if field:
+            data[field] = dict(s["paused"])
+            fc_core.atomic_write(res, json.dumps(data, indent=2))
+        else:
+            print(f"{tid} ran since {undone}; its paused work stays on {s['paused']['ref']}")
+
 def cmd_change(a):
     """A change of course as one recorded unit: `start` snapshots Linear as last synced, `done` records what changed and why on
     the feature, `undo C<n>` puts back what C<n> touched, as a new change."""
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     if a.action == "undo" and not a.id:
         sys.exit("usage: compose change undo C<n>")
+    if a.action in ("keep", "part", "discard"):
+        files = tuple(f.strip() for f in (a.files or "").split(",") if f.strip())
+        if not a.id or (a.action == "part") != bool(files):
+            sys.exit(f"usage: compose change {a.action} <task id>" + (" --files a,b" if a.action == "part" else " (no --files: only part takes them)"))
+        print(settle(proj, a.id, a.action, files))
+        return
     {"start": change_start, "done": change_done, "undo": change_undo}[a.action](a, proj, repo)
 
 def cmd_reflect(a):
