@@ -76,6 +76,7 @@ Everything else you edit by hand.
 | `models.fallback_after` | a whole number | `2` | Failed attempts on the task's own model before the fallback takes over. |
 | `models.test_reader` | a `claude:` or `codex:` model id, or `null` | `claude:claude-haiku-5-5` | Reads a failed test run and writes the fix brief. `null` sends the raw output. |
 | `models.review` | a `claude:` model id, or an OpenRouter model id | unset: the `.env`'s `TEXT_MODEL` | Reviews the diff in `verify` and `compose review`, and confirms each finding. A `claude:` id runs Claude Code on the subscription, with no tools and none of your customizations. |
+| `models.readiness` | a `claude:` model id, or `{ "model", "effort" }` | `claude:claude-opus-5-5`, effort `high` | Judges a story labeled deep-dive in `compose readiness`, where Jev judges the rest. Runs Claude Code on the subscription, with no tools and none of your customizations. |
 | `models.fix` | a model id | the implementer | The model of verify's fix rounds. A project's `verify.json` `fix_model` beats it. |
 | `models.crew` | a map of role to entry | none | The model of each teammate role, see [Crew models](#crew-models). |
 | `models.tiers` | a map of `cheap`, `standard`, `frontier` to a list of entries | see [Model tiers](#model-tiers-prices-and-the-frontier-budget) | The models of each tier, in order. A tier you leave out keeps its default list. |

@@ -1128,8 +1128,27 @@ class ConfigKeysDocs(unittest.TestCase):
         self.assertNotRegex(self.text, r"\bgraft\b")
 
 
+class ReadinessDocs(unittest.TestCase):
+    def test_readiness_row_config_row_and_0b_paragraph(self):
+        rows = [l for l in read("docs/cli.md").splitlines() if l.startswith("| `readiness`")]
+        self.assertEqual(len(rows), 1)
+        for word in ("Jev", "deep-dive", "models.readiness", "## Open questions", "(readiness check, <date>)", "--refresh", "--dry-run", "--json", ".compose/readiness.json"):
+            self.assertIn(word, rows[0])
+        cfg = [l for l in read("docs/config.md").splitlines() if l.startswith("| `models.readiness`")]
+        self.assertEqual(len(cfg), 1)
+        for word in ("claude:claude-opus-5-5", "high"):
+            self.assertIn(word, cfg[0])
+        text = read("sections/0b.md")
+        for line in (
+            "A story the readiness check judged not ready carries its questions under `## Open questions`, each tagged `(readiness check, <date>)`.",
+            "Planning that story starts from those questions, asked one at a time like any other, and each answer goes into the story itself, never only into the conversation.",
+            "Remove a question's line once its answer is on the story; the next check judges the story again.",
+        ):
+            self.assertEqual(text.count(line + "\n"), 1, line)
+
+
 class ReadyDocs(unittest.TestCase):
-    TASKS = ["sync", "linear <verb>", "tasks", "route", "quick <id>...", "run", "done", "triage", "resume", "reflect", "hold", "change start\\|done\\|undo", "spec-check", "ready", "bench"]
+    TASKS = ["sync", "linear <verb>", "tasks", "route", "quick <id>...", "run", "done", "triage", "resume", "reflect", "hold", "change start\\|done\\|undo", "spec-check", "ready", "readiness", "bench"]
 
     def tasks_rows(self):
         sec = read("docs/cli.md").split("### Tasks\n", 1)[1].split("### Verify and stack", 1)[0]
@@ -1151,7 +1170,7 @@ class ReadyDocs(unittest.TestCase):
         row = rows[0]
         for word in ("`Ready`", "story", "feature", "epic", "Todo", "Backlog", "blocker", "Done", "Canceled", "Design", "In Review"):
             self.assertIn(word, row)
-        for word in ("can start now:", "results/ready.json", "compose linear labels --create Ready"):
+        for word in ("can start now:", "results/ready.json", "compose linear labels --create Ready", "## Open questions"):
             self.assertIn(word, row)
         self.assertNotIn("\u2014", row)
 
