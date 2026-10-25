@@ -2164,10 +2164,6 @@ class HarnessTierDocs(unittest.TestCase):
             self.assertNotIn("—", text, rel)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ShapingIsTheManagersBrainstorm(unittest.TestCase):
     HANDOFF = ("When the team lead reports `needs-user \"shape <issue>: ...\"`, the engineering manager brainstorms that issue with the product owner here (0b), "
                "then sends `herdr agent prompt <slug>-orchestrator \"shaped <issue>\"`.")
@@ -2177,9 +2173,16 @@ class ShapingIsTheManagersBrainstorm(unittest.TestCase):
     def test_0h_names_the_handoff_once(self):
         self.assertEqual(read("sections/0h.md").count(self.HANDOFF), 1)
         self.assertIn('`herdr agent prompt <slug>-orchestrator "shaped <id>"`', read("sections/0b.md"))
+        self.assertIn("or at once in a new repo", read("sections/0h.md"))
+        self.assertIn("on `shaped <issue>` it starts the planner (step 1).", read("sections/0h.md"))
+        self.assertIn("0b is the engineering manager's; inside herdr the team lead never shapes, it reports `needs-user` and waits (0h).", read("SKILL.md"))
 
     def test_skill_shapes_in_one_conversation_not_through_architect_cards(self):
         text = read("SKILL.md")
         for gone in ("ask once, through architect", "as a card in the card format (0b)"):
             self.assertNotIn(gone, text)
         self.assertIn(self.ASK_ONCE, text)
+
+
+if __name__ == "__main__":
+    unittest.main()

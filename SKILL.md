@@ -103,6 +103,7 @@ The CLI also refreshes the `Ready` marks after every roll-up, `sync`, the end of
 ### 0e. Explore an existing repo first: read sections/0e.md
 
 ### 0b. Shape first, always: read sections/0b.md
+0b is the engineering manager's; inside herdr the team lead never shapes, it reports `needs-user` and waits (0h).
 
 ### 0g. Groundwork and the smoke check run while the product owner answers: read sections/0g.md
 
