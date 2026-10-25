@@ -1,6 +1,6 @@
 import ast, json, re, sys
 from pathlib import Path
-import fc_core, fc_routerec, fc_tasks, fc_worktree, fc_status
+import fc_core, fc_routerec, fc_tasks, fc_worktree, fc_change, fc_status
 
 
 def ordered(tasks, a, b):
@@ -196,9 +196,11 @@ def spec_check(data, checks=(), defined=None):
     out = []
     desc = (data["feature"].get("description") or "")
     gaps = []
-    m = re.search(r"## Not yet specified\n+([^\n]*)", desc)
-    if not m or m.group(1).strip().rstrip(".").strip().lower() != "none":
-        gaps.append(f"`## Not yet specified` holds {m.group(1).strip() if m else 'nothing'}: say `None` when the plan is settled")
+    for name, fix in (("Not yet specified", "answer its cards with `compose decide`, or say `None`"),
+                      ("Open questions", "the design is approved only once they are answered and the section is empty")):
+        held = fc_change.map_section(desc, name).split("\n", 1)[0].strip()  # an absent or empty section, or one saying None, is settled
+        if held and held.rstrip(".").strip().lower() != "none":
+            gaps.append(f"`## {name}` holds {held}: {fix}")
     if "### Codebase brief" not in desc:
         gaps.append("no `### Codebase brief` section")
     if "## Plan" not in desc:

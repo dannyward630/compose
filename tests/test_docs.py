@@ -281,7 +281,7 @@ class DesignerCommand(unittest.TestCase):
 
 
 class BriefsNameFiles(unittest.TestCase):
-    FILES = "SKILL.md, sections/0h.md, sections/0a.md, sections/0e.md, sections/0g.md, sections/4.md, sections/5.md, sections/6.md, sections/6a.md, sections/7.md, sections/8.md and ~/.claude/skills/herdr/SKILL.md, then continue from 0b"
+    FILES = "SKILL.md, sections/0h.md, sections/0a.md, sections/0e.md, sections/0g.md, sections/4.md, sections/5.md, sections/6.md, sections/6a.md, sections/7.md, sections/8.md and ~/.claude/skills/herdr/SKILL.md, then continue from 0e"
     EM = "The engineering manager's own session is outside the CLI's reach: it runs unrestricted, with every server and skill the product owner has."
 
     def setUp(self):
@@ -336,13 +336,37 @@ class PlanWritingRules(unittest.TestCase):
         SKILLS_OFF,
     ]
     SHAPE = [
-        "The plan opens with a header: Goal (one or two sentences), Architecture (how the pieces fit, one paragraph), Global constraints (what every task must respect: the simplicity bar, no new dependencies, naming, the test runner), and Review focus (where a reviewer should look hardest, and why).",
+        "The plan opens with a header: Goal (one or two sentences), Architecture (how the pieces fit, one paragraph), Global constraints (what every task must respect: the simplicity bar, no new dependencies, naming, the test runner), and Review focus (the five inputs or conditions the design implies but no test yet exercises that are most likely to bite a user, most likely first, each one then pinned by a test in the task that owns its code).",
         "Then a file map: every file the feature creates or changes, one line each with its responsibility, before any step.",
         "Then numbered steps, each with the files it touches, the exact signature or export it adds, the test that proves it, and the steps it depends on.",
         "A step holds code only where the implementer could not derive it: an algorithm the spec leaves open, exact copy, a fixed data shape; everywhere else one line of description beats a pasted function body.",
-        "An unknown the plan cannot settle (does the library support it, how slow is the query) becomes a spike: a probe task whose deliverable is the answer, written to the map's Notes, never a code task that guesses.",
+        "An unknown the plan cannot settle (does the library support it, how slow is the query) becomes a spike: a probe task whose deliverable is the answer, written to the issue's Notes, never a code task that guesses.",
         "Before the cut the planner reads its own plan once as the implementer will: every acceptance criterion maps to a step, no step names a file the file map lacks, a type or signature means one thing in every step that uses it, the Review focus names a test or step that covers it, and the plan is no longer than the feature needs.",
     ]
+
+    def test_the_engineering_manager_plays_stories_back_and_records_the_go(self):
+        text = read("sections/0h.md")
+        self.assertIn("plays it back to the product owner as one chunk of 200 to 300 words ending with what is wrong or missing, never as a card list", text)
+        self.assertIn('compose decide --project <slug> --new "stories <issue> approved" --quote', text)
+
+    DEEP_DIVE = ("When the planner reports `needs-user \"deep-dive <story>: no tech doc\"`, the engineering manager runs that deep dive with the product owner here (0b), "
+                 "records `compose decide --project <slug> --issue <story> --new \"the tech doc on <story> is approved\" --quote \"<their words>\"`, "
+                 "then sends `herdr agent prompt <slug>-orchestrator \"shaped <story>\"`.")
+    PLAYBACK = ("The proposal sits under the issue's `## Proposed stories`, and the playback names the stories the engineering manager proposes for `deep-dive`; "
+                "the planner applies that label when it runs `compose linear create`.")
+    AWAY = ("Under away a brainstorm (0b) or a stories playback is never answered by recommendation: it waits for the product owner and is listed in the digest, "
+            "and no stories approval is recorded without `--quote`; under yolo the engineering manager answers it as 0b says.")
+
+    def test_0h_routes_a_missing_tech_doc_and_names_the_draft(self):
+        lines = read("sections/0h.md").splitlines()
+        for line in (self.DEEP_DIVE, self.PLAYBACK, self.AWAY):
+            self.assertEqual(lines.count(line), 1, line)
+        at = lines.index
+        self.assertEqual(at(self.DEEP_DIVE), at(ShapingIsTheManagersBrainstorm.HANDOFF) + 1)
+        self.assertLess(at(next(l for l in lines if l.startswith("The team lead forwards a planner's `needs-user \"stories"))), at(self.PLAYBACK))
+
+    def test_a_task_is_sized_by_its_own_test_and_review(self):
+        self.assertEqual(read("sections/1.md").count("A task is the smallest unit that carries its own test and is worth its own review: setup, configuration, and docs fold into the task whose deliverable needs them."), 1)
 
     def test_the_split_rules_put_a_removed_file_under_delete(self):
         self.assertIn("A file the task removes goes under `delete:`, never `files:`", read("sections/2.md"))  # the planner reads sections/2.md, not docs/tasks.md
@@ -351,6 +375,7 @@ class PlanWritingRules(unittest.TestCase):
         text = read("sections/1.md")
         self.assertNotRegex(text, r"(?i)superpowers|writing-plans|plugins/cache")
         self.assertEqual(text.count(self.SKILLS_OFF), 1)
+        self.assertNotRegex(read("sections/0b.md"), r"(?i)superpowers|brainstorming skill|writing-plans|plugins/cache|builder-check-prompt")
 
     def test_the_plan_shape_is_stated_line_for_line(self):
         lines = read("sections/1.md").splitlines()
@@ -377,9 +402,9 @@ class PlanWritingRules(unittest.TestCase):
 
 
 class Frame0OptIn(unittest.TestCase):
-    FIRST = "The architect (a solutions architect: it scopes the feature with the product owner and frames the product and technical choices, each with a recommendation) reads SKILL.md and sections/0b.md; nothing else of the skill is loaded."
-    OPT_IN = "Nothing of Frame0 runs until a prototype question needs a wireframe: no session has `frame0` tools, and the app starts only when `compose frame0 up --project <slug>` is run, right before the first drawing, never at the start of a session on the chance that a visual card comes."
-    ONLY = "The first `compose frame0` command after `up` makes Frame0 ask the product owner to allow \"Frame0 MCP Server\" (the name compose asks with): report `needs-user` saying so and retry once they click Allow; if the command still fails, say so and wait."
+    FIRST = "The engineering manager shapes the feature with the product owner in conversation, one question at a time, and nothing is planned until the product owner approves the written design."
+    OPT_IN = "Nothing of Frame0 runs until a prototype question needs a wireframe: no session has `frame0` tools, and the app starts only when `compose frame0 up --project <slug>` is run, right before the first drawing, never at the start of a session on the chance that a wireframe will be needed."
+    ONLY = "The first `compose frame0` command after `up` makes Frame0 ask the product owner to allow \"Frame0 MCP Server\" (the name compose asks with): tell the product owner to click Allow, and retry once they say they did; if the command still fails, say so and wait."
 
     def setUp(self):
         self.text = read("sections/0b.md")
@@ -560,89 +585,84 @@ class LeadRelaysOnce(unittest.TestCase):
         self.assertIn("Then read ~/.claude/skills/herdr/SKILL.md;", self.text)
 
 
-class CardsOnTheMap(unittest.TestCase):
-    FORM = '`needs-user "<issue>: <n> cards <ids>; recommendation <one line>"`'
+class BrainstormShape(unittest.TestCase):
+    ONCE = [
+        "Each message ends with one question: a single sentence, with no list of example answers after it.",
+        "Open questions come first; a short menu of options only when the product owner is stuck, and a concrete proposal when they say \"just guess\" or \"what do you think?\".",
+        "As soon as one part is understood, describe it back in 200 to 300 words, mark every guess as a guess, and ask what is wrong or missing.",
+        "Before any question, look for its answer in Linear first:",
+        "Every decision the product owner makes is recorded at once with their words: `compose decide --project <slug> --new \"<decision>\" --quote \"<their words>\"` (`--issue <id>` when it is not the project's feature).",
+        "The design is written to the feature issue's description: Intent, Goals, Non-goals, Anti-goals, Constraints, Decided by the product owner, My calls, and Left to the builder.",
+        "Before the product owner sees the design, a builder check reads it cold: `compose buildercheck --project <slug> --issue <id> | compose crew start --project <slug> --role builder-check --title \"builder check\" --brief -`.",
+        "Sort what the builder check asks into three piles: answered already (put the answer in the design), minor (settle it and mark it as your call), and theirs (only the product owner can answer it, and the answer changes what gets built).",
+        "Bring the theirs pile in one message, most important first; that is the only round of questions the check produces.",
+        "Under away, a brainstorm waits for the product owner and is listed in the digest; under yolo, the engineering manager takes its own recommendation per question, tagged unconfirmed.",
+        "The planner (step 1) starts only after the product owner approves the design.",
+        "Before the product owner approves the design, a changed decision is recorded with `compose decide --project <slug> --new \"<decision>\" --replaces D<n> --quote \"<their words>\"`, which strikes the old line and adds the new D id.",
+        "After approval, a decision changes only through a change of course (step 8); `--replaces` refuses once stories exist.",
+        "A story or epic that needs a technical deep dive carries the Linear label `deep-dive`; propose it when a story's how is not obvious, and the product owner may add or remove it.",
+        "A deep dive is a brainstorm on the technical side, and its artifact is a Linear document titled `<issue id>: tech doc`, linked from the issue under `## Tech doc`, read by a builder check like any design.",
+        "Without the label, a story goes straight to the planner.",
+        "Think wide privately: before proposing anything, come up with several approaches and drop the weak ones, including any that fight what they said about why.",
+        "Before writing the design, bring the two or three approaches that survived, each with what it changes and costs, and the one you recommend with why, as one question; the choice goes under Decided by the product owner, or under My calls when they hand it to you, and a change small enough to approve in chat skips this.",
+        "Outside herdr, give the printed brief to a fresh harness subagent with no conversation context and read its one report.",
+        "The product owner approves the tech doc, and that is recorded the same way: `compose decide --project <slug> --issue <id> --new \"the tech doc on <id> is approved\" --quote \"<their words>\"`.",
+    ]
+    LOOKUP = [
+        "1. the feature issue's Decisions so far and Notes, and the description and comments of the feature, its epic, and the story at hand",
+        "2. a `compose linear list --search \"<terms>\"` search, scoped to the project in `.compose/linear.json`, for the question's key terms, since another epic or feature may have decided it",
+    ]
+    GONE = ("card set", "fog", "Destination", "lavish-axi poll", "accept every recommendation")
 
     def setUp(self):
         self.text = read("sections/0b.md")
         self.lines = self.text.splitlines()
 
-    def step(self, n):
-        start = next(i for i, l in enumerate(self.lines) if l.startswith(f"{n}. "))
-        end = next(i for i, l in enumerate(self.lines) if l.startswith(f"{n + 1}. "))
-        self.assertLess(start, end, n)
-        return self.lines[start:end]
+    def test_heading_and_first_line(self):
+        self.assertEqual(self.lines[0], "### 0b. Shape first, always")
+        self.assertEqual(self.lines[1], Frame0OptIn.FIRST)
 
-    def test_steps_keep_their_order(self):
-        starts = [next(i for i, l in enumerate(self.lines) if l.startswith(f"{n}. ")) for n in range(1, 8)]
-        self.assertEqual(starts, sorted(starts))
-
-    def test_step_2_writes_cards_to_the_map_first_numbered(self):
-        step = " ".join(self.step(2))
-        self.assertRegex(step, r"Not yet specified")
-        self.assertRegex(step, r"\bnumbered\b")
-        self.assertRegex(step, r"\bfirst\b")
-        self.assertIn("recommended option", step, "the card still carries its recommendation")
-
-    def test_step_2_names_the_card_format_the_report_enforces(self):
-        step = " ".join(self.step(2))
-        for want in ("`Q1. <question>`", "`Why: <why it matters>`", "`A. <option> - affects: <what choosing it changes>`",
-                     "two options at least, four at most", "`Recommendation: <letter> - <why>`", "`compose report` refuses a card short of any of these"):
-            self.assertIn(want, step)
-        self.assertIn("Visual cards are on the map like every card", step)
-
-    def test_step_5_records_through_compose_decide_only(self):
-        step = " ".join(self.step(5))
-        self.assertIn("The architect never writes a Decisions so far line", step)
-        self.assertIn("`compose decide`", step)
-        self.assertIn("(product owner, <date>; said: \"<their words>\")", step)
-        self.assertIn("`compose decide --change <cid>`", step)
-        self.assertNotIn('--section "## Decisions so far"', self.text)
-
-    def test_step_3_reports_one_line_and_keeps_the_lavish_file(self):
-        step = " ".join(self.step(3))
-        self.assertIn(self.FORM, step)
-        self.assertIn("visual cards open in Lavish: <url>", step)
-        self.assertNotIn("the text cards in full", self.text)
-        self.assertNotIn("with the text cards", self.text)
-
-    def test_one_working_link_bounded_polls_acknowledged_answers_and_disconnect(self):
-        text = " ".join(self.text.split())
-        for want in ("`url:` that `lavish-axi <file>` printed", "in no second host form", "a link that does not answer",
-                     "already asked and not answered", "answer in text", "rounds of 180000 ms", "--takeover",
-                     "reply <file> --agent-reply", "`browser_disconnected`", "`needs-user \"reminder: ...\"`"):
-            self.assertIn(want, text)
-        self.assertIn("are the options pictures, or words?", text)
-        self.assertEqual(self.text.count('is text although tokens are UI'), 1)
-        self.assertEqual(self.text.count('is visual.'), 1)
-
-    def test_yolo_answers_are_tagged_unconfirmed_on_the_map(self):
-        text = " ".join(self.text.split())
-        self.assertIn("`yolo:`", text)
-        self.assertIn("(yolo recommendation, unconfirmed, <date>)", text)
-
-    def test_steps_3_and_6_forward_unchanged_read_once_answer_by_card_id(self):
-        both = " ".join(self.step(3) + self.step(6))
-        self.assertRegex(both, r"team lead forwards[^.]*unchanged")
-        self.assertRegex(both, r"engineering manager[^.]*reads the issue once")
-        self.assertRegex(both, r"by card id")
-        self.assertIn("herdr agent prompt", " ".join(self.step(3)))
-        self.assertIn("`compose decisions --project <slug>`", " ".join(self.step(3)))
-        self.assertIn("`compose decide --project <slug> --quote", " ".join(self.step(3)))
-
-    def test_step_6_uses_the_one_line_form(self):
-        step = " ".join(self.step(6))
-        self.assertNotIn("text cards in a new `needs-user`", step)
-        self.assertIn("<n> cards <ids>", step)
-        self.assertIn("--agent-reply", step, "visual cards still go on the same page")
-
-    def test_plain_text_and_frame0_sentences_kept(self):
-        self.assertNotIn("\u2014", self.text)
-        for line in (Frame0OptIn.FIRST, Frame0OptIn.OPT_IN, Frame0OptIn.ONLY):
+    def test_each_rule_is_stated_once(self):
+        for line in self.ONCE:
             self.assertEqual(self.lines.count(line), 1, line)
-        new = ("<n> cards <ids>", "unchanged", "reads the issue once", "by card id", "numbered")
-        for line in self.step(2) + self.step(3) + self.step(6):
-            if any(m in line for m in new):
+
+    def test_the_linear_lookup_list_follows_its_sentence(self):
+        i = self.lines.index(self.ONCE[3])
+        self.assertEqual(self.lines[i + 1:i + 3], self.LOOKUP)
+
+    def test_the_rules_keep_the_brainstorm_order(self):
+        at = lambda s: self.lines.index(s)
+        order = [at(self.ONCE[0]), at(self.ONCE[2]), at(self.ONCE[5]), at(self.ONCE[6]), at(self.ONCE[7]), at(self.ONCE[8]), at(self.ONCE[10])]
+        self.assertEqual(order, sorted(order))
+        self.assertEqual(self.lines[-1] if self.lines[-1] else self.lines[-2], self.ONCE[10], "the hand-off to step 1 closes the section")
+
+    def test_new_lines_sit_in_their_paragraphs(self):
+        at = self.lines.index
+        self.assertLess(at("**How it gets made.**"), at(self.ONCE[17]))
+        self.assertLess(at(self.ONCE[17]), at("**Play it back.**"))
+        self.assertLess(at(self.ONCE[6]), at(self.ONCE[18]))
+        self.assertLess(at(self.ONCE[18]), at("Hand nothing over until it is back."))
+        self.assertLess(at(self.ONCE[14]), at(self.ONCE[19]))
+        self.assertLess(at(self.ONCE[19]), at(self.ONCE[15]))
+        self.assertEqual(self.text.count("(`--issue <id>` when it is not the project's feature)"), 1)
+
+    def test_the_card_flow_is_gone(self):
+        for old in self.GONE:
+            self.assertNotIn(old, self.text, old)
+        for old in ("compose architect", "--accept-all", "queuePrompt", "data-lavish-question", "Not yet specified"):
+            self.assertNotIn(old, self.text, old)
+
+    def test_frame0_rules_stay_for_what_the_product_owner_will_look_at(self):
+        for line in (Frame0OptIn.OPT_IN, Frame0OptIn.ONLY):
+            self.assertEqual(self.lines.count(line), 1, line)
+        proto = next(i for i, l in enumerate(self.lines) if l.startswith("A **prototype** question about how a screen or flow should look"))
+        self.assertLess(self.lines.index(self.ONCE[0]), proto)
+        self.assertLess(proto, self.lines.index(self.ONCE[10]))
+
+    def test_plain_dashes_and_one_sentence_per_line(self):
+        self.assertNotIn("—", self.text)
+        for line in self.lines[1:]:
+            if not line.startswith("|"):
                 self.assertNotRegex(line, r"[.!?] [A-Z]", line)
 
 
@@ -696,6 +716,19 @@ class OneWatchCoversTheManagersOwnTeammates(unittest.TestCase):
         self.assertIn("`--from orchestrator` watch", body)
         for line in body.splitlines():
             self.assertNotRegex(line, r"\. [A-Z]", line)
+
+    def test_planner_command_shapes_an_unshaped_ticket_here_first(self):
+        text = read("commands/planner.md")
+        self.assertEqual(text.splitlines().count("Accept an issue id or URL, or a project link; a loose idea becomes a new feature issue first (0a), then is shaped like any unshaped ticket."), 1)
+        self.assertNotIn("A loose idea becomes", text)
+        self.assertEqual(text.splitlines().count(
+            "For `stories <issue>`, play the proposal back as one chunk, record `compose decide --project <slug> --new \"stories <issue> approved\" --quote \"<their words>\"`, "
+            "then `herdr agent prompt <slug>-planner \"stories approved: create them\"`."), 1)
+        self.assertIn("When the ticket has no approved design (a feature or epic), or is a story labeled `deep-dive` with no tech doc, brainstorm it here first as sections/0b.md says, then start the planner.", text)
+        self.assertNotIn("Refuse a loose idea", text)
+        self.assertIn("In this session, never plan, write stories, or cut tasks.", text)
+        for tool in ("Bash(compose decide:*)", "Bash(compose buildercheck:*)", "Bash(compose linear:*)"):
+            self.assertIn(tool, text.split("---\n")[1])
 
     def test_0h_says_the_watch_passes_teammates_the_manager_started(self):
         lines = read("sections/0h.md").splitlines()
@@ -1318,13 +1351,13 @@ class LinkFeatures(unittest.TestCase):
         self.assertFalse([l for l in bullet if "\u2014" in l])
 
     def test_planner_epic_line_ends_with_the_link_rule(self):
-        brief = read("bin/fc_briefs.py").split('PLANNER_BRIEF = """', 1)[1].split('"""', 1)[0]
+        brief = read("bin/fc_planner_brief.py").split('PLANNER_BRIEF = """', 1)[1].split('"""', 1)[0]
         lines = [l.strip() for l in brief.splitlines()]
         epic = [i for i, l in enumerate(lines) if l.startswith(self.EPIC)]
         self.assertEqual(len(epic), 1)
         line = lines[epic[0]]
         self.assertTrue(line.endswith(" " + self.LINK), line)
-        self.assertIn("Fog (its features cannot be named yet) is architect's: hand it to 0b and stop.", line)
+        self.assertIn("An epic whose features cannot be named yet goes back to shaping (0b): report needs-user and stop.", line)
         self.assertEqual(brief.count(self.LINK), 1)
         self.assertTrue(lines[epic[0] + 1].startswith("- Feature: "))
 
@@ -1580,7 +1613,7 @@ class DryRunDocs(unittest.TestCase):
         self.assertEqual(sum(l.count("--dry-run") for l in read("docs/cli.md").splitlines() if l.startswith("| `setup` |")), 1)  # `clean --abandon` has its own
 
 
-FEATURE_HEAD = "- **feature**: if its map is not clear, architect it (step 0b). When it has no stories, the planner teammate proposes them as a `needs-user` list "
+FEATURE_HEAD = "- **feature**: if it has no approved design, shape it (step 0b). When it has no stories, the planner teammate proposes them as a `needs-user` list "
 FEATURE_TAIL = " and creates them on the product owner's go; then it writes the plan (step 1) and splits (step 2) under each story."
 LEAN_PAREN = "(one issue per story, each the thinnest slice that works end to end and unblocks the next, at most 5 criteria, in the order they should ship)"
 PLANNING_MISS = "A second wave for polish or a toolchain fix the first wave could have seen is a planning miss."
@@ -1720,7 +1753,8 @@ class ManagerProseNamesPostures(unittest.TestCase):
         self.assertLess(self.lines.index(self.BIAS), end)
         away = "\n".join(self.lines[start:end])
         for want in ["compose away off --project <slug>", "away: <card ids>: accept-all", "compose decide --project <slug> --accept-all",
-                     "(away recommendation, unconfirmed, <date>)", "compose away decided --project <slug>", "compose decide --quote"]:
+                     "(away recommendation, unconfirmed, <date>)", "compose away decided --project <slug>",
+                     'compose decide --project <slug> "<id>" --quote "<their words>"']:
             self.assertIn(want, away)
         for gone in ["compose yolo", "yolo:", "/compose:yolo", "(yolo recommendation"]:
             self.assertNotIn(gone, away)
@@ -1809,10 +1843,11 @@ class SkillNamesPostures(unittest.TestCase):
         for old in ("yolo without --push never pushes", "yolo never covers it", "(`results/yolo.json`, `event yolo=on`)"):
             self.assertNotIn(old, text)
 
-    def test_0b_tag_line_once_and_old_one_gone(self):
-        lines = read("sections/0b.md").splitlines()
-        self.assertEqual(lines.count(self.TAG), 1)
-        self.assertNotIn("An answer that starts `yolo:` is", "\n".join(lines))
+    def test_0b_names_the_unconfirmed_tag_and_card_prefixes_are_gone(self):
+        text = read("sections/0b.md")
+        self.assertNotIn(self.TAG, text)  # 0b asks no cards, so no answer starts `away:` or `yolo:` there
+        self.assertNotIn("An answer that starts `yolo:` is", text)
+        self.assertEqual(text.count("`(yolo recommendation, unconfirmed, <date>)`"), 1)
 
     def test_no_em_dash(self):
         for rel in ("SKILL.md", "sections/0b.md"):
@@ -2183,5 +2218,52 @@ class HarnessTierDocs(unittest.TestCase):
             self.assertNotIn("—", text, rel)
 
 
+class ShapingIsTheManagersBrainstorm(unittest.TestCase):
+    HANDOFF = ("When the team lead reports `needs-user \"shape <issue>: ...\"`, the engineering manager brainstorms that issue with the product owner here (0b), "
+               "then sends `herdr agent prompt <slug>-orchestrator \"shaped <issue>\"`.")
+    ASK_ONCE = ("Every round-trip to the product owner stalls the project, so shape in one conversation (0b): "
+                "start groundwork and the smoke check (0g) at once so toolchain findings join the brainstorm.")
+
+    def test_0h_names_the_handoff_once(self):
+        self.assertEqual(read("sections/0h.md").count(self.HANDOFF), 1)
+        self.assertIn('`herdr agent prompt <slug>-orchestrator "shaped <id>"`', read("sections/0b.md"))
+        self.assertIn("or at once in a new repo", read("sections/0h.md"))
+        self.assertIn("on `shaped <issue>` it starts the planner (step 1).", read("sections/0h.md"))
+        self.assertIn("0b is the engineering manager's; inside herdr the team lead never shapes, it reports `needs-user` and waits (0h).", read("SKILL.md"))
+
+    def test_skill_shapes_in_one_conversation_not_through_architect_cards(self):
+        text = read("SKILL.md")
+        for gone in ("ask once, through architect", "as a card in the card format (0b)"):
+            self.assertNotIn(gone, text)
+        self.assertIn(self.ASK_ONCE, text)
+
+class UserDocsShaping(unittest.TestCase):
+    def test_user_docs_describe_shaping_as_a_conversation(self):
+        how = read("docs/how-it-works.md")
+        for line in (
+            "The engineering manager shapes each feature with you in one conversation, one question at a time, and writes the design to the feature issue.",
+            "A builder check reads the design before you do.",
+        ):
+            self.assertIn(line + "\n", how)
+            self.assertEqual(how.count(line), 1, line)
+        for gone in ("Next, the engineering manager shapes each feature with you.", "Before you see the design, a builder check reads it cold"):
+            self.assertNotIn(gone, how)
+        rows = read("docs/cli.md").splitlines()
+        decide = [l for l in rows if l.startswith("| `decide`")]
+        self.assertEqual(len(decide), 1)
+        self.assertIn("--new", decide[0])
+        self.assertIn("--replaces", decide[0])
+        architect = [l for l in rows if l.startswith("| `architect")]
+        self.assertEqual(len(architect), 1)
+        self.assertIn("--change", architect[0])
+        self.assertEqual(len([l for l in rows if l.startswith("| `buildercheck`")]), 1)
+        for rel in ("docs/how-it-works.md", "README.md", "docs/herdr.md", "docs/tasks.md", "docs/requirements.md", "docs/workspaces.md"):
+            text = read(rel).lower()
+            self.assertNotIn("wayfinder", text, rel)
+            self.assertNotIn("card set", text, rel)
+        self.assertNotRegex(read("docs/herdr.md"), r"compose architect --project <slug> --extra")
+
+
 if __name__ == "__main__":
     unittest.main()
+

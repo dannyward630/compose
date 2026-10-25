@@ -10,6 +10,7 @@ _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoad
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
+import fc_planner_brief
 
 
 _mcp = mock.patch.object(fc.fc_mcp, "installed_servers", side_effect=lambda cwd: [])  # no test runs the real `claude mcp list`
@@ -65,27 +66,15 @@ class Groundwork(unittest.TestCase):
         self.assertIn("`compose verify --project p --prove`: each must fail only because the feature is missing, and `run` refuses", brief)
         self.assertTrue(brief.rstrip().endswith("Stub Open(dsn string) (*sql.DB, error)."))
 
-    def test_architect_brief_asks_by_text_and_opens_lavish_only_for_visual_cards(self):
-        (self.proj / "linear.json").write_text(json.dumps({"feature": "NEB-9"}))
-        out = io.StringIO()
-        with self.patched()[0], self.patched()[1], mock.patch("sys.stdout", out):
-            fc.fc_briefs.cmd_architect(SimpleNamespace(repo=str(self.repo), project="p", extra="Spec: README.md"))
-        brief = out.getvalue()
-        page = str(self.proj / "lavish" / "architect.html")
-        self.assertIn("NEB-9", brief)
-        self.assertIn("Words are text (the default)", brief)
-        self.assertIn("A visual card is never asked as text", brief)
-        self.assertIn("Visual cards go on the map like every card, and on one page as well", brief)
-        self.assertIn("needs-user", brief)
-        self.assertIn("before any poll", brief)
-        self.assertIn('data-lavish-annotate="off"', brief)
-        self.assertIn("data-lavish-question", brief)
-        self.assertIn("Answers arrive in the poll's `text`", brief)
-        self.assertIn('answer: [{question, answer}, ...]', brief)
-        self.assertIn("run it again at once", brief)
-        self.assertIn(f"npx -y lavish-axi poll {page}", brief)
-        self.assertIn("Decisions so far", brief)
-        self.assertTrue(brief.rstrip().endswith("Spec: README.md"))
+    def test_the_architect_is_only_the_change_of_course_one_and_shaping_is_the_brainstorm(self):
+        r = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "compose.py"), "architect", "--project", "p"],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("the following arguments are required: --change", r.stderr)
+        self.assertFalse(hasattr(fc.fc_briefs, "ARCHITECT_BRIEF"))
+        r = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "compose.py"), "architect", "--help"],
+                           capture_output=True, text=True)
+        self.assertIn("sections/0b.md", " ".join(r.stdout.split()))
 
     def test_a_test_crew_commits_its_files_as_separate_paths(self):
         brief = fc.fc_briefs.test_brief({"id": "005", "protected": ["tests/test_a.py", "tests/test_b.py"], "test": "true"}, "")
@@ -103,13 +92,15 @@ class Groundwork(unittest.TestCase):
         brief = self.planner()
         for s in ("NEB-9", str(self.repo), "p-planner", "### Codebase brief", "## Plan", "needs-user", "blocked",
                   "compose sync", "spec-check --project p", "compose tasks", "change start --why", "change done",
-                  "crew start --role", "explore", "groundwork", "architect", "Design", "designer"):
+                  "crew start --role", "explore", "groundwork", "shaping (0b)", "Design", "designer"):
             self.assertIn(s, brief)
         runs = [m.start() for m in re.finditer(r"compose run\b", brief)]
         self.assertTrue(runs, "the brief must say the planner never runs `compose run`")
         for i in runs:  # every mention forbids it; none tells the planner to dispatch
             self.assertRegex(brief[max(0, i - 60):i], r"[Nn]ever|[Nn]ot\b|\b[Nn]o\b")
         self.assertTrue(brief.rstrip().endswith("Spec: README.md"))
+        self.assertIn("deep-dive", brief)
+        self.assertIn("fold what the tech doc decides into each task brief: implementers never read Linear", brief)
 
     MCP_TOOLS = ("save_issue", "get_issue", "list_issues", "save_comment", "get_project", "list_issue_labels", "create_issue_label",
                  "save_document", "mcp__claude_ai_Linear")
@@ -123,15 +114,11 @@ class Groundwork(unittest.TestCase):
 
     def test_briefs_name_compose_linear_verbs_and_no_linear_mcp_tool(self):
         b = fc.fc_briefs
-        printed = [self.printed(c, **kw) for c, kw in ((b.cmd_groundwork, {}), (b.cmd_architect, {}), (b.cmd_planner, {"issue": None}),
-                                                         (b.cmd_explore, {}))]
-        consts = [getattr(b, n) for n in ("GROUNDWORK_BRIEF", "EXPLORE_BRIEF", "ARCHITECT_BRIEF", "PLANNER_BRIEF", "TOOLSMITH_BRIEF", "CHANGE_BRIEF")]
+        printed = [self.printed(c, **kw) for c, kw in ((b.cmd_groundwork, {}), (b.cmd_planner, {"issue": None}), (b.cmd_explore, {}))]
+        consts = [getattr(b, n) for n in ("GROUNDWORK_BRIEF", "EXPLORE_BRIEF", "TOOLSMITH_BRIEF", "CHANGE_BRIEF")] + [fc_planner_brief.PLANNER_BRIEF]
         for brief in printed + consts:
             self.assertEqual([t for t in self.MCP_TOOLS if t in brief], [], brief[:60])
-        _, architect, planner, explore = printed
-        self.assertIn('compose linear list --search', architect)
-        self.assertNotRegex(architect, r'compose linear update[^`]*--section "## Decisions so far"')  # answers land through `compose decide`
-        self.assertIn("compose decide", architect)
+        _, planner, explore = printed
         self.assertRegex(planner, r'compose linear update[^`]*--section "## Plan"')
         self.assertIn("compose linear create", planner)
         self.assertIn("`compose sync` (it reads the feature and every issue under it from Linear) as sections/2.md says", planner)
@@ -145,6 +132,26 @@ class Groundwork(unittest.TestCase):
         self.assertIn("NEB-12", brief)
         self.assertTrue(brief.rstrip().endswith("Story NEB-12 only."))
         self.assertNotIn("Project notes", self.planner(extra=None))
+
+    def test_builder_check_brief_reads_the_artifact_cold_and_reports_ranked_questions(self):
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "NEB-9"}))
+        def brief(**kw):
+            out = io.StringIO()
+            with self.patched()[0], self.patched()[1], mock.patch("sys.stdout", out), mock.patch("sys.stdin", io.StringIO("")):
+                fc.fc_buildercheck.cmd_buildercheck(SimpleNamespace(repo=str(self.repo), project="p", **{"issue": None, "extra": None, **kw}))
+            return out.getvalue()
+        text = brief(issue="NEB-4")
+        for s in ("NEB-4", "compose linear get NEB-4 --body", "compose linear doc list", "with no one to ask", "Rank them by importance",
+                  "nothing important left", "compose report", "never write Linear", "p-builder-check"):
+            self.assertIn(s, text)
+        self.assertNotRegex(text, r"(?i)superpowers|plugins/cache")
+        self.assertNotIn("\u2014", text)
+        self.assertIn("NEB-9", brief())  # default: the project's feature
+        self.assertTrue(brief(extra="Mind the API.").rstrip().endswith("Mind the API."))
+        reports = [l.strip() for l in text.splitlines() if "compose report" in l]
+        self.assertEqual(len(reports), 2)
+        for line in reports:
+            self.assertIn("`compose report --project p --as p-builder-check done ", line)
 
     def test_planner_is_a_command_with_issue_and_extra(self):
         def help(*argv):
@@ -308,11 +315,11 @@ class Explore(unittest.TestCase):
     def test_no_brief_names_a_graft_command(self):
         b = fc.fc_briefs
         self.assertIn('trail ask "<question>" --source', b.GROUNDWORK_BRIEF)
-        self.assertIn('trail ask "<question>" --source', b.ARCHITECT_BRIEF)
         self.assertIn('trail ask "<question>" --source', b.CHANGE_BRIEF)
-        for name in ("GROUNDWORK_BRIEF", "EXPLORE_BRIEF", "ARCHITECT_BRIEF", "PLANNER_BRIEF", "CHANGE_BRIEF"):
-            self.assertNotRegex(getattr(b, name), r"\bgraft (ask|callers|map|skeleton|grep)\b", name)
-            self.assertNotRegex(getattr(b, name), r"`graft\b", name)
+        for name in ("GROUNDWORK_BRIEF", "EXPLORE_BRIEF", "PLANNER_BRIEF", "CHANGE_BRIEF"):
+            brief = getattr(fc_planner_brief if name == "PLANNER_BRIEF" else b, name)
+            self.assertNotRegex(brief, r"\bgraft (ask|callers|map|skeleton|grep)\b", name)
+            self.assertNotRegex(brief, r"`graft\b", name)
 
 
 class SectionRewrite(unittest.TestCase):
@@ -335,13 +342,13 @@ class SectionRewrite(unittest.TestCase):
             cmd(SimpleNamespace(repo=str(self.repo), project="p", extra=None, **kw))
         return " ".join(out.getvalue().split())
 
-    def test_architect_and_change_briefs_never_write_decisions_so_far_in_step_5(self):
-        for brief in (self.printed(fc.fc_briefs.cmd_architect), " ".join(fc.fc_briefs.CHANGE_BRIEF.split())):
-            step = brief[brief.index(" 5. "):brief.index(" 6. ")]
-            self.assertTrue(step.startswith(" 5. You never write a Decisions so far line."), step[:80])
-            for s in ("`compose decide", self.GET, "run by the engineering manager with the product owner's words attached"):
-                self.assertIn(s, step)
-            self.assertNotIn('--section "## Decisions so far"', brief)
+    def test_the_change_brief_never_writes_decisions_so_far_in_step_5(self):
+        brief = " ".join(fc.fc_briefs.CHANGE_BRIEF.split())
+        step = brief[brief.index(" 5. "):brief.index(" 6. ")]
+        self.assertTrue(step.startswith(" 5. You never write a Decisions so far line."), step[:80])
+        for s in ("`compose decide", self.GET, "run by the engineering manager with the product owner's words attached"):
+            self.assertIn(s, step)
+        self.assertNotIn('--section "## Decisions so far"', brief)
 
     def test_change_brief_keeps_its_strike_through_format(self):
         change = " ".join(fc.fc_briefs.CHANGE_BRIEF.split())
@@ -357,9 +364,9 @@ class SectionRewrite(unittest.TestCase):
 
     def test_no_brief_says_patch_append(self):
         b = fc.fc_briefs
-        printed = [self.printed(c, **kw) for c, kw in ((b.cmd_groundwork, {}), (b.cmd_architect, {}), (b.cmd_planner, {"issue": None}), (b.cmd_explore, {}))]
-        consts = [" ".join(getattr(b, n).split()) for n in dir(b) if n.endswith("_BRIEF")] + [" ".join(fc.fc_figma.DESIGNER_BRIEF.split())]
-        self.assertEqual(len(consts), 7)
+        printed = [self.printed(c, **kw) for c, kw in ((b.cmd_groundwork, {}), (b.cmd_planner, {"issue": None}), (b.cmd_explore, {}))]
+        consts = [" ".join(getattr(b, n).split()) for n in dir(b) if n.endswith("_BRIEF")] + [" ".join(fc.fc_figma.DESIGNER_BRIEF.split()), " ".join(fc_planner_brief.PLANNER_BRIEF.split())]
+        self.assertEqual(len(consts), 6)
         self.assertEqual([brief[:60] for brief in printed + consts if "patch append" in brief], [])
 
 
@@ -558,7 +565,7 @@ class PlannerRules(unittest.TestCase):
 
     def test_the_seven_spec_checks_come_in_numbered_order(self):
         at = -1
-        for n, kw in enumerate(("Not yet specified", "### Codebase brief", "traceable", "trail ask", "protected:", "open how", "contract"), 1):
+        for n, kw in enumerate(("Settled design: Intent", "### Codebase brief", "traceable", "trail ask", "protected:", "open how", "contract"), 1):
             i = self.brief.find(kw, at + 1)
             self.assertGreater(i, at, f"spec check {n} ({kw}) missing or out of order")
             at = i
@@ -606,15 +613,15 @@ class LeanPlannerBrief(unittest.TestCase):
         for phrase in ("Each story is the thinnest slice that works end to end and unblocks the next, at most 5 criteria.",
                        'Split cues: "all", "every", several When/Then pairs, several outside systems.',
                        "No split fits: a time-boxed probe answers the unknown first, then the split.",
-                       "in ship order, with a card id per story"):
+                       "in ship order."):
             self.assertIn(phrase, step)
         self.assertNotIn("one per user-visible slice", self.brief)
 
     def test_the_step_keeps_its_anchors_in_order(self):
         flat = " ".join(self.brief.split())
         at = -1
-        for kw in ("Stories missing", "draft the proposal on the map", "in ship order", "with a card id per story",
-                   '`needs-user "<issue>: <n> cards <ids>; recommendation <one line>"`', "Then check and cut each story"):
+        for kw in ("Stories missing", "draft the proposal under `## Proposed stories` on the issue", "in ship order",
+                   'report needs-user "stories <issue>: <n> drafted on the issue"', "`compose linear create` the stories", "Then check and cut each story"):
             i = flat.find(kw, at + 1)
             self.assertGreater(i, at, f"{kw} missing or out of order")
             at = i
@@ -631,42 +638,67 @@ class LeanPlannerBrief(unittest.TestCase):
 
     def test_the_template_keeps_its_placeholders_and_house_text(self):
         import string
-        fields = {f for _, f, _, _ in string.Formatter().parse(fc.fc_briefs.PLANNER_BRIEF) if f}
+        fields = {f for _, f, _, _ in string.Formatter().parse(fc_planner_brief.PLANNER_BRIEF) if f}
         self.assertEqual(fields, {"issue", "name", "slug", "wt"})
         for banned in ("—", "Product-Manager-Skills", "deanpeters"):
-            self.assertNotIn(banned, fc.fc_briefs.PLANNER_BRIEF)
+            self.assertNotIn(banned, fc_planner_brief.PLANNER_BRIEF)
             self.assertNotIn(banned, self.brief)
 
 
 class TersePlannerBrief(unittest.TestCase):
     """The planner brief is terse: it fits its caps, and its Feature bullet carries the exact terse lines."""
     FEATURE = (
-        "     No plan: write `## Plan` in the feature description with `compose linear update <id> --section \"## Plan\" --file <path>`:",
-        "     a header (Goal, Architecture, Global constraints, Review focus), a file map, then numbered steps, each with files touched,",
-        "     the exact signature it adds, the test that proves it, and dependencies; settled decisions are not reopened. Code only where",
-        "     the implementer cannot derive it; an unknown the plan cannot settle is a spike task whose answer goes on the map's Notes.",
-        "     Stories missing: draft the proposal on the map, in ship order, with a card id per story. Each story is the thinnest slice",
-        '     that works end to end and unblocks the next, at most 5 criteria. Split cues: "all", "every", several When/Then pairs,',
-        "     several outside systems. No split fits: a time-boxed probe answers the unknown first, then the split. Name the stories",
-        '     in one `needs-user "<issue>: <n> cards <ids>; recommendation <one line>"` line; create them with `compose linear create`',
-        "     only on the product owner's go. Then check and cut each story.",
+        '     No plan: write it with `compose linear update <id> --section "## Plan" --file <path>`: a header (Goal,',
+        '     Architecture, Global constraints, Review focus: the five inputs most likely to bite a user, each pinned by',
+        '     a test), a file map, then numbered steps, each with files touched, the exact signature it adds, the test',
+        '     that proves it, and dependencies; settled decisions are not reopened. Code only where the implementer',
+        "     cannot derive it; an unknown the plan cannot settle is a spike task whose answer goes on the issue's",
+        '     Notes. Stories missing: draft the proposal under `## Proposed stories` on the issue, in ship order. Each',
+        '     story is the thinnest slice that works end to end and unblocks the next, at most 5 criteria. Split cues:',
+        '     "all", "every", several When/Then pairs, several outside systems. No split fits: a time-boxed probe',
+        '     answers the unknown first, then the split. Then `report needs-user "stories <issue>: <n> drafted on the',
+        '     issue"`; the engineering manager plays it back; on its go, `compose linear create` the stories, labeled',
+        '     `deep-dive` where the go says, then remove `## Proposed stories`. Then check and cut each story.',
     )
 
     def test_the_brief_and_the_module_fit_their_caps(self):
-        self.assertLessEqual(len(fc.fc_briefs.PLANNER_BRIEF), 8200)
+        self.assertLessEqual(len(fc_planner_brief.PLANNER_BRIEF), 8200)
         self.assertLessEqual(len((Path(__file__).resolve().parents[1] / "bin" / "fc_briefs.py").read_text().splitlines()), 600)
+        self.assertLessEqual(len((Path(__file__).resolve().parents[1] / "bin" / "fc_planner_brief.py").read_text().splitlines()), 600)
 
     def test_the_feature_bullet_lines_are_the_terse_text_line_for_line(self):
-        lines = fc.fc_briefs.PLANNER_BRIEF.splitlines()
+        lines = fc_planner_brief.PLANNER_BRIEF.splitlines()
         first = next(n for n, l in enumerate(lines) if l.lstrip().startswith("- Feature: "))
         self.assertTrue(lines[first].endswith("and it has a `## Plan`."), lines[first])
         self.assertEqual(tuple(lines[first + 1:first + 1 + len(self.FEATURE)]), self.FEATURE)
 
 
+class PlannerBriefReadsTheBrainstorm(unittest.TestCase):
+    """The planner checks the brainstormed design, routes a deep-dive story with no tech doc back, and drafts stories in one section."""
+    def flat(self):
+        return " ".join(fc_planner_brief.PLANNER_BRIEF.split())
+
+    def test_the_design_is_approved_by_its_decision_line_and_empty_open_questions(self):
+        flat = self.flat()
+        self.assertIn("- Feature: check the design is approved (Decisions so far has `the design on <id> is approved`, `## Open questions` empty),", flat)
+        self.assertIn("1. Settled design: Intent, Decisions so far, Open questions empty.", flat)
+        for gone in ("Destination", "Not yet specified empty", "design is settled"):
+            self.assertNotIn(gone, flat)
+
+    def test_a_deep_dive_story_with_no_tech_doc_is_skipped_and_the_rest_are_cut(self):
+        self.assertIn('report `needs-user "deep-dive <story>: no tech doc"`, skip that story and cut the others.', self.flat())
+        self.assertNotIn("None yet: needs-user, stop.", self.flat())
+
+    def test_the_story_proposal_has_its_own_section_removed_once_the_stories_exist(self):
+        flat = self.flat()
+        self.assertIn("draft the proposal under `## Proposed stories` on the issue, in ship order.", flat)
+        self.assertIn("`compose linear create` the stories, labeled `deep-dive` where the go says, then remove `## Proposed stories`.", flat)
+
+
 class PlanJudgmentBrief(unittest.TestCase):
     """Step 5 of the planner brief tells the planner to write the delivery plan's judgment sections at each cut."""
     PHRASES = (
-        'find the map\'s "<map id>: delivery plan" in `compose linear doc list`',
+        'find the "<map id>: delivery plan" in `compose linear doc list`',
         "write its judgment sections (Outside waits, How this maps to compose, Priority when something has to give) at each cut"
         ' with `compose linear doc update <id> --section "<heading>" --file <path>`',
         "priority is the ranked list under Priority when something has to give; Linear's priority field stays unused",
@@ -1081,7 +1113,7 @@ class NoTestToWrite(unittest.TestCase):
 class ScenarioPlannerLine(unittest.TestCase):
     NEW = "   Run the `test:` command; what it covers; unlisted holdout cases; then a `scenarios` block (SKILL.md)."
     OLD = "   How to run (the `test:` command), what is covered in words, and that the test has holdout cases not listed."
-    BRIEF = fc.fc_briefs.PLANNER_BRIEF
+    BRIEF = fc_planner_brief.PLANNER_BRIEF
 
     def test_the_new_line_follows_the_test_plan_heading(self):
         lines = self.BRIEF.splitlines()
@@ -1172,14 +1204,13 @@ class ContractSlice(unittest.TestCase):
 class TerseTemplatesB(unittest.TestCase):
     B = fc.fc_briefs
     META = {"id": "001", "title": "t", "protected": ["tests/test_a.py"], "test": "x", "files": ["a.py"]}
-    SIZES = {"GROUNDWORK_BRIEF": 3250, "ARCHITECT_BRIEF": 5800, "CHANGE_BRIEF": 3900}
-    PLACEHOLDERS = {"GROUNDWORK_BRIEF": "contract e2e_dir slug stacks trunk verify wt", "ARCHITECT_BRIEF": "feature name page slug wt",
+    SIZES = {"GROUNDWORK_BRIEF": 3250, "CHANGE_BRIEF": 3900}
+    PLACEHOLDERS = {"GROUNDWORK_BRIEF": "contract e2e_dir slug stacks trunk verify wt",
                     "CHANGE_BRIEF": "cid feature name page reflect slug why wt"}
     LAVISH = ["npx -y lavish-axi poll {page} --owner {name} --takeover", "lavish-axi reply {page} --agent-reply", "npx -y lavish-axi end {page}",
               "npx -y lavish-axi {page}", "--reopen", "`yolo:`", "reminder:", "(yolo recommendation, unconfirmed, <date>)", "`away:`"]
     KEPT = {"GROUNDWORK_BRIEF": ["`compose verify --project {slug} --prove`", '`working "stubs ready: <commit>; contract at {contract}"`',
                                  '`blocked "<task>: brief lacks <what>"`', "`compose timed`", "`protected:`", "`test:`"],
-            "ARCHITECT_BRIEF": LAVISH + ["`compose decide`", "`compose decisions --project {slug}`", "`compose linear get <id> --body`"],
             "CHANGE_BRIEF": LAVISH + ["`evidence`", "`compose linear get <id> --body`", "change {cid}: "]}
 
     def text(self, name):

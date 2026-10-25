@@ -46,6 +46,16 @@ class RoleModels(unittest.TestCase):
         self.assertEqual(fc.fc_crew.fc_crewpick.crew_model("revert", "small"), "claude:claude-haiku-5-5")
         self.assertEqual(fc.fc_crew.fc_crewpick.crew_model("orchestrator", "claude:claude-x"), "claude:claude-x")
 
+    def test_wayfinder_is_no_longer_a_name_for_the_architect(self):
+        r = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "compose.py"), "wayfinder", "--project", "p"],
+                           capture_output=True, text=True)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("invalid choice: 'wayfinder'", r.stderr)
+        self.config({"wayfinder": "claude:claude-haiku-5-5", "default": "claude:claude-sonnet-5-5"})
+        self.assertNotIn("architect", fc.fc_config.CREW_MODELS)
+        self.assertEqual(fc.fc_crew.fc_crewpick.crew_model("architect"), "claude:claude-sonnet-5-5")
+        self.assertFalse(hasattr(fc.fc_config, "OLD_NAMES"))
+
     def test_no_crew_config_keeps_claude_default(self):
         self.config({})
         self.assertEqual(fc.fc_crew.fc_crewpick.crew_model("groundwork"), "claude")
@@ -262,6 +272,10 @@ class DesignerModels(unittest.TestCase):
         with mock.patch.object(fc.fc_config, "CONFIG_PATH", d / "config.json"), mock.patch.object(fc.fc_config, "PROBE_CACHE", d / "probe.json"):
             fc.fc_config.apply_config()
         for k in ("CREW_MODELS", "CREW_EFFORT", "CREW_FALLBACK"): self.addCleanup(setattr, fc.fc_config, k, {})
+
+    def test_builder_check_defaults_to_opus_high_with_no_user_config(self):
+        self.config(fc_defaults.DEFAULT_MODELS["crew"])
+        self.assertEqual(fc.fc_crew.fc_crewpick.crew_pick("builder-check")[:2], ("claude:claude-opus-5-5", "high"))
 
     def test_design_roles_use_the_design_entry_else_default(self):
         self.config({**CREW, "design": {"model": "claude:claude-opus-5-5", "effort": "high"}})

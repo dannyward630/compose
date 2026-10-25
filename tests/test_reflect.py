@@ -70,6 +70,12 @@ class Reflect(unittest.TestCase):
         self.assertEqual([v["line"] for v in rec["flagged"]], ["Store drafts in localStorage", "Show a toast on save"])
         self.assertEqual(json.loads(path.read_text())["trigger"], "task:003")
 
+    def test_a_brainstormed_design_without_a_destination_screens_against_its_intent(self):
+        proj = project(MAP.replace("## Destination\nDrafts survive a reload.", "## Intent\nDrafts outlive a crash."))
+        with mock.patch.object(fc.fc_models, "jev_ask", return_value=answers()) as ask:
+            fc.fc_change.reflect(proj, "verify", "a finding")
+        self.assertEqual(ask.call_args.args[2]["destination"], "Drafts outlive a crash.")
+
     def test_no_decisions_and_nothing_against_asks_nothing(self):
         proj = project("## Destination\nx\n")
         with mock.patch.object(fc.fc_models, "jev_ask") as ask:

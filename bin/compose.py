@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fc_cost, fc_mcp  # noqa: E402
-import fc_core, fc_proc, fc_readguard, fc_libapi, fc_green, fc_gate, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_route, fc_quick, fc_herdr, fc_worktree, fc_layers, fc_blockers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_decide, fc_hooks, fc_pin, fc_reports, fc_crew, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_format, fc_implement, fc_shrink, fc_jev, fc_accept, fc_verify, fc_taskreview, fc_ship, fc_prove, fc_run, fc_status, fc_tiers, fc_tierpin, fc_budget, fc_spec, fc_watch, fc_history, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
+import fc_core, fc_proc, fc_readguard, fc_libapi, fc_green, fc_gate, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_route, fc_quick, fc_herdr, fc_worktree, fc_layers, fc_blockers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_decide, fc_hooks, fc_pin, fc_reports, fc_crew, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_buildercheck, fc_format, fc_implement, fc_shrink, fc_jev, fc_accept, fc_verify, fc_taskreview, fc_ship, fc_prove, fc_run, fc_status, fc_tiers, fc_tierpin, fc_budget, fc_spec, fc_watch, fc_history, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
 
 DETACHED = ("run", "verify", "resume")  # the long commands: a closed tab or a crashed session must not end them
 
@@ -110,8 +110,9 @@ def main():
                             ("groundwork", fc_briefs.cmd_groundwork, "print the groundwork teammate's brief; --extra adds the project's notes"),
                             ("explore", fc_briefs.cmd_explore, "print the explore teammate's brief (a fast trail-only map of an existing repo); --extra adds notes"),
                             ("trail", fc_init.cmd_trail, "set trail up in the project's worktree again: wire it for Claude Code and build the graph"),
-                            ("architect", fc_briefs.cmd_architect, "print the architect teammate's brief (questions on one Lavish page); --extra adds the project's notes"),
+                            ("architect", fc_briefs.cmd_architect, "print the change-of-course architect's brief for --change <id> (step 8); --extra adds the project's notes"),
                             ("planner", fc_briefs.cmd_planner, "print the planner teammate's brief; --issue is the ticket (default: the project's feature); --extra adds the project's notes"),
+                            ("buildercheck", fc_buildercheck.cmd_buildercheck, "print the builder check's brief: a fresh builder reads --issue (default: the project's feature) cold and reports the ranked questions it would still need answered; --extra adds the project's notes"),
                             ("testcrews", fc_briefs.cmd_testcrews, "start one test-writing teammate per task in parallel from the groundwork contract"),
                             ("designer", fc_figma.cmd_designer, "print the designer teammate's brief; --figma stores the file key, --extra adds notes"),
                             ("designcrews", fc_figma.cmd_designcrews, "start one design-NNN builder per open design task"),
@@ -236,10 +237,10 @@ def main():
             s.add_argument("--parallel", type=int, default=4)
             s.add_argument("--tests", action="store_true", help="measure test writers instead: each model writes each task's protected test")
             s.add_argument("--base", help="with --tests: the revision the protected tests are reset to and scored against")
-        if name in ("groundwork", "architect", "explore", "planner", "designer"):
+        if name in ("groundwork", "architect", "explore", "planner", "buildercheck", "designer"):
             s.add_argument("--extra", help="project-specific notes appended to the brief; `-` reads them from stdin")
-        if name == "planner":
-            s.add_argument("--issue", help="the ticket to plan (default: the project's feature)")
+        if name in ("planner", "buildercheck"):
+            s.add_argument("--issue", help="the ticket to plan or check (default: the project's feature)")
         if name == "designer":
             s.add_argument("--figma", help="the target Figma file's url or key: stored in linear.json before the brief prints")
         if name == "designcrews":
@@ -248,7 +249,8 @@ def main():
             s.add_argument("--redo", action="store_true", help="with --only: reopen tasks finished by hand or passed, even In Review, for a new builder; their old result is kept as <id>.json.before-redo")
             s.add_argument("--max", type=int, help="most builders to start at once (default: design_concurrency in verify.json, else parallel in ~/.compose/config.json, else 3)")
         if name == "architect":
-            s.add_argument("--change", help="an open change of course, e.g. C2: its own page, asking only what the evidence questions")
+            s.add_argument("--change", required=True, help="an open change of course, e.g. C2: its own page, asking only what the evidence questions; "
+                                                          "shaping a feature is the engineering manager's brainstorm (sections/0b.md), not an architect")
         if name == "testcrews":
             s.add_argument("--contract", help="default: .compose/<project>/results/contract.md")
             s.add_argument("--only", help="comma-separated task ids")
@@ -273,9 +275,11 @@ def main():
             s.add_argument("--clear-words", action="store_true", help="empty the words, keeping since, push, and the decisions")
             s.add_argument("words", nargs="*", help="what pre-answers questions, verbatim; or `decided <q>: <a>`; or `digest`; or `off`")
         if name in ("decisions", "decide"):
-            s.add_argument("--issue", help="the map to read (default: the project's feature issue)")
+            s.add_argument("--issue", help="the issue to read (default: the project's feature issue)")
         if name == "decide":
-            s.add_argument("answers", nargs="*", help='"<card id>: <letter or answer>", one per card, e.g. "Q1: A" "Q2: own JWT"')
+            s.add_argument("answers", nargs="*", help='"<card id>: <letter or answer>", one per card, e.g. "Q1: A" "Q2: own JWT"; a bare id ("Q3", "D2") confirms the line already recorded')
+            s.add_argument("--new", action="append", default=[], help="a decision reached in conversation, with no card: recorded as the issue's next D<n> under Decisions so far; repeat for more")
+            s.add_argument("--replaces", help="with exactly one --new: the live D<n> decision it replaces; the old line is struck through, (replaced by D<m>)")
             s.add_argument("--quote", help="the product owner's words, verbatim: the decision is recorded only with them")
             s.add_argument("--accept-all", action="store_true", help="record every open card's recommendation (answers given win)")
             s.add_argument("--change", help="the open change of course these cards belong to, e.g. C2: the line each card supersedes is struck through")
@@ -365,7 +369,6 @@ def main():
         fc_herdr.herdr_attach()
         ap.print_help(sys.stderr)
         sys.exit(2)
-    sys.argv[1] = next((new for new, olds in fc_config.OLD_NAMES.items() if sys.argv[1] in olds), sys.argv[1])  # `compose wayfinder` is `compose architect`
     a, extra = ap.parse_known_args()
     if a.cmd == "verify" and (a.prove or a.prototype):  # their own flows, with their own reports
         a.fn = fc_prove.cmd_prove if a.prove else fc_prove.cmd_prototype

@@ -36,8 +36,9 @@ def yolo_digest(repo, proj, y, verb="off"):
     sections = [("Your instructions", [y.get("words") or "(no words)", f"push: {'yes' if y.get('push') else 'no'}"]),
                 ("Decided for you", [f"{d['ts']}  {d['text']}" for d in y.get("decisions", [])]),
                 ("To confirm", [f"the {len(y['decisions'])} decision(s) above are recommendations, not your answers: the map's Decisions so far shows them as "
-                                f"{YOLO_TAG.format(mode=y.get('mode', 'yolo'), date='<date>')}. Ask once: accept all, or name the ones to change; the architect then "
-                                f"rewrites each line as the product owner's, and work cut on one is redone if you change it"] if y.get("decisions") else []),
+                                f"{YOLO_TAG.format(mode=y.get('mode', 'yolo'), date='<date>')}. Ask once: accept all, or name the ones to change; the engineering manager then "
+                                f"records each one with `compose decide --project {proj.name} \"<id>\" --quote \"<their words>\"`, "
+                                f"and work cut on one is redone if you change it"] if y.get("decisions") else []),
                 ("Waiting on you", waiting), ("Tried and failed", failed), ("Done", done),
                 ("Cost", [f"{t['input']}in  {t['cache_created']}cc  {t['cache_read']}cr  {t['output']}out  ({t['teammates']} teammates)  tasks ${task_cost:.4f}"])]
     out = [f"{y['mode']} {verb} for {proj.name}: on since {y['since']}"]

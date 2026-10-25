@@ -60,8 +60,7 @@ LINEAR_KEY = None  # the active workspace's Linear API key, set by apply_config;
 WORKSPACE = "default"
 CREW_EFFORT = {}  # the same keys -> Claude Code --effort, for entries written as {"model": ..., "effort": ...}
 CREW_FALLBACK = {}  # the same keys -> [(model, effort), ...] to try in order when the entry's own model fails its availability probe
-OLD_NAMES = {"architect": ["wayfinder"]}  # a role's earlier names: still accepted as the subcommand, `--role`, and the models.crew key
-PLANNING_ROLES = ("architect",)  # the product owner and the engineering manager plan through it; the team lead delegates, so it never gets `planner`
+PLANNING_ROLES = ("architect",)  # the change-of-course architect (step 8) plans on `planner`; the team lead delegates, so it never gets `planner`
 CREW_DEFAULTS = {"designer": ("claude:claude-opus-5-5", "high")}  # role -> (model, effort) used when models.crew has no entry for it
 PROBE_CACHE = CONFIG_PATH.parent / "model-probe.json"
 TIER_NAMES = ("cheap", "standard", "frontier")
@@ -190,7 +189,6 @@ def apply_config(move=True, harness=None):
     LINEAR_KEY = fc_auth.workspace_key(auth, name, "linear") or None  # the CLI moves Linear states with it (full path only)
     models = st.get("models", {})
     crew = models.get("crew") or {}  # an entry is "claude:<id>" or {"model": "claude:<id>", "effort": "high"}
-    crew = {next((new for new, olds in OLD_NAMES.items() if k in olds and new not in crew), k): v for k, v in crew.items()}  # models.crew.wayfinder still names the architect
     CREW_MODELS = {k: (v.get("model") if isinstance(v, dict) else v) for k, v in crew.items()}
     CREW_EFFORT = {k: v["effort"] for k, v in crew.items() if isinstance(v, dict) and v.get("effort")}
     entry = lambda e: (e.get("model"), e.get("effort")) if isinstance(e, dict) else (e, None)

@@ -1,7 +1,7 @@
 import argparse, fcntl, json, re, sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_claude, fc_tasks, fc_herdr, fc_worktree, fc_change, fc_crew, fc_crewpick, fc_toolbug, fc_testred
+import fc_core, fc_config, fc_claude, fc_tasks, fc_herdr, fc_worktree, fc_change, fc_crew, fc_crewpick, fc_toolbug, fc_testred, fc_planner_brief
 
 
 # ---------- groundwork: the boilerplate brief, then one test-writing teammate per task on a shared contract ----------
@@ -34,7 +34,7 @@ Phase A, toolchain (probe and report; never change dependencies):
 3. Report `working "toolchain: <what breaks>; recommend <fix>, alternative <alt>"` and wait for team lead's go in this pane.
 
 Phase B, after the go:
-1. Dependency, lockfile, and toolchain changes are implementer tasks, never yours: planner splits them; a choice the probe found is a architect card for the product owner.
+1. Dependency, lockfile, and toolchain changes are implementer tasks, never yours: planner splits them; a choice the probe found is a decision for the product owner (0b).
 2. Write schema, codegen, wiring, and stubs the task briefs need, with the exact signatures briefs give: stubs compile and return "not implemented" errors, zero values, or null. No feature logic.
 3. verify.json ({verify}):`checks` = every smoke command that passed. For UI or server: `e2e_setup` starting server on $E2E_PORT and client on $E2E_CLIENT_PORT (CLI hands out free ports and stops what setup starts; never hardcode unpinned ports, never free ports with lsof or kill), `e2e_setup_wait`, one `e2e` case per user flow with a goal and an `assert` script checking real log or DOM: once it sees the app in the state the flow needs (signed in, no overlay, seed present) and the feature absent, it prints a line starting `ASSERT FAILED` and exits non-zero; if it cannot tell, it exits non-zero without that line. Scripts go in {e2e_dir}, never ~/.compose or /tmp. Run checks with `compose verify --project {slug} --skip-review --skip-e2e --fix 0`, then prove e2e cases with `compose verify --project {slug} --prove`: each must fail only because the feature is missing, and `run` refuses until that holds; fix what it names. Run both directly: under `compose timed` jev has no TypeSafe key.
 4. Commit.
@@ -58,151 +58,6 @@ def cmd_groundwork(a):
     print(GROUNDWORK_BRIEF.format(slug=proj.name, wt=wt, trunk=fc_core.current_branch(wt), stacks=detect_stacks(wt),
                                   verify=proj / "verify.json", contract=proj / "results" / "contract.md", e2e_dir=proj / "e2e")
           + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
-
-ARCHITECT_BRIEF = """You are architect teammate for project {slug}. Worktree: {wt}. Read SKILL.md and sections/0b.md first.
-Map is feature issue {feature} on Linear: description holds Destination, Notes, Decisions so far, Not yet specified, Out of scope. It is the one decision record.
-1. Read the map, the spec or README named below, and the repo (`trail ask "<question>" --source`). Before asking, look in
-   Linear for the answer: map's Decisions so far and Notes, comments of feature and epic, `compose linear list --search "<terms>"`.
-   A decision found there is settled: do not ask again.
-   Before any card, put two or three approaches under the map's Notes (`### Approaches`): a line each with what it changes and
-   costs, and the one you recommend with why; the cards then ask only what the approaches leave open.
-2. Chart the map body on the feature issue (`compose linear update <id> --section "## <heading>" --file <path>`), then write every
-   open question as a card in the card format, one block per card under Not yet specified:
-   `Q1. <question>` / `Why: <why it matters>` / `A. <option> - affects: <what choosing it changes>` (B., C., D. the same: two
-   options at least, four at most) / `Recommendation: <letter> - <why>`. `compose report` refuses a card short of any of these.
-   Never choose for the product owner: every card carries a recommendation.
-   Channel per card, one test: are options pictures, or words? Words are text (the default). Pictures are visual.
-   A visual card is never asked as text. Visual cards go on the map like every card, and on one page as well: {page}
-   For that page read `npx -y lavish-axi playbook input` and `npx -y lavish-axi design` first. Set data-lavish-annotate="off"
-   on <html>. Each card is a form with data-lavish-question, recommended option preselected, free-text box, one answer button;
-   page top has one "accept every recommendation" button. Each sends exactly one window.lavish.queuePrompt with text
-   "<question>: <answer>" and data {{question, answer}}; accept-all sends data {{question: "accept-all", answer: [{{question, answer}}, ...]}}.
-3. Write every card in full under Not yet specified on the map first, visual ones too, with a card id per card, never reusing
-   an id; visual cards go on the page as well. Then ask once, all open cards in one line: open the page if any
-   (`npx -y lavish-axi {page}`), and report, before any poll and whatever the CLI's next_step says, one line:
-   `compose report --project {slug} --as {name} needs-user "<issue>: <n> cards <ids>; recommendation <one line>; 'visual
-   cards open in Lavish: <url>' when the page is open>"`, where <url> is the `url:` that `lavish-axi {page}` printed, copied,
-   never retyped. `compose report` refuses a page without that link, a dead link, a card asked already and not answered,
-   and a card that is not on the map in the card format. The team lead forwards the line unchanged; the engineering manager
-   names each card in one line and opens the project's page, `compose decisions --project {slug}`, for the product owner,
-   never the cards pasted in full; answers travel by card id.
-4. Wait. Text answers arrive as a prompt in this pane, which a Bash call blocked in a poll cannot receive: poll in rounds,
-   `npx -y lavish-axi poll {page} --owner {name} --takeover` in the foreground, Bash timeout 180000 ms; when a round ends
-   with nothing run it again at once, so a forwarded text answer reaches you within three minutes. Never background it,
-   never `end` it or `--reopen` a session the product owner ended.
-   Never loop or poll `compose linear` while you wait (shared hourly Linear budget): read the issue once, the herdr prompt brings the answer.
-   Answers arrive in the poll's `text` column, not as a data field.
-   When answers arrive, acknowledge them on the page: `npx -y lavish-axi reply {page} --agent-reply "<card ids> received"`.
-   If a poll returns `browser_disconnected`, run `npx -y lavish-axi {page}` once for its `url:`, report once
-   `needs-user "reminder: <issue>: <n> cards <ids>; ...; visual cards open in Lavish: <url>"`, and poll again.
-5. You never write a Decisions so far line. Answers land on the map through `compose decide`, run by the engineering manager with the
-   product owner's words attached: each card moves from Not yet specified to one line, `<card id>: <answer> (product owner, <date>; said: "<their words>")`.
-   An answer that starts `away:` or `yolo:` is the engineering manager's recommendation taken while the product owner is away, never their answer:
-   `compose decide` ends its line `(away recommendation, unconfirmed, <date>)` or `(yolo recommendation, unconfirmed, <date>)`, the one its prefix names,
-   and changes that tag to `(product owner, <date>; said: ...)` only when they confirm it. When the team lead says a decision landed, read the map once
-   (`compose linear get <id> --body`) and go on from it; an answer that reaches you any other way goes back to the team lead for `compose decide`, never onto the map by your hand.
-6. New questions the answers open, and groundwork toolchain findings the team lead forwards, are asked the same way: text cards in a new needs-user; visual cards on the same page, then
-   `npx -y lavish-axi poll {page} --agent-reply "<what changed>"` and wait again.
-7. When every card is answered and Not yet specified is empty, read the map once as the planner will, with no one to ask: a how
-   it leaves non-obvious (which component, which table, which flow) is one more card, asked as in 6. Then `npx -y lavish-axi end {page}`
-   if the page was opened, and report `done` with the decisions in one line each.
-"""
-
-PLANNER_BRIEF = """You are the planner teammate for project {slug}. Worktree: {wt}. Read SKILL.md and sections/1.md, 2.md, 3.md, 3b.md first.
-Your ticket is {issue} on Linear; you are {name}.
-Continue specing: plan, task issues, or re-cut. Write Linear and CLI JSON only, never code. Never run `compose run`: you never dispatch.
-Cut only for this ticket's feature. Teammates you start (`compose crew start`) run in own panes; never do their job inline.
-
-1. Level sets the job (ticket label, else parent chain):
-   - Project link: list epics and features with counts; ask which to continue (needs-user).
-   - Epic: one planner per feature, in parallel. Fog (its features cannot be named yet) is architect's: hand it to 0b and stop. Link a feature blocked by another feature only when it needs that feature's code.
-   - Feature: check the map is settled (Not yet specified empty), the `### Codebase brief` is in its Notes, and it has a `## Plan`.
-     No plan: write `## Plan` in the feature description with `compose linear update <id> --section "## Plan" --file <path>`:
-     a header (Goal, Architecture, Global constraints, Review focus), a file map, then numbered steps, each with files touched,
-     the exact signature it adds, the test that proves it, and dependencies; settled decisions are not reopened. Code only where
-     the implementer cannot derive it; an unknown the plan cannot settle is a spike task whose answer goes on the map's Notes.
-     Stories missing: draft the proposal on the map, in ship order, with a card id per story. Each story is the thinnest slice
-     that works end to end and unblocks the next, at most 5 criteria. Split cues: "all", "every", several When/Then pairs,
-     several outside systems. No split fits: a time-boxed probe answers the unknown first, then the split. Name the stories
-     in one `needs-user "<issue>: <n> cards <ids>; recommendation <one line>"` line; create them with `compose linear create`
-     only on the product owner's go. Then check and cut each story.
-   - Story: check and cut this story only.
-   - Task: lint against rules below; re-split on fail.
-   - Loose idea: not yours.
-
-2. Spec check per story, cheapest gaps first:
-   1. Settled map: Destination, Decisions so far, Not yet specified empty.
-   2. `### Codebase brief` in the feature's Notes; without it no file may be named.
-   3. Acceptance criteria, each a testable behavior traceable to a decision line or the spec's words.
-   4. Every criterion maps to a file or symbol via `trail ask` or `trail callers`; new files listed as new.
-   5. Test runner known (verify.json `checks`, else codebase brief), and a test path per task for `protected:`.
-   6. No open how: every "how" stated or obvious from named files.
-   7. Groundwork contract (contract.md) is for test writers; implementers never see it. State in the brief test paths,
-      every signature, export name, and exact line its test asserts; never point at the contract.
-      A test that pins a line width or exact text gets that text, already wrapped as the test expects, in the brief, line by line.
-   A Decisions line ending `(away recommendation, unconfirmed, <date>)` or `(yolo recommendation, unconfirmed, <date>)` is a recommendation the product owner has not confirmed:
-   a story or task cut on one says so in its description (`Built on unconfirmed: <card ids>`) and in your report line.
-   Checks 1, 3, 6 are decision gaps: write each as a card in the card format (`Q1. <question>` / `Why:` / `A. <option> - affects: <what>`,
-   two to four options / `Recommendation: <letter>`; `compose report` refuses less) under Not yet specified on the map, with a card id per card,
-   never reused; report one line per issue, every open card in it:
-   `compose report --project {slug} --as {name} needs-user "<issue>: <n> cards <ids>; recommendation <one line>"`.
-   The team lead forwards the line unchanged; the engineering manager opens the project's page (`compose decisions`) for the product owner
-   and records their answers with `compose decide`; answers travel by card id. You never answer a card and never write a Decisions so far line.
-   Checks 2, 4, 5 are fact gaps: start an explore or groundwork teammate, never ask the product owner:
-   `compose explore --project {slug} --extra - | compose crew start --role explore --project {slug} --brief -`
-   Story fails: report `blocked "<story>: not specced: <gap list>"`; the gap list is one comment on the story.
-
-3. Cut each checked story into task issues with `compose linear create`. A task is right-sized when all hold:
-   - one or two files in `files:` (a named lockfile does not count), one test command, at most five acceptance criteria
-   - test command runs only its own test (its file, or a name filter), never the whole suite
-   - brief (the issue description) under 2500 characters
-   - branch within the CLI's 350-line limit (added plus deleted)
-   - no documents: no .md, .txt, .rst, or docs/ files
-   - `files:` names every file it may touch, new files too
-   - no file shared by two tasks: one task, or one is `after:` the other
-   - `after:` for code a task needs (calls, imports, edits what the other creates), set as blocked-by links
-   - ids numbered in review order
-   - split where a reviewer could reject one half while approving the other; setup and scaffolding fold into the task that needs them
-   Groundwork never finishes a story: each code, dependency, lockfile, toolchain change is a task. A choice it needs is a decision card (checks 1, 3, 6), settled before the cut.
-
-4. Task issue: sub-issue of its story, label Task, state Todo, its title the task's title. Description, in this order:
-   ## Goal
-   One paragraph: what to build, where, exact export names, and any width-pinned or exact text the test asserts, verbatim.
-   ## Acceptance criteria
-   One bullet per behavior, each checked by the test.
-   ## Test plan
-   Run the `test:` command; what it covers; unlisted holdout cases; then a `scenarios` block (SKILL.md).
-   ## Constraints
-   The plan's Global constraints that apply. No new dependencies beyond what the goal names. Do not edit protected files.
-   ## Interfaces
-   Only when something crosses the task's boundary: Consumes: <exact signature, file, task> / Produces: <exact signature, file>.
-   last, the CLI's block:
-   ```compose
-   id: 001
-   files: <the one or two paths>
-   protected: <the test path>
-   test: <the command that runs only this task's test>
-   ```
-   Its keys are id, files, protected, test; `model:` is optional, leave it unset. `after` and `title` are not block keys:
-   `after` is the blocked-by links, `title` the issue title.
-
-5. After cutting, read the plan and the task issues once as the implementer will: every criterion has a step and a task,
-   every named file is in the file map, one meaning per signature, the Review focus is covered by a test. Then `compose sync`
-   (it reads the feature and every issue under it from Linear) as sections/2.md says, then
-   `compose spec-check --project {slug}`, then `compose tasks`; fix every FAIL and WARNING.
-   Cut and re-cut are one diff: read live task issues, compare to story and map, cancel, edit, add;
-   ids stay monotonic; a canceled task loses its `compose` block.
-   After a dispatch, edit inside `compose change start --why "<one line>"` and `compose change done` (sync first).
-   Delivery plan: find the map's "<map id>: delivery plan" in `compose linear doc list`; write its judgment sections
-   (Outside waits, How this maps to compose, Priority when something has to give) at each cut
-   with `compose linear doc update <id> --section "<heading>" --file <path>`;
-   priority is the ranked list under Priority when something has to give; Linear's priority field stays unused;
-   the CLI rewrites the data sections (Start today, Lanes, Waves, Critical path); never edit them.
-
-6. Design stories (label Design) go to the designer role: report the hand-off in one line. Cut code stories.
-
-7. Report the cut with each story's task issue ids.
-"""
 
 TOOLSMITH_BRIEF = """You are toolsmith for project {project}: compose failed there. Newest tool-bug log entry is your assignment:
 {reporter} at {at}, compose {cli_commit} in {cli_repo}:
@@ -271,21 +126,18 @@ def cmd_explore(a):
           + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
 def cmd_architect(a):
-    """Print the architect teammate's brief for this project, plus the team lead's notes from --extra (or stdin with `-`). With
-    --change, the brief for an open change of course: its own page, only what the evidence questions."""
+    """Print the change-of-course architect's brief for the open change --change names, plus the team lead's notes from --extra
+    (or stdin with `-`): its own page, only what the evidence questions. Shaping a feature is the engineering manager's brainstorm (0b)."""
     proj = fc_core.project_dir(a); wt = fc_herdr.project_worktree(proj)
     extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
     feature = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("feature", "<feature id>")
-    cid, name = getattr(a, "change", None), fc_herdr.agent_name(proj.name, "architect")
-    if cid:
-        rec = fc_change.load_change(proj, cid)
-        if not rec or rec.get("done_at"):
-            sys.exit(f"{cid} is not an open change of course; `compose change start --why ...` opens one")
-        brief = CHANGE_BRIEF.format(slug=proj.name, wt=wt, feature=feature, cid=cid, why=rec["why"], name=name,
-                                    reflect=proj / "results" / rec["reflect"] if rec.get("reflect") else "none recorded",
-                                    page=proj / "lavish" / f"change-{cid}.html")
-    else:
-        brief = ARCHITECT_BRIEF.format(slug=proj.name, wt=wt, feature=feature, page=proj / "lavish" / "architect.html", name=name)
+    cid, name = a.change, fc_herdr.agent_name(proj.name, "architect")
+    rec = fc_change.load_change(proj, cid)
+    if not rec or rec.get("done_at"):
+        sys.exit(f"{cid} is not an open change of course; `compose change start --why ...` opens one")
+    brief = CHANGE_BRIEF.format(slug=proj.name, wt=wt, feature=feature, cid=cid, why=rec["why"], name=name,
+                                reflect=proj / "results" / rec["reflect"] if rec.get("reflect") else "none recorded",
+                                page=proj / "lavish" / f"change-{cid}.html")
     print(brief + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
 def cmd_planner(a):
@@ -295,7 +147,7 @@ def cmd_planner(a):
     feature = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("feature", "<feature id>")
     issue = a.issue or feature
     role = "planner" if issue.lower() == feature.lower() else re.sub(r"[^a-z0-9_-]+", "-", f"planner-{issue.lower()}").strip("-")  # a story's planner runs beside the feature's
-    print(PLANNER_BRIEF.format(slug=proj.name, wt=wt, issue=issue, name=fc_herdr.agent_name(proj.name, role))
+    print(fc_planner_brief.PLANNER_BRIEF.format(slug=proj.name, wt=wt, issue=issue, name=fc_herdr.agent_name(proj.name, role))
            + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
 def cmd_toolsmith(a):
