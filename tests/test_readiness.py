@@ -239,6 +239,15 @@ class StoryReadiness(unittest.TestCase):
             self.assertEqual(tuple(fc_readiness.story_readiness(self.repo, "ENG-7")[k] for k in ("ready", "specced", "state")), (False, None, state))
         self.judge.assert_not_called()
 
+    def test_a_story_labeled_needs_shaping_is_not_ready_for_that_reason_and_is_never_judged(self):
+        self.tree = tree(labels_=("Story", "Needs-Shaping"), story=STORY + "\n## Open questions\n\n- Old? (readiness check, 2026-10-01)\n")
+        r = fc_readiness.story_readiness(self.repo, "ENG-7")
+        self.assertEqual((r["ready"], r["needs_shaping"], r["missing"]), (False, True, []))
+        self.assertEqual(fc_readiness.readiness_line(r), "ENG-7 not ready: needs shaping")
+        self.judge.assert_not_called()
+        self.assertEqual(self.updates, [])
+        self.assertFalse(fc_readiness.cache_path(self.repo).exists())
+
     def test_a_blocked_story_is_specced_but_not_ready(self):
         blocker = {"type": "blocks", "issue": {"identifier": "ENG-3", "state": {"name": "In Progress"}, "labels": labels([])}}
         self.tree = tree(blockers=[blocker])
@@ -412,6 +421,7 @@ class Cli(unittest.TestCase):
         self.assertEqual(L(dict(READY, has_tasks=False)), "ENG-7 ready (no tasks yet: the planner cuts them)")
         self.assertEqual(L(dict(READY, ready=False, error="boom")), "ENG-7 not judged: boom")
         self.assertEqual(L(dict(READY, ready=False, specced=None, state="Done")), "ENG-7 not open: Done")
+        self.assertEqual(L(dict(READY, ready=False, specced=False, unblocked=False, needs_shaping=True, blocked_by=["ENG-3"])), "ENG-7 not ready (blocked by ENG-3): needs shaping")
 
     def test_the_verb_parses_its_flags(self):
         import subprocess
