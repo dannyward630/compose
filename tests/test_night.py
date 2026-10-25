@@ -698,6 +698,47 @@ class Digest(unittest.TestCase):
         with open(path, "a") as out:
             out.write(json.dumps(rec) + "\n")
 
+    def event_at(self, at, line):
+        with unittest.mock.patch.object(st.time, "time", return_value=at):
+            st.add_event(self.repo, line)
+
+    def test_events_and_answers_are_bounded_by_the_night_on_both_sides(self):
+        end = self.since + 3600
+        self.event_at(self.since - 10, "event factory=verified story=NEB-1 project=sign-in")
+        self.event_at(self.since + 10, "event factory=verified story=NEB-2 project=sign-in")
+        self.event_at(end + 10, "event factory=verified story=NEB-3 project=sign-in")
+        self.assertEqual(fd.night_events(self.repo, self.since), [l for l in fd.night_events(self.repo, self.since) if "NEB-1 " not in l])
+        self.assertEqual([_f for _f in (fd._field(l, "story") for l in fd.night_events(self.repo, self.since))], ["NEB-2", "NEB-3"])
+        self.assertEqual([fd._field(l, "story") for l in fd.night_events(self.repo, self.since, end)], ["NEB-2"])
+        self.answer(question="in?")
+        self.answer(question="late?", at=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(end + 600)))
+        self.state["night"]["ended"] = {"state": "morning", "at": end}
+        self.assertEqual(fd.review(self.repo, self.state, []), ["To confirm: in? -> a (night answerer; overruling it is a plan change)"])
+        text = fd.render(self.repo, self.state, end + 7200)
+        self.assertIn("NEB-2", text); self.assertNotIn("NEB-3", text); self.assertNotIn("NEB-1 ", text)
+
+    def test_a_replan_without_a_why_has_no_empty_parentheses(self):
+        self.event("event factory=changed story=NEB-11  (nothing running rests on it)")
+        self.assertEqual(fd.review(self.repo, self.state, fd.night_events(self.repo, 0.0)), ["Re-plan: NEB-11 changed"])
+
+    def test_a_key_is_not_found_inside_a_quoted_value(self):
+        self.assertEqual(fd._field('event factory=held story=NEB-1 why="the story=NEB-9 moved"', "story"), "NEB-1")
+        self.assertEqual(fd._field('event factory=turn-failed why="x story=NEB-9 y"', "story"), "")
+
+    def test_review_covers_projects_nothing_was_dispatched_to(self):
+        self.state["dispatched"] = {}
+        self.paused.return_value = {"003": {"reason": "waits on D2"}}
+        self.assertEqual(fd.review(self.repo, self.state, []), ["Paused: sign-in 003 (waits on D2)"])
+
+    def test_render_survives_the_events_source_and_the_plan_failing(self):
+        self.event_at(self.since + 10, "event factory=verified story=NEB-10 project=sign-in")
+        with unittest.mock.patch.object(fd.fc_factorystate, "events_since", side_effect=OSError("disk gone")):
+            text = fd.render(self.repo, self.state, self.since + 60)
+        self.assertIn("night events unavailable: disk gone", text)
+        self.assertEqual([h for h in fd.HEADS if f"\n\n{h}\n" not in text], [])
+        self.product_plan.side_effect = RuntimeError("linear down")
+        self.assertIn("placement unavailable: linear down", fd.render(self.repo, self.state, self.since + 60))
+
     def test_verified_work_is_placed_in_the_delivery_plan(self):
         self.event("event factory=verified story=NEB-10 project=sign-in  (verified: ...)")
         self.assertEqual(fd.verified(self.repo, fd.night_events(self.repo, 0.0)),

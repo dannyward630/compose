@@ -13,12 +13,15 @@ REVIEW_SECTIONS = ("Waiting on you", "Tried and failed")
 def _why(e) -> str:
     return " ".join(str(e).split()) or type(e).__name__
 
-def night_events(repo, since) -> list:
-    return [e["line"] for e in fc_factorystate.events_since(repo, 0) if e["at"] >= since]
+def night_events(repo, since, until=None) -> list:
+    """The event lines of the night: at or after `since`, and at or before `until` when the night has ended."""
+    return [e["line"] for e in fc_factorystate.events_since(repo, 0) if e["at"] >= since and (until is None or e["at"] <= until)]
 
 def _field(line, key) -> str:
-    m = re.search(rf'\b{key}=(?:"([^"]*)"|(\S+))', line)
-    return (m.group(1) if m and m.group(1) is not None else m.group(2)) if m else ""
+    bare = re.sub(r'"[^"]*"', lambda q: " " * len(q.group(0)), line)  # a key inside a quoted value is not a field
+    m = re.search(rf'\b{key}=', bare)
+    v = re.match(r'"[^"]*"|\S*', line[m.end():]) if m else None
+    return v.group(0).strip('"') if v else ""
 
 def _kind(line) -> str:
     return _field(line, "factory")
@@ -45,11 +48,12 @@ def verified(repo, lines) -> list:
             out.append(f"{story}  (project {project}; placement unavailable: {err or 'not in the delivery plan'})")
     return out
 
-def _answers(repo, since) -> list:
+def _answers(repo, since, until=None) -> list:
     out = []
     for r in fc_answer._records(repo):
         try:
-            if r.get("error") or fc_core.report_time(r["at"]) < int(since):
+            at = fc_core.report_time(r["at"])
+            if r.get("error") or at < int(since) or (until is not None and at > until):
                 continue
         except (KeyError, TypeError, ValueError):
             continue
@@ -59,8 +63,9 @@ def _answers(repo, since) -> list:
             out.append(f"To confirm: {r.get('question')} -> {r.get('answer')} (night answerer; overruling it is a plan change)")
     return out
 
-def _projects(repo, state) -> list:
-    return sorted({d.get("project") for d in (state.get("dispatched") or {}).values() if d.get("project")})
+def _projects(repo) -> list:
+    """Every project of the product: one that waits on the owner shows even when nothing was dispatched to it tonight."""
+    return sorted(fc_core.all_projects(repo))
 
 def _project_items(repo, slug, since) -> tuple:
     proj = fc_core.all_projects(repo)[slug][1]
@@ -79,24 +84,25 @@ def _project_items(repo, slug, since) -> tuple:
     return confirm, waiting
 
 def review(repo, state, lines) -> list:
-    since = (state.get("night") or {}).get("since") or 0.0
-    out, confirm, waiting = [], [], []
-    def guard(label, fn):
+    night = state.get("night") or {}
+    since, until = night.get("since") or 0.0, (night.get("ended") or {}).get("at")
+    out, confirm, waiting, paused = [], [], [], []
+    def guard(label, fn, default=None):
         try:
             return fn()
         except ERRORS as e:
             out.append(f"{label} unavailable: {_why(e)}")
-            return []
-    answers = guard("night answers", lambda: _answers(repo, since))
-    for slug in _projects(repo, state):
-        c, w = guard(f"digest of {slug}", lambda: _project_items(repo, slug, since)) or ([], [])
+            return [] if default is None else default
+    answers = guard("night answers", lambda: _answers(repo, since, until))
+    slugs = guard("projects", lambda: _projects(repo))
+    for slug in slugs:
+        c, w = guard(f"digest of {slug}", lambda: _project_items(repo, slug, since), ([], []))
         confirm += c; waiting += w
     def reconcile():
         got = fc_delivery.last_reconcile(repo)
         return [f"Proposed fix: {p}" for p in (got or {}).get("proposed") or []]
-    replan = [f"Re-plan: {_field(l, 'story')} {_kind(l)} ({_field(l, 'why')})" for l in lines if _kind(l) in ("held", "changed")]
-    paused = []
-    for slug in _projects(repo, state):
+    replan = [f"Re-plan: {_field(l, 'story')} {_kind(l)}" + (f" ({_field(l, 'why')})" if _field(l, "why") else "") for l in lines if _kind(l) in ("held", "changed")]
+    for slug in slugs:
         def read(slug=slug):
             proj = fc_core.all_projects(repo)[slug][1]
             return [f"Paused: {slug} {tid} ({p.get('reason')})" for tid, p in fc_change.paused_tasks(proj).items()]
@@ -155,7 +161,7 @@ def render(repo, state, now) -> str:
             f"ended: {(ended or {}).get('state') or 'still on'}")
     out = [head, f"spend ${night.get('spend') or 0:.2f} of ${night.get('budget') or 0:.2f}; usage waits: {night.get('waits') or 0} ({_span(night.get('waited') or 0)})"]
     try:
-        lines = night_events(repo, night.get("since") or 0.0)
+        lines = night_events(repo, night.get("since") or 0.0, (ended or {}).get("at"))
         events_err = ""
     except ERRORS as e:
         lines, events_err = [], _why(e)
