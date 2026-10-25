@@ -187,6 +187,6 @@ def usage_step(night, leads, now, read, prompt) -> list[str]:
         return [wait_line(until, names, "no pane read" if empty else "the continue prompt was not delivered")]
     night["waits"] += 1
     night["waited"] += now - wait["since"]
-    night["resumed_lines"] = dict(wait.get("lines") or {})
+    night["resumed_lines"] = {**{a: ln for a, ln in resumed.items() if a in present}, **(wait.get("lines") or {})}
     night["wait"] = None
     return [f'event factory=usage-resumed agents={",".join(done)}  (the window reset: each waiting team lead was told to continue)']

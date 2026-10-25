@@ -174,6 +174,14 @@ class UsageWaits(unittest.TestCase):
         ns.usage_step(night, leads, 61.0 + 660, self.read, self.prompt)
         self.assertEqual(sorted(n for n, _ in self.prompted), ["a-orchestrator", "b-orchestrator"]); self.assertIsNone(night["wait"])
 
+    def test_a_later_resume_keeps_an_earlier_lead_s_stale_banner_ignored(self):
+        night, leads = ns.new_night(0.0, 10**10, 20.0, None), {"a": "a-orchestrator", "b": "b-orchestrator"}
+        self.panes["a-orchestrator"] = "usage limit reached\n"
+        ns.usage_step(night, leads, 0.0, self.read, self.prompt); ns.usage_step(night, leads, 61.0, self.read, self.prompt)
+        self.panes["b-orchestrator"] = "usage limit reached for b\n"
+        ns.usage_step(night, leads, 100.0, self.read, self.prompt); ns.usage_step(night, leads, 161.0, self.read, self.prompt)
+        self.assertEqual(ns.usage_step(night, leads, 200.0, self.read, self.prompt), []); self.assertIsNone(night["wait"])
+
     def test_a_payment_halt_since_the_night_began_is_no_credit(self):
         proj = self.repo / ".compose" / "sign-in"
         (proj / "results").mkdir(parents=True); (proj / "verify.json").write_text("{}")
