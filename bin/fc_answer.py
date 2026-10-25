@@ -1,6 +1,6 @@
 """Night mode's one-time frontier answerer: it settles a team lead's question on an approved ticket while the product owner sleeps."""
 from __future__ import annotations
-import json, os, re, time
+import json, os, re, subprocess, time
 from pathlib import Path
 
 import fc_ask, fc_claude, fc_config, fc_core, fc_crew, fc_delivery, fc_factorystate, fc_factoryturn, fc_herdr, fc_models, fc_nightstate, fc_tasks, fc_yolo
@@ -8,7 +8,13 @@ import fc_ask, fc_claude, fc_config, fc_core, fc_crew, fc_delivery, fc_factoryst
 ANSWERERS = 2
 MORNING = ("shape ", "deep-dive ", "stories ")
 ISSUE_RE = re.compile(r"\b([A-Z][A-Z0-9]*-\d+)\b")
-NEVER_WORDS = re.compile(r"force[- ]push|push\s+--force|--force|--delete-unmerged|--abandon|delete the branch|drop the database|api[- ]key|secret|credential|payment|billing account|spend|purchase|provider", re.I)
+NEVER_WORDS = re.compile("|".join((
+    r"force[- ]?push|push\s+--force|--force\b|--delete-unmerged|--abandon",
+    r"(?:delete|drop|wipe|truncate)\s+(?:the\s+)?(?:branch|database|table|data|bucket)",
+    r"(?:add|create|rotate|new|generate|paste|use)\s+(?:a\s+|an\s+|the\s+)?(?:new\s+)?(?:api[- ]?key|secret key|access token|credential)",
+    r"(?:switch|change)\s+(?:the\s+)?(?:model|provider)",
+    r"(?:buy|purchase|pay for|subscribe to|upgrade (?:the )?plan)",
+    r"billing account|payment halt|toolsmith")), re.I)
 ASK = ("Answer this question the team lead raised while building an approved ticket, as the product owner would from what is written here; "
        "read the code you need. If answering needs anything in the never-set above, or needs the product owner to plan something new, "
        'set never_set and answer nothing. Reply with only JSON: {"never_set": bool, "why_wait": str, "answer": str, "reasoning": str, '
@@ -59,8 +65,11 @@ def _questions(slug, proj) -> list[dict]:
     return out
 
 def new_questions(repo, night) -> list[dict]:
-    """The orchestrators' needs-user reports since the night began that nobody has been asked or told about yet."""
-    out, said = [], set(night.get("said") or [])
+    """The orchestrators' needs-user reports since the night began that nobody has been asked or told about yet. A repeat of a
+    question still in flight or already sent to the morning is left out; a key with a record is never asked again."""
+    recorded = {r.get("key") for r in _records(repo)}
+    held = {f"{a['project']}|{a['message']}" for a in night["asked"].values() if not a.get("done")} | set(night.get("morning_msgs") or [])
+    out = []
     for slug, (_wt, proj) in fc_core.all_projects(repo).items():
         if (fc_tasks.yolo_state(proj) or {}).get("mode") != "night":
             continue
@@ -70,9 +79,9 @@ def new_questions(repo, night) -> list[dict]:
             except (ValueError, TypeError):
                 continue
             same = f"{slug}|{q['message']}"
-            if late or q["key"] in night["asked"] or q["key"] in night["morning"] or same in said:
+            if late or q["key"] in recorded or q["key"] in night["asked"] or q["key"] in night["morning"] or same in held:
                 continue
-            said.add(same)
+            held.add(same)
             out.append(q)
     return out
 
@@ -154,8 +163,8 @@ def run_answer(repo, slug, at, nth=0) -> dict:
                    reasoning=str(got.get("reasoning") or ""))
         cards = got.get("cards") if isinstance(got.get("cards"), dict) else {}
         rec["cards"] = {str(k): str(v) for k, v in cards.items()
-                        if re.fullmatch(fc_ask.CARD_ID, str(k)) and re.search(rf"(?<![\w-]){re.escape(str(k))}(?![\w-])", q["message"])}
-        hits = never_hits(q["message"], rec["answer"])
+                        if re.fullmatch(fc_ask.CARD_ID, str(k)) and not re.fullmatch(r"D\d+", str(k)) and re.search(rf"(?<![\w-]){re.escape(str(k))}(?![\w-])", q["message"])}
+        hits = never_hits(q["message"], rec["answer"], rec["reasoning"], *rec["cards"].values())
         if hits and not rec["never_set"]:
             rec.update(never_set=True, why_wait=f"mentions {', '.join(hits)}")
         if not rec["never_set"] and not rec["cards"] and not rec["answer"].strip():
@@ -170,7 +179,7 @@ def run_answer(repo, slug, at, nth=0) -> dict:
             elif not fc_factoryturn.prompt_lead(fc_herdr.agent_name(slug, "orchestrator"), f"night: {rec['answer']}"):
                 raise RuntimeError("the team lead did not take the answer")
             rec["acted"] = True
-    except (RuntimeError, ValueError, TypeError, OSError) as e:
+    except (RuntimeError, ValueError, TypeError, OSError, subprocess.SubprocessError) as e:
         rec["error"] = str(e)[:300] or type(e).__name__
     _append(repo, rec)
     if rec["error"]:
@@ -216,17 +225,23 @@ def answer_step(repo, state, now) -> list[str]:
             if key not in done:
                 lines.append(_failed(a["project"], a["message"]))
     running = sum(1 for a in night["asked"].values() if not a.get("done"))
-    said = night.setdefault("said", [])
+    held = night.setdefault("morning_msgs", [])
+    answered = {(r.get("project"), r.get("question")) for r in _records(repo)}
     for q in new_questions(repo, night):
+        mine = f"{q['project']}|{q['message']}"
         if kind(q["message"]) == "morning":
             night["morning"].append(q["key"])
-            said.append(f"{q['project']}|{q['message']}")
+            held.append(mine)
             lines.append(f'event factory=for-morning project={q["project"]} question="{_q(q["message"])}"  '
                          "(planning waits for the product owner: it is listed under Ready to plan)")
+        elif (q["project"], q["message"]) in answered:
+            night["morning"].append(q["key"])
+            held.append(mine)
+            lines.append(f'event factory=for-morning project={q["project"]} question="{_q(q["message"])}"  '
+                         "(asked again after the night answer: it waits for the product owner)")
         elif running < ANSWERERS:
             args = ["factory", "answer", "--repo", str(repo), "--project", q["project"], "--at", q["at"], "--nth", str(q["nth"])]
             pid = fc_nightstate.spawn_once(repo, args, "night-answer.log")
             night["asked"][q["key"]] = {"pid": pid, "at": now, "project": q["project"], "issue": q["issue"], "message": q["message"]}
-            said.append(f"{q['project']}|{q['message']}")
             running += 1
     return lines
