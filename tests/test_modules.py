@@ -133,6 +133,26 @@ class FcFactoryturn(ModuleChecks, unittest.TestCase):
     module = "fc_factoryturn"
 
 
+class FcNightstate(ModuleChecks, unittest.TestCase):
+    module = "fc_nightstate"
+
+
+class FcAnswer(ModuleChecks, unittest.TestCase):
+    module = "fc_answer"
+
+
+class FcNightprep(ModuleChecks, unittest.TestCase):
+    module = "fc_nightprep"
+
+
+class FcDigest(ModuleChecks, unittest.TestCase):
+    module = "fc_digest"
+
+
+class FcNight(ModuleChecks, unittest.TestCase):
+    module = "fc_night"
+
+
 class FcFactory(ModuleChecks, unittest.TestCase):
     module = "fc_factory"
 

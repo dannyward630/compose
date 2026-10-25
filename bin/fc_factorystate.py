@@ -1,10 +1,11 @@
 """The build loop's state: one JSON file and one numbered event log per repo, and the pace dial that caps tickets at once."""
-import copy, fcntl, json, time
+import contextlib, copy, fcntl, json, time
 
 import fc_core, fc_config
 
 EMPTY = {"pid": None, "started": None, "stopped": None, "mode": "day", "day_tickets": None, "dispatched": {}, "prints": {}, "offer": None,
-         "declined_until": None, "planning": None, "out_of_order": [], "said": {}, "turns": 0, "backoff": {}, "manager_pane": None}
+         "declined_until": None, "planning": None, "out_of_order": [], "said": {}, "turns": 0, "backoff": {}, "manager_pane": None,
+         "night": None, "prep": {}, "prep_checked": None}
 
 def state_path(repo):
     return fc_core.repo_link(repo).with_name("factory.json")
@@ -29,6 +30,16 @@ def save_state(repo, state):
     path = state_path(repo)
     path.parent.mkdir(parents=True, exist_ok=True)
     fc_core.atomic_write(path, json.dumps(state, indent=2) + "\n")
+
+@contextlib.contextmanager
+def edit(repo):
+    """The state under a short lock, saved on exit: a verb and the loop's end-of-turn merge never write over each other."""
+    state_path(repo).parent.mkdir(parents=True, exist_ok=True)
+    with open(state_path(repo).with_name("factory-state.lock"), "a") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        state = load_state(repo)
+        yield state
+        save_state(repo, state)
 
 def _read_events(repo):
     try:

@@ -9,7 +9,7 @@ YOLO_NEVER = ("destructive, irreversible, and security-sensitive actions are nev
               "merging a toolsmith fix into compose itself, force-push, `clean --delete-unmerged`, `clean --abandon`, `crew stop --force`, "
               "attended prompts (Frame0 Allow, sign-ins), and anything the product owner's CLAUDE.md forbids. These still stop and wait.")
 YOLO_TAG = fc_decide.UNCONFIRMED  # what the map's Decisions so far shows after a decision taken for the product owner
-def yolo_digest(repo, proj, y, verb="off"):
+def digest_sections(repo, proj, y):
     """What the product owner reads on return, rendered only from disk: their words, the decisions, what waits, what failed, what is done, cost."""
     since = fc_core.report_time(y["since"])
     snap = fc_watch.watch_snapshot(repo, proj)
@@ -41,8 +41,12 @@ def yolo_digest(repo, proj, y, verb="off"):
                                 f"and work cut on one is redone if you change it"] if y.get("decisions") else []),
                 ("Waiting on you", waiting), ("Tried and failed", failed), ("Done", done),
                 ("Cost", [f"{t['input']}in  {t['cache_created']}cc  {t['cache_read']}cr  {t['output']}out  ({t['teammates']} teammates)  tasks ${task_cost:.4f}"])]
+    return sections
+
+def yolo_digest(repo, proj, y, verb="off"):
+    """The digest rendered: a headline, then each section's items."""
     out = [f"{y['mode']} {verb} for {proj.name}: on since {y['since']}"]
-    for head, items in sections:
+    for head, items in digest_sections(repo, proj, y):
         out += ["", head] + [f"- {i}" for i in items or ["none"]]
     return "\n".join(out)
 
@@ -58,7 +62,8 @@ def cmd_yolo(a):
         sys.exit(1)
     if (words[:1] in (["off"], ["digest"], ["decided"]) or a.clear_words) and y["mode"] != P:
         word = "--clear-words" if a.clear_words else words[0]
-        print(f"{y['mode']} is on for {proj.name}, not {P}; run `compose {y['mode']} {word} --project {proj.name}`")
+        fix = "compose factory day" if y["mode"] == "night" else f"compose {y['mode']} {word} --project {proj.name}"  # night is the factory's: day ends it
+        print(f"{y['mode']} is on for {proj.name}, not {P}; run `{fix}`")
         sys.exit(1)
     if a.clear_words:
         if words or a.push:

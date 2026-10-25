@@ -4,6 +4,7 @@ import fc_core, fc_proc, fc_tasks, fc_herdr, fc_change, fc_reports, fc_crew, fc_
 
 
 YOLO_HINT = "  {m}=on (answer with the recommendation; log it: compose {m} decided ...)"
+NIGHT_HINT = "  night=on (the night answerer takes it: do not answer; wait for factory=answered|waiting|answer-failed)"
 
 # ---------- watch ----------
 FINAL_STATES = ("passed", "already_green", "failed", "contradiction", "unproven", "broken_base", "rejected_size", "rejected_docs", "rejected_scope", "rejected_regression", "rejected_tampered", "payment_required", "interrupted", "hand_done", "unchained", "paused")
@@ -345,12 +346,13 @@ def is_quiet(a, proj, sources):
     return bool(getattr(a, "attention", False)) or (not os.environ.get("COMPOSE_ROLE") and fc_herdr.agent_name(proj.name, "orchestrator") in sources)
 
 def yolo_mark(proj, events):
-    """Under the posture on (yolo or away), a question line tells the engineering manager it answers it itself, and who set the posture when another session did."""
+    """Under the posture on (yolo or away), a question line tells the engineering manager it answers it itself, and who set the posture when another session did.
+    Under night's posture it tells it the night answerer takes the question."""
     if not (y := fc_tasks.yolo_state(proj)):
         return events
     by = fc_tasks.yolo_by(y)
     base = YOLO_HINT.format(m=y["mode"])
-    hint = base if by in ("this session", "unknown") else base.replace(f"{y['mode']}=on (", f"{y['mode']}=on set by {by} (", 1)
+    hint = NIGHT_HINT if y["mode"] == "night" else base if by in ("this session", "unknown") else base.replace(f"{y['mode']}=on (", f"{y['mode']}=on set by {by} (", 1)
     return [e + hint if re.match(r"event crew=\S+ state=needs-user ", e) else e for e in events]
 
 def watch_filter(events, slug, sources, direct=(), others=()):

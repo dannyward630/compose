@@ -528,5 +528,24 @@ class ReadinessModel(unittest.TestCase):
         self.assertIn("models.readiness must be a claude: model id", str(e.exception))
 
 
+class NightModel(unittest.TestCase):
+    def read(self, value):
+        d = Path(tempfile.mkdtemp())
+        models = {"implementer": "pi:x/y", **({} if value is None else {"night": value})}
+        (d / "config.json").write_text(json.dumps({"models": models}))
+        with mock.patch.object(fc.fc_config, "CONFIG_PATH", d / "config.json"), mock.patch.object(fc.fc_models, "model_available", return_value=(True, "answered")), \
+                mock.patch.object(fc.fc_pin, "pin", return_value={}):
+            fc.fc_config.apply_config()
+        self.addCleanup(setattr, fc.fc_config, "NIGHT_MODEL", ("claude:claude-opus-5-5", "high"))
+        return fc.fc_config.NIGHT_MODEL
+
+    def test_night_model_reads_a_string_or_an_entry_and_must_be_claude(self):
+        self.assertEqual(self.read("claude:claude-fable-5-1"), ("claude:claude-fable-5-1", None))
+        self.assertEqual(self.read(None), ("claude:claude-opus-5-5", "high"))
+        with self.assertRaises(SystemExit) as e:
+            self.read("pi:x/y")
+        self.assertIn("models.night must be a claude: model id", str(e.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

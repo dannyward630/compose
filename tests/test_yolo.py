@@ -103,6 +103,22 @@ class Yolo(unittest.TestCase):
         self.assertEqual([x["text"] for x in d["decisions"]], ["which db?: postgres, the recommendation", "cards NEB-4: accept-all"])
         self.assertTrue(all(x["ts"] for x in d["decisions"]))
 
+    def test_digest_sections_render_the_same_digest(self):
+        self.yolo("go", "with", "Stripe")
+        self.yolo("decided", "db?: postgres")
+        y = json.loads(self.file.read_text())
+        s = snap(tasks={"001": "passed"}, halt=["2026-01-01 10:00:00", "openrouter", 1])
+        (self.proj / "results" / "001.json").write_text("{}")
+        with mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=s), mock.patch.object(fc.fc_worktree, "stack_order", return_value=[]), \
+                mock.patch.object(fc.fc_cost, "rows", return_value=[]):
+            sections = fc.fc_yolo.digest_sections(Path("."), self.proj, y)
+            text = fc.fc_yolo.yolo_digest(Path("."), self.proj, y, "digest")
+        want = [f"{y['mode']} digest for hw: on since {y['since']}"]
+        for head, items in sections:
+            want += ["", head] + [f"- {i}" for i in items or ["none"]]
+        self.assertEqual(text, "\n".join(want))
+        self.assertEqual([h for h, _ in sections], ["Your instructions", "Decided for you", "To confirm", "Waiting on you", "Tried and failed", "Done", "Cost"])
+
     def test_off_prints_the_digest_from_disk_then_archives(self):
         self.yolo("go", "with", "Stripe")
         d = json.loads(self.file.read_text())
@@ -189,6 +205,13 @@ class Yolo(unittest.TestCase):
         self.assertIn("words='ship it'", out[0])
         line = next(l for l in out if "state=needs-user" in l)
         self.assertTrue(line.endswith("  yolo=on (answer with the recommendation; log it: compose yolo decided ...)"), line)
+
+    def test_watch_under_a_night_posture_leaves_needs_user_to_the_night_answerer(self):
+        self.file.write_text(json.dumps({"since": stamp(), "decisions": [], "mode": "night", "push": False, "words": "", "by": {"role": "night", "session": None}}))
+        out = self.watch_now(snap(crew={"hw-q": [{"at": stamp(), "state": "needs-user", "message": "db?"}]}))
+        line = next(l for l in out if "state=needs-user" in l)
+        self.assertTrue(line.endswith("  night=on (the night answerer takes it: do not answer; wait for factory=answered|waiting|answer-failed)"), line)
+        self.assertNotIn("decided", line)
 
     def test_another_session_sees_who_set_yolo(self):
         """yolo is per project: a second engineering manager session on it is told the posture is not its own."""
@@ -435,6 +458,15 @@ class PostureMismatchAndDigest(unittest.TestCase):
                 out, code = self.run_as(p, *({"decided": ["decided", "db?: postgres"], "--clear-words": []}.get(word, [word])), clear_words=word == "--clear-words")
                 self.assertEqual(out, f"{on or 'away'} is on for hw, not {p}; run `compose {on or 'away'} {word} --project hw`\n")
                 self.assertTrue(code == 1 or isinstance(code, str), code)
+                self.assertEqual(self.file.read_bytes(), before)
+
+    def test_a_night_posture_points_at_factory_day(self):
+        for p in ("away", "yolo"):
+            for word in ("off", "digest", "decided", "--clear-words"):
+                self.put("night")
+                before = self.file.read_bytes()
+                out, code = self.run_as(p, *({"decided": ["decided", "db?: postgres"], "--clear-words": []}.get(word, [word])), clear_words=word == "--clear-words")
+                self.assertEqual(out, f"night is on for hw, not {p}; run `compose factory day`\n")
                 self.assertEqual(self.file.read_bytes(), before)
 
     def test_digest_prints_its_headline_and_sections_and_leaves_the_file_and_nothing_on_exits_1(self):

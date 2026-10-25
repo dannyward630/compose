@@ -105,4 +105,9 @@ fc_yolo
 fc_factorystate
 fc_bench
 fc_factoryturn
+fc_nightstate
+fc_answer
+fc_nightprep
+fc_digest
+fc_night
 fc_factory

@@ -5,8 +5,8 @@ clock
 spawn_loop
 _sleep
 running
-edit
 HUMAN_KEYS
+_night
 _merge
 _saved
 _pane

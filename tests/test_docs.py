@@ -2484,7 +2484,7 @@ class FactoryLoop(unittest.TestCase):
         text = read("commands/factory.md")
         head = text.split("---\n", 2)[1].splitlines()
         self.assertEqual(head, ["description: Start the factory - it builds ready stories in delivery plan order at a day pace and offers planning when nothing is ready",
-                                'argument-hint: "[stop [--hold <why>] | status | pace <n>]"',
+                                'argument-hint: "[stop [--now] [--hold <why>] | status | pace <n> | night [--until HH:MM] [--budget <dollars>] [--stop-when <words>] | day | digest]"',
                                 "allowed-tools: Bash(compose:*), Bash(herdr:*)"])
         body = self.body("commands/factory.md")
         for line in self.COMMAND:
@@ -2503,6 +2503,69 @@ class FactoryLoop(unittest.TestCase):
         for rel in ("sections/0f.md", "commands/factory.md"):
             for line in self.body(rel)[1 if rel.startswith("sections") else 0:]:
                 self.assertNotRegex(line, r"[.!?] [A-Z]", line)
+
+NIGHT_0N = [
+    "Night starts only when the product owner says so: run `compose factory night` with the end time, budget, and stop condition they give, and show its lines as is.",
+    "The product owner's first message back ends it: run `compose factory day`, relay the digest, and ask its \"To confirm\" items in one ask before acting on the message.",
+    "At night a team lead's `needs-user` belongs to the night answerer: never answer it yourself, and wait for `event factory=answered`, `waiting`, or `answer-failed`.",
+    "On `event factory=waiting` or `event factory=night-ended state=no-credit`, send one `PushNotification` naming what waits and the recommendation.",
+    "On `event factory=for-morning`, do nothing: planning waits for the product owner and the digest lists it.",
+    "`compose factory stop` at night drains: nothing new starts and running work finishes; a second `compose factory stop` stops at once and keeps the work paused on its ref.",
+    "When planning a ticket that has a section in the night prep document, open with its questions and still adapt to every answer (0b).",
+    "Night never plans: it never writes stories, deep dives, tracks, or Ready, and never answers its own prepared questions.",
+    "Relay any other `event factory=night-ended` and each `event factory=draining` to the product owner in one line; on `event factory=usage-wait`, `usage-resumed`, `woke`, `prepared`, `prep-dropped`, `prep-failed`, or a `judge-failed` on the stop condition, do nothing, because the digest lists them.",
+]
+NIGHT_FILES = {
+    "sections/0f.md": ["Overnight, `compose factory night` switches the factory to night (sections/0n.md)."],
+    "commands/factory.md": [
+        'argument-hint: "[stop [--now] [--hold <why>] | status | pace <n> | night [--until HH:MM] [--budget <dollars>] [--stop-when <words>] | day | digest]"',
+        "When `$ARGUMENTS` is `stop --now`, run `compose factory stop --now` and show its output as is.",
+        "When `$ARGUMENTS` starts with `night`, `day`, or `digest`, run `compose factory $ARGUMENTS` with any `--stop-when \"<words>\"` quoted as one argument, show its output as is, and follow sections/0n.md.",
+    ],
+    "commands/away.md": ["When `compose factory status` says the factory runs for this repo, run `compose factory night` instead (an end time or budget in the words go to `--until` and `--budget`) and follow sections/0n.md; `off` then means `compose factory day`."],
+    "docs/how-it-works.md": ["At night (`/compose:factory night`) it keeps building inside the end time and dollar budget you set, answers questions on approved tickets with a one-time frontier answerer, prepares questions for your next planning session, and greets you with one morning digest."],
+}
+
+
+class NightMode(unittest.TestCase):
+    def test_section_0n_holds_each_line_once(self):
+        lines = read("sections/0n.md").splitlines()
+        self.assertEqual(lines[0], "### 0n. Night: the factory builds while the product owner sleeps")
+        for line in NIGHT_0N:
+            self.assertEqual(lines.count(line), 1, line)
+
+    def test_section_0n_one_sentence_per_line(self):
+        for line in read("sections/0n.md").splitlines()[1:]:
+            self.assertNotRegex(line, r"[.!?] [A-Z]", line)
+
+    def test_section_0n_says_what_the_code_does(self):
+        text = read("sections/0n.md")
+        for word in ("one level", "usage wait", "real dollars", "never stops running work", "sections/0h.md", "compose factory digest"):
+            self.assertIn(word, text)
+
+    def test_pointer_lines_once(self):
+        for rel, lines in NIGHT_FILES.items():
+            got = read(rel).splitlines()
+            for line in lines:
+                self.assertEqual(got.count(line), 1, f"{rel}: {line}")
+
+    def test_every_night_event_named_in_0n_is_one_the_code_says(self):
+        text = read("sections/0n.md")
+        said = set(re.findall(r"factory=([\w-]+)", "".join(p.read_text() for p in (ROOT / "bin").glob("fc_*.py"))))
+        line = next(l for l in text.splitlines() if l.startswith("Relay any other"))
+        named = re.findall(r"`(?:event factory=)?([a-z][\w-]*)`", line)
+        self.assertEqual(len(named), 9, named)
+        self.assertEqual([n for n in named if n not in said], [])
+
+    def test_cli_row_names_night(self):
+        rows = [l for l in read("docs/cli.md").splitlines() if l.startswith("| `factory`")]
+        self.assertEqual(len(rows), 1)
+        for word in ("night", "--until", "--budget", "--stop-when", "day", "digest", "--now"):
+            self.assertIn(word, rows[0])
+
+    def test_no_em_dash(self):
+        for rel in ("sections/0n.md", "sections/0f.md", "commands/factory.md", "commands/away.md", "docs/cli.md", "docs/how-it-works.md"):
+            self.assertNotIn("\u2014", read(rel), rel)
 
 
 if __name__ == "__main__":

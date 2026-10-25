@@ -3,6 +3,7 @@ state_path
 events_path
 load_state
 save_state
+edit
 _read_events
 add_event
 events_since

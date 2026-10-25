@@ -650,7 +650,7 @@ class Verbs(unittest.TestCase):
 
     def verb(self, action, target=None, hold=None, done=False, timeout=None, expect_exit=0):
         import contextlib, io
-        a = self.argparse.Namespace(action=action, target=target, hold=hold, done=done, timeout=timeout, json=False, repo=str(self.repo))
+        a = self.argparse.Namespace(action=action, target=target, hold=hold, done=done, timeout=timeout, json=False, now=False, repo=str(self.repo))
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             if expect_exit:

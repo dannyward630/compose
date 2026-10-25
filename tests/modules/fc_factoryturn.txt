@@ -37,6 +37,7 @@ _decisions
 changed_refs
 hold_changed
 offer_day
+ORDER_FILTER
 IDLE
 _settle
 _watch
