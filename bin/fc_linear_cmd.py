@@ -291,6 +291,27 @@ def verb_comment(a):
     fc_linear.linear_comment(issue, body)
     print(f"commented on {issue['identifier']}")
 
+def verb_cancel(a):
+    if not a.target:
+        sys.exit("cancel needs an issue id")
+    if len(a.target) > 1:
+        sys.exit("cancel takes the reason from --file <path> or stdin, not from the command line: "
+                 f"compose linear cancel {a.target[0]} --file <path>")
+    scope = "query($id: String!) { issue(id: $id) { id identifier title project { id name } } }"
+    issue = fc_linear.linear_gql(scope, {"id": a.target[0]})["issue"]
+    in_scope(issue, a)
+    reason = read_body(a).strip()
+    if not reason:
+        sys.exit("cancel needs a reason: --file <path>, or stdin")
+    if a.into:
+        other = fc_linear.linear_gql(scope, {"id": a.into})["issue"]
+        in_scope(other, a)
+        reason = fc_linear.MERGED.format(id=other["identifier"], title=other["title"]) + "\n" + reason
+    if fc_linear.linear_cancel(issue["identifier"], reason, a.into):
+        print(f"canceled {issue['identifier']}")
+    else:
+        print(f"{issue['identifier']} is already Canceled: nothing written")
+
 def verb_labels(a):
     p = linear_project(a.repo)
     if a.create:
@@ -351,5 +372,5 @@ def cmd_linear(a):
     except (RuntimeError, OSError) as e:
         sys.exit(f"linear {a.action}: {e}")
     finally:
-        if a.action in ("create", "update", "comment"):  # the verbs that can change an issue
+        if a.action in ("create", "update", "comment", "cancel"):  # the verbs that can change an issue
             drop_get_cache(a)

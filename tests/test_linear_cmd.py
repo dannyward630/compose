@@ -35,7 +35,7 @@ class LinearProject(unittest.TestCase):
     def args(self, action, *target, **kw):
         return SimpleNamespace(**{**dict(repo=str(self.repo), project=None, action=action, target=list(target), body=False, comments=False, json=False,
                                          append=False, description=False, any_project=False, fresh=False, label=None, parent=None, search=None, state=None,
-                                         title=None, priority=None, blocked_by=None, file=None, section=None, expect=None, create=None), **kw})
+                                         title=None, priority=None, blocked_by=None, file=None, section=None, expect=None, create=None, into=None, add_label=None, drop_label=None), **kw})
 
     def fails(self, fn, *args):
         err = io.StringIO()
@@ -711,6 +711,83 @@ class LinearCommentLabelsDoc(unittest.TestCase):
             self.assertEqual(self.run_verb("doc", "update", "d1", body="new plan", section="## Plan"), [f"updated {self.DOC_URL}"])
         rs.assert_called_once_with(content, "## Plan", "new plan")
         self.assertEqual([v["in"] for v in self.sent("documentUpdate(")], [{"content": "via plan\n"}])
+
+class LinearCancel(unittest.TestCase):
+    args, fails = LinearProject.args, LinearProject.fails
+
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp()).resolve()
+        (self.repo / ".compose").mkdir(); (self.repo / ".compose" / "linear.json").write_text(json.dumps({"project": URL, "team": "Engineering"}))
+        self.states = {"s-todo": {"id": "s-todo", "name": "Todo", "type": "unstarted"}, "s-done": {"id": "s-done", "name": "Done", "type": "completed"},
+                       "s-canceled": {"id": "s-canceled", "name": "Canceled", "type": "canceled"}, "s-duplicate": {"id": "s-duplicate", "name": "Duplicate", "type": "canceled"}}
+        self.issue = {"id": "iid", "identifier": "ENG-7", "title": "Slice", "project": {"id": "p1", "name": "Shop"}, "state": {"name": "Todo", "type": "unstarted"}, "parent": None, "children": {"nodes": []}}
+        self.other = {"id": "oid", "identifier": "ENG-3", "title": "Cart total", "project": {"id": "p1", "name": "Shop"}, "state": {"name": "Todo", "type": "unstarted"}, "parent": None, "children": {"nodes": []}}
+        self.calls = []
+        tty = mock.Mock(**{"isatty.return_value": True, "read.side_effect": AssertionError("read stdin from a terminal")})
+        for mod, name, value in ((fc.fc_config, "LINEAR_KEY", KEY), (fc.fc_linear, "linear_gql", self.gql), (sys, "stdin", tty), (fc.fc_linear_cmd, "await_write", mock.Mock())):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+
+    def gql(self, query, variables):
+        self.calls.append((" ".join(query.split()), variables))
+        if "projects(" in query:
+            return {"projects": {"nodes": [{"id": "p1", "name": "Shop", "url": URL, "teams": {"nodes": [{"id": "t1", "name": "Engineering", "key": "ENG"}]}}]}}
+        if "mutation" in query:
+            return {"ok": {"success": True}}
+        item = {"ENG-7": self.issue, "ENG-3": self.other}[variables["id"]]
+        return {"issue": {**item, "team": {"states": {"nodes": list(self.states.values())}}}}
+
+    def a(self, verb, *target, body=None, **kw):
+        if body is not None: (self.repo / "body.md").write_text(body); kw["file"] = str(self.repo / "body.md")
+        return self.args(verb, *target, **kw)
+
+    def run_verb(self, verb, *target, **kw):
+        with redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()):
+            fc.fc_linear_cmd.cmd_linear(self.a(verb, *target, **kw))
+        return out.getvalue().strip().split("\n")
+
+    def writes(self): return [(q, v) for q, v in self.calls if q.startswith("mutation")]
+    def order(self): return [q.split("{")[1].split("(")[0].strip() for q, _ in self.writes()]
+    def comment_body(self): return next(v["b"] for q, v in self.writes() if "commentCreate" in q)
+    def moved_to(self): return next(v["s"] for q, v in self.writes() if "issueUpdate" in q)
+    def relation_query(self): return next(q for q, _ in self.writes() if "issueRelationCreate" in q)
+
+    def test_cancel_comments_first_then_moves_to_the_canceled_state_never_duplicate(self):
+        self.assertEqual(self.run_verb("cancel", "ENG-7", body="No longer relevant.\n"), ["canceled ENG-7"])
+        self.assertEqual(self.order(), ["commentCreate", "issueUpdate"])
+        self.assertEqual((self.comment_body(), self.moved_to()), ("No longer relevant.", "s-canceled"))
+
+    def test_a_team_that_spells_it_cancelled_still_gets_it(self):
+        self.states["s-canceled"]["name"] = "Cancelled"
+        self.run_verb("cancel", "ENG-7", body="x")
+        self.assertEqual(self.moved_to(), "s-canceled")
+
+    def test_into_writes_the_merged_line_and_the_duplicate_relation(self):
+        self.run_verb("cancel", "ENG-7", body="Same slice.", into="ENG-3")
+        self.assertEqual(self.comment_body(), "Merged into ENG-3 (Cart total).\nSame slice.")
+        self.assertIn("type: duplicate", self.relation_query())
+        self.assertEqual(self.order(), ["commentCreate", "issueRelationCreate", "issueUpdate"])
+
+    def test_already_canceled_writes_nothing_and_done_or_empty_refuses(self):
+        self.issue["state"] = {"name": "Canceled", "type": "canceled"}
+        self.assertEqual(self.run_verb("cancel", "ENG-7", body="x"), ["ENG-7 is already Canceled: nothing written"])
+        self.issue["state"] = {"name": "Done", "type": "completed"}
+        self.assertEqual(self.fails(fc.fc_linear_cmd.cmd_linear, self.a("cancel", "ENG-7", body="x")), (1, "linear cancel: ENG-7 is Done: a finished ticket is never canceled"))
+        self.issue["state"] = {"name": "Todo", "type": "unstarted"}
+        self.assertEqual(self.fails(fc.fc_linear_cmd.verb_cancel, self.a("cancel", "ENG-7", body="  \n")), (1, "cancel needs a reason: --file <path>, or stdin"))
+        self.assertEqual(self.writes(), [])
+
+    def test_linear_cancel_refuses_an_empty_comment_itself(self):
+        with self.assertRaises(RuntimeError):
+            fc.fc_linear.linear_cancel("ENG-7", "  ")
+        self.assertEqual(self.writes(), [])
+
+    def test_another_project_refuses_unless_any_project_and_so_does_into(self):
+        self.issue["project"] = {"id": "p2", "name": "Other"}
+        self.assertEqual(self.fails(fc.fc_linear_cmd.cmd_linear, self.a("cancel", "ENG-7", body="x")), (1, "ENG-7 is not in project Shop; pass --any-project to use it"))
+        self.assertEqual(self.run_verb("cancel", "ENG-7", body="x", any_project=True), ["canceled ENG-7"])
+        self.issue["project"] = {"id": "p1", "name": "Shop"}; self.other["project"] = {"id": "p2", "name": "Other"}; self.calls.clear()
+        self.assertEqual(self.fails(fc.fc_linear_cmd.cmd_linear, self.a("cancel", "ENG-7", body="x", into="ENG-3")), (1, "ENG-3 is not in project Shop; pass --any-project to use it"))
+        self.assertEqual(self.writes(), [])
 
 class LinearNoProject(unittest.TestCase):
     REFUSAL = (1, "ENG-7 is not in project Shop; pass --any-project to use it")
