@@ -351,6 +351,7 @@ class PlanWritingRules(unittest.TestCase):
         text = read("sections/1.md")
         self.assertNotRegex(text, r"(?i)superpowers|writing-plans|plugins/cache")
         self.assertEqual(text.count(self.SKILLS_OFF), 1)
+        self.assertNotRegex(read("sections/0b.md"), r"(?i)superpowers|brainstorming skill|writing-plans|plugins/cache|builder-check-prompt")
 
     def test_the_plan_shape_is_stated_line_for_line(self):
         lines = read("sections/1.md").splitlines()
@@ -377,7 +378,7 @@ class PlanWritingRules(unittest.TestCase):
 
 
 class Frame0OptIn(unittest.TestCase):
-    FIRST = "The architect (a solutions architect: it scopes the feature with the product owner and frames the product and technical choices, each with a recommendation) reads SKILL.md and sections/0b.md; nothing else of the skill is loaded."
+    FIRST = "The engineering manager shapes the feature with the product owner in conversation, one question at a time, and nothing is planned until the product owner approves the written design."
     OPT_IN = "Nothing of Frame0 runs until a prototype question needs a wireframe: no session has `frame0` tools, and the app starts only when `compose frame0 up --project <slug>` is run, right before the first drawing, never at the start of a session on the chance that a visual card comes."
     ONLY = "The first `compose frame0` command after `up` makes Frame0 ask the product owner to allow \"Frame0 MCP Server\" (the name compose asks with): report `needs-user` saying so and retry once they click Allow; if the command still fails, say so and wait."
 
@@ -560,89 +561,65 @@ class LeadRelaysOnce(unittest.TestCase):
         self.assertIn("Then read ~/.claude/skills/herdr/SKILL.md;", self.text)
 
 
-class CardsOnTheMap(unittest.TestCase):
-    FORM = '`needs-user "<issue>: <n> cards <ids>; recommendation <one line>"`'
+class BrainstormShape(unittest.TestCase):
+    ONCE = [
+        "Each message ends with one question: a single sentence, with no list of example answers after it.",
+        "Open questions come first; a short menu of options only when the product owner is stuck, and a concrete proposal when they say \"just guess\" or \"what do you think?\".",
+        "As soon as one part is understood, describe it back in 200 to 300 words, mark every guess as a guess, and ask what is wrong or missing.",
+        "Before any question, look for its answer in Linear first:",
+        "Every decision the product owner makes is recorded at once with their words: `compose decide --project <slug> --new \"<decision>\" --quote \"<their words>\"`.",
+        "The design is written to the feature issue's description: Intent, Goals, Non-goals, Anti-goals, Constraints, Decided by the product owner, My calls, and Left to the builder.",
+        "Before the product owner sees the design, a builder check reads it cold: `compose buildercheck --project <slug> --issue <id> | compose crew start --project <slug> --role builder-check --title \"builder check\" --brief -`.",
+        "Sort what the builder check asks into three piles: answered already (put the answer in the design), minor (settle it and mark it as your call), and theirs (only the product owner can answer it, and the answer changes what gets built).",
+        "Bring the theirs pile in one message, most important first; that is the only round of questions the check produces.",
+        "Under away, a brainstorm waits for the product owner and is listed in the digest; under yolo, the engineering manager takes its own recommendation per question, tagged unconfirmed.",
+        "The approved design is the map: the planner (step 1) starts only after the product owner approves it.",
+    ]
+    LOOKUP = [
+        "1. the map's Decisions so far and Notes, and the description and comments of the feature, its epic, and the story at hand",
+        "2. a `compose linear list --search \"<terms>\"` search, scoped to the project in `.compose/linear.json`, for the question's key terms, since another epic or feature may have decided it",
+    ]
+    GONE = ("card set", "fog", "Destination", "lavish-axi poll", "accept every recommendation")
 
     def setUp(self):
         self.text = read("sections/0b.md")
         self.lines = self.text.splitlines()
 
-    def step(self, n):
-        start = next(i for i, l in enumerate(self.lines) if l.startswith(f"{n}. "))
-        end = next(i for i, l in enumerate(self.lines) if l.startswith(f"{n + 1}. "))
-        self.assertLess(start, end, n)
-        return self.lines[start:end]
+    def test_heading_and_first_line(self):
+        self.assertEqual(self.lines[0], "### 0b. Shape first, always")
+        self.assertEqual(self.lines[1], Frame0OptIn.FIRST)
 
-    def test_steps_keep_their_order(self):
-        starts = [next(i for i, l in enumerate(self.lines) if l.startswith(f"{n}. ")) for n in range(1, 8)]
-        self.assertEqual(starts, sorted(starts))
-
-    def test_step_2_writes_cards_to_the_map_first_numbered(self):
-        step = " ".join(self.step(2))
-        self.assertRegex(step, r"Not yet specified")
-        self.assertRegex(step, r"\bnumbered\b")
-        self.assertRegex(step, r"\bfirst\b")
-        self.assertIn("recommended option", step, "the card still carries its recommendation")
-
-    def test_step_2_names_the_card_format_the_report_enforces(self):
-        step = " ".join(self.step(2))
-        for want in ("`Q1. <question>`", "`Why: <why it matters>`", "`A. <option> - affects: <what choosing it changes>`",
-                     "two options at least, four at most", "`Recommendation: <letter> - <why>`", "`compose report` refuses a card short of any of these"):
-            self.assertIn(want, step)
-        self.assertIn("Visual cards are on the map like every card", step)
-
-    def test_step_5_records_through_compose_decide_only(self):
-        step = " ".join(self.step(5))
-        self.assertIn("The architect never writes a Decisions so far line", step)
-        self.assertIn("`compose decide`", step)
-        self.assertIn("(product owner, <date>; said: \"<their words>\")", step)
-        self.assertIn("`compose decide --change <cid>`", step)
-        self.assertNotIn('--section "## Decisions so far"', self.text)
-
-    def test_step_3_reports_one_line_and_keeps_the_lavish_file(self):
-        step = " ".join(self.step(3))
-        self.assertIn(self.FORM, step)
-        self.assertIn("visual cards open in Lavish: <url>", step)
-        self.assertNotIn("the text cards in full", self.text)
-        self.assertNotIn("with the text cards", self.text)
-
-    def test_one_working_link_bounded_polls_acknowledged_answers_and_disconnect(self):
-        text = " ".join(self.text.split())
-        for want in ("`url:` that `lavish-axi <file>` printed", "in no second host form", "a link that does not answer",
-                     "already asked and not answered", "answer in text", "rounds of 180000 ms", "--takeover",
-                     "reply <file> --agent-reply", "`browser_disconnected`", "`needs-user \"reminder: ...\"`"):
-            self.assertIn(want, text)
-        self.assertIn("are the options pictures, or words?", text)
-        self.assertEqual(self.text.count('is text although tokens are UI'), 1)
-        self.assertEqual(self.text.count('is visual.'), 1)
-
-    def test_yolo_answers_are_tagged_unconfirmed_on_the_map(self):
-        text = " ".join(self.text.split())
-        self.assertIn("`yolo:`", text)
-        self.assertIn("(yolo recommendation, unconfirmed, <date>)", text)
-
-    def test_steps_3_and_6_forward_unchanged_read_once_answer_by_card_id(self):
-        both = " ".join(self.step(3) + self.step(6))
-        self.assertRegex(both, r"team lead forwards[^.]*unchanged")
-        self.assertRegex(both, r"engineering manager[^.]*reads the issue once")
-        self.assertRegex(both, r"by card id")
-        self.assertIn("herdr agent prompt", " ".join(self.step(3)))
-        self.assertIn("`compose decisions --project <slug>`", " ".join(self.step(3)))
-        self.assertIn("`compose decide --project <slug> --quote", " ".join(self.step(3)))
-
-    def test_step_6_uses_the_one_line_form(self):
-        step = " ".join(self.step(6))
-        self.assertNotIn("text cards in a new `needs-user`", step)
-        self.assertIn("<n> cards <ids>", step)
-        self.assertIn("--agent-reply", step, "visual cards still go on the same page")
-
-    def test_plain_text_and_frame0_sentences_kept(self):
-        self.assertNotIn("\u2014", self.text)
-        for line in (Frame0OptIn.FIRST, Frame0OptIn.OPT_IN, Frame0OptIn.ONLY):
+    def test_each_rule_is_stated_once(self):
+        for line in self.ONCE:
             self.assertEqual(self.lines.count(line), 1, line)
-        new = ("<n> cards <ids>", "unchanged", "reads the issue once", "by card id", "numbered")
-        for line in self.step(2) + self.step(3) + self.step(6):
-            if any(m in line for m in new):
+
+    def test_the_linear_lookup_list_follows_its_sentence(self):
+        i = self.lines.index(self.ONCE[3])
+        self.assertEqual(self.lines[i + 1:i + 3], self.LOOKUP)
+
+    def test_the_rules_keep_the_brainstorm_order(self):
+        at = lambda s: self.lines.index(s)
+        order = [at(self.ONCE[0]), at(self.ONCE[2]), at(self.ONCE[5]), at(self.ONCE[6]), at(self.ONCE[7]), at(self.ONCE[8]), at(self.ONCE[10])]
+        self.assertEqual(order, sorted(order))
+        self.assertEqual(self.lines[-1] if self.lines[-1] else self.lines[-2], self.ONCE[10], "the hand-off to step 1 closes the section")
+
+    def test_the_card_flow_is_gone(self):
+        for old in self.GONE:
+            self.assertNotIn(old, self.text, old)
+        for old in ("compose architect", "--accept-all", "queuePrompt", "data-lavish-question", "Not yet specified"):
+            self.assertNotIn(old, self.text, old)
+
+    def test_frame0_rules_stay_for_what_the_product_owner_will_look_at(self):
+        for line in (Frame0OptIn.OPT_IN, Frame0OptIn.ONLY):
+            self.assertEqual(self.lines.count(line), 1, line)
+        proto = next(i for i, l in enumerate(self.lines) if l.startswith("A **prototype** question about how a screen or flow should look"))
+        self.assertLess(self.lines.index(self.ONCE[0]), proto)
+        self.assertLess(proto, self.lines.index(self.ONCE[10]))
+
+    def test_plain_dashes_and_one_sentence_per_line(self):
+        self.assertNotIn("—", self.text)
+        for line in self.lines[1:]:
+            if not line.startswith("|"):
                 self.assertNotRegex(line, r"[.!?] [A-Z]", line)
 
 
@@ -1809,10 +1786,11 @@ class SkillNamesPostures(unittest.TestCase):
         for old in ("yolo without --push never pushes", "yolo never covers it", "(`results/yolo.json`, `event yolo=on`)"):
             self.assertNotIn(old, text)
 
-    def test_0b_tag_line_once_and_old_one_gone(self):
-        lines = read("sections/0b.md").splitlines()
-        self.assertEqual(lines.count(self.TAG), 1)
-        self.assertNotIn("An answer that starts `yolo:` is", "\n".join(lines))
+    def test_0b_names_the_unconfirmed_tag_and_card_prefixes_are_gone(self):
+        text = read("sections/0b.md")
+        self.assertNotIn(self.TAG, text)  # 0b asks no cards, so no answer starts `away:` or `yolo:` there
+        self.assertNotIn("An answer that starts `yolo:` is", text)
+        self.assertEqual(text.count("`(yolo recommendation, unconfirmed, <date>)`"), 1)
 
     def test_no_em_dash(self):
         for rel in ("SKILL.md", "sections/0b.md"):
