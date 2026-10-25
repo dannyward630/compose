@@ -31,6 +31,7 @@ TEST_READER = "claude:claude-haiku-5-5"
 # Reviews a diff in verify and `compose review`, and confirms each finding: `models.review` in the config. A `claude:<id>` runs
 # Claude Code on the subscription, any other id the OpenRouter fast-model endpoint. None keeps the .env's TEXT_MODEL.
 REVIEW_MODEL = None
+READINESS_MODEL = ("claude:claude-opus-5-5", "high")  # the stronger judge of a technical story's readiness: `models.readiness`, a claude: id or {"model", "effort"}
 JEV_DIR = Path(__file__).resolve().parent.parent / "jev"  # the browser agent verify's e2e cases drive: its own uv project
 # Harness-reported cost is wrong when a request is pinned to a specific host: OpenCode prices by OpenRouter's catalog default, not
 # the pinned provider's rate. These override the reported cost (dollars per million input, output) for the models we pin. The claude:
@@ -146,7 +147,7 @@ def settings(cfg, harness=None):
 def apply_config(move=True, harness=None):
     """Point models, keys, and env at the active workspace. Its key wins over the shell and the jev .env, and every
     OpenRouter caller (pi, OpenCode, the fast-model review, jev's e2e text helper) bills to it."""
-    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, REVIEW_MODEL, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL, CLAUDE_PARALLEL, LOAD, PROVIDERS, TIERS, PRICES, HARNESS
+    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, REVIEW_MODEL, READINESS_MODEL, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL, CLAUDE_PARALLEL, LOAD, PROVIDERS, TIERS, PRICES, HARNESS
     if move:
         for line in fc_auth.move_keys(CONFIG_PATH, ENV_FILE, AUTH_PATH):  # old keys leave config.json and .env first, stdout stays clean
             print(line, file=sys.stderr)
@@ -211,6 +212,12 @@ def apply_config(move=True, harness=None):
     FALLBACK_AFTER = int(models.get("fallback_after", FALLBACK_AFTER))
     TEST_READER = models.get("test_reader", TEST_READER)
     REVIEW_MODEL = models.get("review", REVIEW_MODEL)
+    if "readiness" in models:
+        READINESS_MODEL = entry(models["readiness"])
+        if not (isinstance(READINESS_MODEL[0], str) and READINESS_MODEL[0].startswith("claude:")):
+            sys.exit(f"{CONFIG_PATH}: models.readiness must be a claude: model id")
+    else:
+        READINESS_MODEL = ("claude:claude-opus-5-5", "high")
     if "fix" in models:
         os.environ["COMPOSE_FIX_MODEL"] = models["fix"]
     for m in [m for m in (models.get("implementer"), models.get("fallback"), models.get("fix"), models.get("test_reader"), *CREW_MODELS.values(),

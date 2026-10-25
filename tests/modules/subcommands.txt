@@ -16,6 +16,7 @@ quick
 spec-check
 ready
 delivery
+readiness
 projects
 cost
 status
