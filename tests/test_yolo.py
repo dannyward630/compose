@@ -103,6 +103,22 @@ class Yolo(unittest.TestCase):
         self.assertEqual([x["text"] for x in d["decisions"]], ["which db?: postgres, the recommendation", "cards NEB-4: accept-all"])
         self.assertTrue(all(x["ts"] for x in d["decisions"]))
 
+    def test_digest_sections_render_the_same_digest(self):
+        self.yolo("go", "with", "Stripe")
+        self.yolo("decided", "db?: postgres")
+        y = json.loads(self.file.read_text())
+        s = snap(tasks={"001": "passed"}, halt=["2026-01-01 10:00:00", "openrouter", 1])
+        (self.proj / "results" / "001.json").write_text("{}")
+        with mock.patch.object(fc.fc_watch, "watch_snapshot", return_value=s), mock.patch.object(fc.fc_worktree, "stack_order", return_value=[]), \
+                mock.patch.object(fc.fc_cost, "rows", return_value=[]):
+            sections = fc.fc_yolo.digest_sections(Path("."), self.proj, y)
+            text = fc.fc_yolo.yolo_digest(Path("."), self.proj, y, "digest")
+        want = [f"{y['mode']} digest for hw: on since {y['since']}"]
+        for head, items in sections:
+            want += ["", head] + [f"- {i}" for i in items or ["none"]]
+        self.assertEqual(text, "\n".join(want))
+        self.assertEqual([h for h, _ in sections], ["Your instructions", "Decided for you", "To confirm", "Waiting on you", "Tried and failed", "Done", "Cost"])
+
     def test_off_prints_the_digest_from_disk_then_archives(self):
         self.yolo("go", "with", "Stripe")
         d = json.loads(self.file.read_text())

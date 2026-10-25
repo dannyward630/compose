@@ -145,6 +145,10 @@ class FcNightprep(ModuleChecks, unittest.TestCase):
     module = "fc_nightprep"
 
 
+class FcDigest(ModuleChecks, unittest.TestCase):
+    module = "fc_digest"
+
+
 class FcFactory(ModuleChecks, unittest.TestCase):
     module = "fc_factory"
 

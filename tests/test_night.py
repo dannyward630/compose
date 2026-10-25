@@ -13,6 +13,7 @@ import fc_config, fc_delivery, fc_plan, fc_readiness, fc_claude, fc_change, fc_r
 import fc_nightstate as ns
 import fc_answer as fa, fc_core, fc_proc
 import fc_nightprep as fp
+import fc_digest as fd
 
 
 BIN = Path(__file__).resolve().parents[1] / "bin"
@@ -662,6 +663,107 @@ class Prep(unittest.TestCase):
         self.claude.return_value = (None, "two\nlines  of   text", 4, {})
         fp.run_prep(self.repo, "NEB-12")
         self.assertNotIn("\n", self.events[0]); self.assertIn("two lines of text", self.events[0])
+
+
+class Digest(unittest.TestCase):
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp()).resolve() / "neb"
+        self.repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        self.since = time.mktime((2026, 10, 26, 23, 0, 0, 0, 0, -1))
+        self.state = {"night": ns.new_night(self.since, self.since + 8 * 3600, 20.0, None), "prep": {},
+                      "dispatched": {"NEB-10": {"feature": "NEB-9", "project": "sign-in", "kind": "story", "at": self.since}}}
+        self.docs = {"id": "d1", "url": "", "content": ""}
+        plan = {"doc": {"content": "PLAN"}, "tracks": [], "features": {}}
+        entries = [{"id": "NEB-10", "title": "Sign in with Google", "state": "Todo", "kind": "story", "feature": "NEB-9", "track": "auth", "wave": 1, "waits_on": []}]
+        self.product_plan = unittest.mock.patch.object(fd.fc_delivery, "product_plan", return_value=plan).start()
+        unittest.mock.patch.object(fd.fc_plan, "order_entries", side_effect=lambda tracks, features: entries).start()
+        self.last_reconcile = unittest.mock.patch.object(fd.fc_delivery, "last_reconcile", return_value=None).start()
+        self.paused = unittest.mock.patch.object(fd.fc_change, "paused_tasks", return_value={}).start()
+        unittest.mock.patch.object(fd.fc_core, "all_projects", return_value={"sign-in": (self.repo, self.repo / ".compose" / "sign-in")}).start()
+        unittest.mock.patch.object(fd.fc_tasks, "yolo_state", return_value=None).start()
+        unittest.mock.patch.object(fd.fc_yolo, "digest_sections", return_value=[]).start()
+        self.prep_doc = unittest.mock.patch.object(fd.fc_nightprep, "prep_doc", side_effect=lambda repo: self.docs).start()
+        self.addCleanup(unittest.mock.patch.stopall)
+
+    def event(self, line):
+        st.add_event(self.repo, line)
+
+    def answer(self, at=None, **kw):
+        rec = {"key": "k", "project": "sign-in", "issue": "NEB-10", "question": "q", "answer": "a", "reasoning": "", "cards": [], "never_set": False,
+               "why_wait": "", "model": "m", "at": at or time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.since + 60)), "error": "",
+               "commented": False, "acted": False, **kw}
+        path = fa.answers_path(self.repo)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a") as out:
+            out.write(json.dumps(rec) + "\n")
+
+    def test_verified_work_is_placed_in_the_delivery_plan(self):
+        self.event("event factory=verified story=NEB-10 project=sign-in  (verified: ...)")
+        self.assertEqual(fd.verified(self.repo, fd.night_events(self.repo, 0.0)),
+                         ["NEB-10 Sign in with Google  (feature NEB-9, wave 1, track auth; project sign-in)"])
+        self.product_plan.side_effect = SystemExit("delivery: timed out")
+        self.assertEqual(fd.verified(self.repo, fd.night_events(self.repo, 0.0)), ["NEB-10  (project sign-in; placement unavailable: delivery: timed out)"])
+
+    def test_review_lists_answers_to_confirm_proposed_fixes_replans_paused_and_failures(self):
+        self.answer(issue="NEB-10", question="NEB-10: which store?", answer="one store")
+        self.last_reconcile.return_value = {"proposed": ["NEB-30 is not in the plan: add it or cancel it."], "at": "2026-10-27 02:00:00"}
+        self.event('event factory=held story=NEB-11 tasks=002 why="D1 changed on NEB-9"  (...)')
+        self.paused.return_value = {"002": {"reason": "factory: D1 changed on NEB-9"}}
+        self.event('event factory=turn-failed why="delivery reconcile: timed out"  (the next turn tries again)')
+        out = fd.review(self.repo, self.state, fd.night_events(self.repo, 0.0))
+        self.assertEqual(out[:3], ["To confirm: NEB-10: which store? -> one store (night answerer; overruling it is a plan change)",
+                                   "Proposed fix: NEB-30 is not in the plan: add it or cancel it.",
+                                   'Re-plan: NEB-11 held (D1 changed on NEB-9)'])
+        self.assertIn("Paused: sign-in 002 (factory: D1 changed on NEB-9)", out)
+        self.assertIn("Failed or stuck: delivery reconcile: timed out", out)
+
+    def test_review_skips_old_and_failed_answers_and_lists_never_set_ones_as_waiting(self):
+        self.answer(at="2026-10-26 12:00:00", question="old?")
+        self.answer(error="boom", question="broken?")
+        self.answer(question="which bank?", never_set=True, why_wait="money")
+        self.assertEqual(fd.review(self.repo, self.state, []), ["Waiting on you: sign-in: which bank? (never-set: money)"])
+
+    def test_review_includes_the_posture_decisions_and_digest_items_of_a_project(self):
+        self.state["dispatched"]["NEB-10"]["project"] = "sign-in"
+        fd.fc_tasks.yolo_state.return_value = {"mode": "yolo", "decisions": [{"ts": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.since + 5)), "text": "db: postgres"},
+                                                                          {"ts": "2020-01-01 00:00:00", "text": "old"}]}
+        fd.fc_yolo.digest_sections.return_value = [("Waiting on you", ["001: needs-user  delete?"]), ("Done", ["x"]), ("Tried and failed", ["002 t  failed"])]
+        self.assertEqual(fd.review(self.repo, self.state, []),
+                         ["To confirm: sign-in db: postgres", "Waiting on you: sign-in: 001: needs-user  delete?", "Failed or stuck: sign-in: 002 t  failed"])
+
+    def test_a_source_that_fails_is_marked_unavailable_and_the_digest_still_renders(self):
+        self.event("event factory=verified story=NEB-10 project=sign-in  (verified)")
+        self.last_reconcile.side_effect = ValueError("bad json")
+        self.paused.side_effect = OSError("gone")
+        self.prep_doc.side_effect = RuntimeError("linear down")
+        self.state["prep"]["NEB-12"] = {"pid": None, "print": "x", "at": 1.0, "layer": "stories"}
+        text = fd.render(self.repo, self.state, self.since + 60)
+        self.assertIn("last reconcile unavailable: bad json", text)
+        self.assertIn("paused tasks of sign-in unavailable: gone", text)
+        self.assertIn("- NEB-12 (stories): prepared questions unavailable (linear down)", text)
+        self.assertIn("morning digest for neb: night 23:00 to ", text)
+
+    def test_ready_to_plan_counts_the_prepared_questions_and_lists_planning_waits(self):
+        self.docs.update(url="https://linear.app/d", content="Intro\n\n## NEB-12: Billing\n\nLayer: stories.\n\nQuestions:\n1. Which?\n   Recommendation (a guess): x - y\n2. When?\n   Recommendation (a guess): z - w\n")
+        self.state["prep"]["NEB-12"] = {"pid": None, "print": "x", "at": 1.0, "layer": "stories"}
+        self.state["prep"]["NEB-13"] = {"pid": 5, "print": None, "at": 1.0, "layer": "story"}
+        self.state["night"]["morning_msgs"] = ["sign-in|plan the stories for NEB-9?"]
+        self.assertEqual(fd.ready_to_plan(self.repo, self.state),
+                         ["NEB-12 Billing (stories): 2 questions prepared  https://linear.app/d", "Planning waits: sign-in: plan the stories for NEB-9?"])
+
+    def test_render_has_the_three_heads_the_end_state_and_the_spend(self):
+        self.state["night"].update(ended={"state": "budget", "at": self.since + 3600}, spend=20.31, waits=1, waited=1861.0)
+        self.docs["content"] = "## NEB-12: Billing\n\nQuestions:\n1. Which?\n"
+        self.state["prep"]["NEB-12"] = {"pid": None, "print": "x", "at": 1.0, "layer": "stories"}
+        text = fd.render(self.repo, self.state, self.since + 7200)
+        self.assertTrue(text.startswith(f"morning digest for {self.repo.name}: night 23:00 to 00:00, ended: budget\n"))
+        self.assertIn("spend $20.31 of $20.00; usage waits: 1 (31m)", text)
+        self.assertEqual([h for h in fd.HEADS if f"\n\n{h}\n" not in text], [])
+        self.assertIn("Ready to plan\n- NEB-12 Billing (stories): 1 question prepared", text)
+        self.assertIn("Verified and waiting for your merge\n- none", text)
+        self.assertTrue(text.rstrip().endswith(f"Night notes: {ns.notes_path(self.repo)}"))
+        self.assertNotIn(chr(0x2014), text)
 
 
 if __name__ == "__main__":
