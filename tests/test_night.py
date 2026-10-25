@@ -12,6 +12,7 @@ import fc_factorystate as st, fc_factoryturn as ft, fc_factory as f
 import fc_config, fc_delivery, fc_plan, fc_readiness, fc_claude, fc_change, fc_reconcile
 import fc_nightstate as ns
 import fc_answer as fa, fc_core, fc_proc
+import fc_nightprep as fp
 
 
 BIN = Path(__file__).resolve().parents[1] / "bin"
@@ -21,7 +22,7 @@ class PlansLanded(unittest.TestCase):
     params = staticmethod(lambda fn: list(inspect.signature(fn).parameters))
 
     def test_the_seams_of_the_build_loop_exist_as_promised(self):
-        self.assertEqual((set(st.PACE), set(ft.IDLE)), ({"day", "night"}, {"day"}))  # night joins PACE when fc_nightstate loads
+        self.assertEqual((set(st.PACE), set(ft.IDLE)), ({"day", "night"}, {"day", "night"}))  # night joins PACE when fc_nightstate loads, and IDLE when fc_nightprep does
         self.assertEqual(st.EMPTY["mode"], "day")
         self.assertEqual([self.params(g) for g in (st.pace, st.day_cap)], [["state"]] * 2)
         self.assertEqual(self.params(st.add_event), ["repo", "line"]); self.assertEqual(self.params(st.events_since), ["repo", "n"])
@@ -454,6 +455,134 @@ class Answerer(unittest.TestCase):
             self.assertEqual(run.call_args.args[0][run.call_args.args[0].index("--effort") + 1], "high")
             self.assertEqual(len(fc_claude.claude_once(self.repo, "p")[1]), 1500)
             self.assertNotIn("--effort", run.call_args.args[0])
+
+def entry(ident, feature, kind="story", state="Todo"):
+    return {"id": ident, "title": ident, "state": state, "kind": kind, "feature": feature, "track": "t", "wave": 1, "waits_on": []}
+
+def rd(ident, ready=True, specced=True, error=None):
+    return {"id": ident, "ready": ready, "specced": specced, "has_tasks": True, "missing": [], "error": error, "needs_shaping": False}
+
+
+class Prep(unittest.TestCase):
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp()).resolve()
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        self.state = {"night": ns.new_night(100.0, 1e12, 10.0, None), "prep": {}}
+        self.out, self.events, self.gone, self.pids = [], [], set(), iter(range(7000, 7100))
+        self.entries = [entry("NEB-11", "NEB-9"), entry("NEB-12", "NEB-12", kind="feature")]
+        self.results = {"NEB-11": rd("NEB-11", ready=False, specced=False)}
+        self.titles = {"NEB-11": "Sign in", "NEB-12": "Billing"}
+        self.descriptions = {"NEB-11": "d11", "NEB-12": "d12"}
+        self.states = {}
+        self.docs, self.cli_calls = {}, []
+        def readiness(repo, ident, refresh=False, write=True):
+            assert write is False, "prep must not write to the ticket"
+            r = self.results[ident]
+            if r.get("error") == "boom":
+                raise RuntimeError("boom")
+            return r
+        patches = [unittest.mock.patch.object(fp.fc_factoryturn, "compose_cli", side_effect=self.cli),
+                   unittest.mock.patch.object(fp.fc_claude, "claude_once"),
+                   unittest.mock.patch.object(fp.fc_nightstate, "spawn_once", side_effect=lambda *a: next(self.pids)),
+                   unittest.mock.patch.object(fp.fc_delivery, "product_plan", return_value={"doc": {"content": "PLAN"}, "tracks": [], "features": {}}),
+                   unittest.mock.patch.object(fp.fc_plan, "order_entries", side_effect=lambda tracks, features: self.entries),
+                   unittest.mock.patch.object(fp.fc_readiness, "story_readiness", side_effect=readiness),
+                   unittest.mock.patch.object(fp.fc_factorystate, "add_event", side_effect=lambda repo, line: self.events.append(line)),
+                   unittest.mock.patch.object(fp.os, "kill", side_effect=lambda pid, sig: (_ for _ in ()).throw(ProcessLookupError()) if pid in self.gone else None)]
+        self.claude, self.spawn = (p.start() for p in patches[1:3])
+        patches[0].start()
+        for p in patches[3:]:
+            p.start()
+        self.addCleanup(unittest.mock.patch.stopall)
+
+    def cli(self, args, stdin=None, pane=None):
+        self.cli_calls.append(list(args))
+        if args[:2] == ["linear", "get"]:
+            i = args[2]
+            return json.dumps({"identifier": i, "title": self.titles.get(i, i), "description": self.descriptions.get(i, ""),
+                               "state": {"name": self.states.get(i, "Todo")}, "labels": {"nodes": []}})
+        if args[:3] == ["linear", "doc", "list"]:
+            return "".join(f"doc-{n} 2026-10-27 {t}\n" for n, t in enumerate(self.docs))
+        if args[:3] == ["linear", "doc", "create"]:
+            self.docs[args[args.index("--title") + 1]] = stdin or ""
+            return "https://linear.app/doc/prep\n"
+        title = lambda: list(self.docs)[int(args[3].split("-")[1])]
+        if args[:3] == ["linear", "doc", "get"]:
+            return title() + "\n" + self.docs[title()] + "\n--- section hashes (--section \"<heading>\" --expect <hash>)\nabc ## x\n"
+        if args[:3] == ["linear", "doc", "update"]:
+            self.docs[title()] = stdin
+            return "updated https://linear.app/doc/prep\n"
+        raise AssertionError(f"unexpected compose call {args}")
+
+    def print_of(self, ident):
+        return fp.prep_print(f"{self.titles[ident]}\n{self.descriptions[ident]}", "")
+
+    def finish_worker(self, ident):
+        self.gone.add(self.state["prep"][ident]["pid"])
+
+    def test_candidates_start_at_the_offer_and_take_only_what_needs_planning(self):
+        self.entries = [entry("NEB-10", "NEB-9"), entry("NEB-11", "NEB-9"), entry("NEB-12", "NEB-12", kind="feature"), entry("NEB-13", "NEB-9")]
+        self.results = {"NEB-11": rd("NEB-11", ready=False, specced=False), "NEB-13": rd("NEB-13", ready=True)}
+        self.assertEqual([(c["id"], c["layer"]) for c in fp.candidates(self.repo, "NEB-11", 3)], [("NEB-11", "story"), ("NEB-12", "stories")])
+
+    def test_a_judge_error_skips_the_ticket(self):
+        self.results["NEB-11"] = rd("NEB-11", error="boom")
+        self.assertEqual([c["id"] for c in fp.candidates(self.repo, "NEB-11", 3)], ["NEB-12"])
+
+    def test_idle_starts_one_prep_at_a_time_and_skips_what_is_prepared_and_unchanged(self):
+        fp.prep_idle(self.repo, self.state, {"id": "NEB-11"}, 100.0, self.out)
+        self.spawn.assert_called_once_with(self.repo, ["factory", "prep", "--repo", str(self.repo), "--ticket", "NEB-11"], "night-prep.log")
+        fp.prep_idle(self.repo, self.state, {"id": "NEB-11"}, 160.0, self.out); self.assertEqual(self.spawn.call_count, 1)  # the worker still runs
+        self.finish_worker("NEB-11"); fp.prep_idle(self.repo, self.state, {"id": "NEB-11"}, 220.0, self.out)
+        self.assertEqual(self.spawn.call_args.args[1][-1], "NEB-12")
+
+    def test_idle_waits_when_the_night_drains_for_the_morning(self):
+        self.state["night"]["draining"] = "morning"
+        fp.prep_idle(self.repo, self.state, {"id": "NEB-11"}, 100.0, self.out); self.spawn.assert_not_called()
+
+    def test_the_worker_writes_one_section_and_never_touches_the_ticket(self):
+        self.claude.return_value = (None, json.dumps({"code": ["bin/billing.py"], "built": ["checkout"], "open": ["refunds"],
+                                    "questions": [{"question": "Refunds in v1?", "recommendation": "No", "why": "D4 defers them"}], "drop": False}), 4, {})
+        fp.run_prep(self.repo, "NEB-12")
+        doc = self.docs[fp.PREP_TITLE]
+        self.assertIn("## NEB-12: Billing\n", doc); self.assertIn("1. Refunds in v1?\n   Recommendation (a guess): No - D4 defers them\n", doc)
+        self.assertEqual([c for c in self.cli_calls if c[:2] in (["linear", "update"], ["linear", "create"], ["linear", "labels"])], [])
+        self.assertIn("never plan", self.claude.call_args.args[1])
+        self.assertIn("event factory=prepared ticket=NEB-12 questions=1", self.events[-1])
+
+    def test_a_reply_that_will_not_parse_records_nothing(self):
+        self.claude.return_value = (None, 'no json "here"', 4, {})
+        fp.run_prep(self.repo, "NEB-12")
+        self.assertEqual(self.docs, {}); self.assertEqual(len(self.events), 1)
+        self.assertTrue(self.events[0].startswith("event factory=prep-failed ticket=NEB-12 why=\"no json 'here'"))
+
+    def test_drop_removes_the_old_section_whole(self):
+        self.docs[fp.PREP_TITLE] = "## NEB-12: Billing\n\nx\n\n## NEB-11: Sign in\n\ny\n"
+        self.claude.return_value = (None, json.dumps({"code": [], "built": [], "open": [], "questions": [], "drop": True}), 4, {})
+        fp.run_prep(self.repo, "NEB-12")
+        self.assertNotIn("NEB-12", self.docs[fp.PREP_TITLE]); self.assertIn("## NEB-11: Sign in", self.docs[fp.PREP_TITLE])
+        self.assertIn("event factory=prep-dropped ticket=NEB-12", self.events[-1])
+        self.assertIn("x", self.claude.call_args.args[1])  # the old section went into the prompt
+
+    def test_refresh_drops_sections_of_tickets_now_ready_and_requeues_changed_ones(self):
+        self.state["prep"] = {"NEB-11": {"print": "old", "at": 1.0, "pid": None}, "NEB-12": {"print": self.print_of("NEB-12"), "at": 1.0, "pid": None}}
+        self.docs[fp.PREP_TITLE] = "## NEB-11: Sign in\n\nx\n\n## NEB-12: Billing\n\ny\n"
+        self.results["NEB-11"] = rd("NEB-11", ready=True)
+        fp.refresh(self.repo, self.state, ["event factory=verified story=NEB-10 project=sign-in"], 100.0, self.out)
+        self.assertNotIn("NEB-11", self.docs[fp.PREP_TITLE]); self.assertNotIn("NEB-11", self.state["prep"])
+        self.descriptions["NEB-12"] = "changed"; fp.refresh(self.repo, self.state, [], 100.0 + fp.REFRESH_SECONDS, self.out)
+        self.assertEqual(self.state["prep"]["NEB-12"]["print"], None)  # queued: the next idle turn prepares it again
+
+    def test_refresh_drops_a_ticket_that_is_in_progress(self):
+        self.state["prep"] = {"NEB-12": {"print": self.print_of("NEB-12"), "at": 1.0, "pid": None}}
+        self.docs[fp.PREP_TITLE] = "## NEB-12: Billing\n\ny\n"; self.states["NEB-12"] = "In Progress"
+        fp.refresh(self.repo, self.state, ["event factory=dispatched story=NEB-12"], 100.0, self.out)
+        self.assertEqual(self.state["prep"], {}); self.assertNotIn("NEB-12", self.docs[fp.PREP_TITLE])
+
+    def test_refresh_waits_for_its_trigger_or_the_clock(self):
+        self.state["prep"] = {"NEB-12": {"print": "old", "at": 1.0, "pid": None}}; self.state["prep_checked"] = 100.0
+        fp.refresh(self.repo, self.state, ["event factory=offer ticket=NEB-12"], 200.0, self.out)
+        self.assertEqual(self.cli_calls, [])
 
 
 if __name__ == "__main__":
