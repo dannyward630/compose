@@ -2265,11 +2265,6 @@ class UserDocsShaping(unittest.TestCase):
         self.assertNotRegex(read("docs/herdr.md"), r"compose architect --project <slug> --extra")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-
 ZERO_P = [
     "The product delivery plan is one Linear document, `Product delivery plan`, in the repo's Linear project; its Tracks section is the order across every feature, and the track list order is the priority when something has to give.",
     "A track is a line of features built one after another; tracks run in parallel unless a track says what it comes after, and the CLI computes the waves from that.",
@@ -2331,3 +2326,7 @@ class ProductDeliveryPlan(unittest.TestCase):
         for rel in ("sections/0p.md", "commands/delivery.md"):
             for line in self.body(rel)[1 if rel.startswith("sections") else 0:]:
                 self.assertNotRegex(line, r"[.!?] [A-Z]", line)
+
+
+if __name__ == "__main__":
+    unittest.main()
