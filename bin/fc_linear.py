@@ -287,6 +287,8 @@ def linear_event(proj, meta, event, result=None):
         issue = linear_issue(meta["linear"])
         state = "In Review" if event in ("passed", "hand_done") else "In Progress"
         linear_move(issue, state)
+        if meta.get("id"):  # the stored tasks say so from here on: what waits on this task reads it there, until the next sync
+            fc_tasks.set_cached_state(proj, meta["id"], state)
         if event == "passed":
             linear_comment(issue, f"Passed: branch `{result['branch']}`, {result['attempts']} attempt(s), ${result['cost']:.4f}, model `{result['model']}`.")
         elif event == "hand_done":
