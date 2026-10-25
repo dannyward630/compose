@@ -437,11 +437,11 @@ class MarkReady(unittest.TestCase):
         return {"issueUpdate": {"success": True}}
 
     @staticmethod
-    def node(ident, state, *labels, blocked=False, tasks=("Todo",)):
+    def node(ident, state, *labels, blocked=False, tasks=("Todo",), desc=""):
         rels = [{"type": "blocks", "issue": {"identifier": "ENG-99", "state": {"name": "Todo"}, "labels": {"nodes": []}}}] if blocked else []
         return {"id": "id-" + ident, "identifier": ident, "title": "T " + ident, "state": {"name": state},
                 "labels": {"nodes": [{"id": "l-" + n.lower(), "name": n} for n in labels]}, "inverseRelations": {"nodes": rels},
-                "children": {"nodes": [{"state": {"name": t}} for t in tasks]}}
+                "children": {"nodes": [{"state": {"name": t}} for t in tasks]}, "description": desc}
 
     def mark(self, *expected):
         self.assertEqual(fc.fc_linear.linear_mark_ready("ENG-1"), [{"id": i, "title": "T " + i} for i in expected])
@@ -461,6 +461,13 @@ class MarkReady(unittest.TestCase):
         self.mark()
         self.assertEqual(self.updates, [{"id": "id-ENG-2", "labels": ["l-needs-shaping"]}])
         self.assertEqual(self.said, ["linear ENG-2 -> not Ready"])
+
+    def test_an_issue_with_open_questions_is_not_ready(self):
+        asked = "## Open questions\n\n* Where does ENG-2 stop? (readiness check, 2026-10-26)\n"
+        self.children = [self.node("ENG-2", "Todo", "Ready", desc=asked), self.node("ENG-3", "Todo", desc="## Open questions\n\nNone.\n")]
+        self.mark("ENG-3")
+        self.assertCountEqual(self.updates, [{"id": "id-ENG-2", "labels": []}, {"id": "id-ENG-3", "labels": ["l-ready"]}])
+        self.assertRegex(fc.fc_linear.LINEAR_READY_TREE, r"fragment ReadyNode on Issue \{[^}]*\bdescription\b")
 
     def test_a_story_without_a_live_task_is_not_ready(self):
         self.children = [self.node("ENG-2", "Todo", tasks=()), self.node("ENG-3", "Backlog", "Ready", tasks=("Canceled", "canceled")),
@@ -762,7 +769,7 @@ class FeatureAfterLink(unittest.TestCase):
 
 
 class ReadyTreeQuery(unittest.TestCase):
-    FRAGMENT = """fragment ReadyNode on Issue { id identifier title state { name } labels { nodes { id name } } children { nodes { state { name } } }
+    FRAGMENT = """fragment ReadyNode on Issue { id identifier title description state { name } labels { nodes { id name } } children { nodes { state { name } } }
   inverseRelations(first: 250) { nodes { type issue { identifier state { name } labels { nodes { name } } } } } }"""
 
     @staticmethod
@@ -878,3 +885,14 @@ class RoutePin(unittest.TestCase):
                                                    "issues": [issue("ENG-7", "T", block(id="001", test="t", route=value))]})
             self.assertEqual(e.exception.code,
                              f"ENG-7: route must be test-first, implement-then-test, fix-then-regression-test or check-only, not {value}")
+
+
+class OpenQuestions(unittest.TestCase):
+    def test_open_questions_reads_star_bullets_and_treats_none_as_empty(self):
+        self.assertEqual(fc.fc_linear.open_questions("## Open questions\n\n* a\n- b\n\n## Notes\n\nx"), ["a", "b"])
+        self.assertEqual(fc.fc_linear.open_questions("## Open questions\n\nNone.\n"), [])
+        self.assertEqual(fc.fc_linear.open_questions(""), [])
+
+    def test_open_questions_reads_only_the_h2_section_and_its_h3_children(self):
+        self.assertEqual(fc.fc_linear.open_questions("## Notes\n\n### Open questions\n\n- mine\n"), [])
+        self.assertEqual(fc.fc_linear.open_questions("## Open questions:\n\n- a\n\n### Detail\n\n- b\n\n## After\n\n- c\n"), ["a", "b"])

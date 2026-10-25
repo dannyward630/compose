@@ -1,4 +1,4 @@
-import json, os, sys, threading, time, urllib.error, urllib.request
+import json, os, re, sys, threading, time, urllib.error, urllib.request
 from pathlib import Path
 from typing import Callable, Optional
 import fc_core, fc_config, fc_plan, fc_tasks
@@ -375,16 +375,24 @@ def ready_ids(issues):
             and all(fc_tasks.blocker_finished(r["issue"]["state"]["name"], [l["name"] for l in r["issue"]["labels"]["nodes"]])
                     for r in i["inverseRelations"]["nodes"] if r["type"] == "blocks")]
 
+def open_questions(description):
+    """The list items (`-` or `*` bullets) of the `## Open questions` section: an H2 heading with an optional suffix, running to the
+    next H1 or H2 heading, so bullets under an H3 child count. An H3 `### Open questions` elsewhere does not. [] when the section
+    is absent, empty or says None."""
+    m = re.search(r"^##[ \t]+Open questions\b[^\n]*$(.*?)(?=^#{1,2}[ \t]|\Z)", description or "", re.M | re.S)
+    items = [b.group(1) for b in map(re.compile(r"^\s*[-*]\s+(.*\S)").match, (m.group(1) if m else "").splitlines()) if b]
+    return [i for i in items if i.strip().rstrip(".").lower() != "none"]
+
 LINEAR_READY_TREE = """query($id: String!) { issue(id: $id) { team { labels { nodes { id name } } }
   children { nodes { ...ReadyNode } } parent { children { nodes { ...ReadyNode } } } } }
-fragment ReadyNode on Issue { id identifier title state { name } labels { nodes { id name } } children { nodes { state { name } } }
+fragment ReadyNode on Issue { id identifier title description state { name } labels { nodes { id name } } children { nodes { state { name } } }
   inverseRelations(first: 250) { nodes { type issue { identifier state { name } labels { nodes { name } } } } } }"""
 
 def linear_mark_ready(feature):
     """Set the team's Ready label on the feature's children that can start now and take it off the rest, the same for the
     epic's children when the feature has one; one read, then one update per issue whose labels change. A story with no task
     that is not Canceled has nothing to start, so it is not ready; a feature needs no story. Returns the ready issues, the
-    feature's children first."""
+    feature's children first. An issue with open questions waits."""
     tree = linear_gql(LINEAR_READY_TREE, {"id": feature})["issue"]
     ready_label = next((l["id"] for l in tree["team"]["labels"]["nodes"] if l["name"].lower() == "ready"), None)
     if not ready_label:
@@ -394,7 +402,8 @@ def linear_mark_ready(feature):
     groups = [(tree["children"]["nodes"], True), *([(tree["parent"]["children"]["nodes"], False)] if tree["parent"] else [])]
     for group, stories in groups:
         cut = {n["identifier"] for n in group if any((c["state"]["name"] or "").lower() != "canceled" for c in n["children"]["nodes"])}
-        ready = {i for i in ready_ids(group) if i in cut or not stories}
+        asking = {n["identifier"] for n in group if open_questions(n.get("description"))}
+        ready = {i for i in ready_ids(group) if (i in cut or not stories) and i not in asking}
         for n in group:
             have = [l["id"] for l in n["labels"]["nodes"]]
             if n["identifier"] in ready:
