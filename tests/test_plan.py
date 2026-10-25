@@ -212,9 +212,10 @@ class ProductTracks(unittest.TestCase):
                           ("1. A: NEB-1, NEB-1", "line 1: A names NEB-1 twice"),
                           ("1. A: NEB-7 (after C)\n2. B: NEB-8 (after A)\n3. C: NEB-9 (after B)", "the tracks wait on each other in a loop: A -> C -> B -> A"),
                           ("1. A: NEB-7 (after B)\n2. B: NEB-8 (after A)", "the tracks wait on each other in a loop: A -> B -> A")):
-            with self.subTest(text), self.assertRaises(ValueError) as e:
+            with self.subTest(text), self.assertRaises(fc_plan.TracksError) as e:
                 fc_plan.parse_tracks(text)
             self.assertEqual(str(e.exception), msg)
+        self.assertTrue(issubclass(fc_plan.TracksError, ValueError))
 
     def test_waves_are_parallel_by_default_and_after_forces_order(self):
         waves = fc_plan.track_waves(fc_plan.parse_tracks(TRACKS))
@@ -223,6 +224,20 @@ class ProductTracks(unittest.TestCase):
     def test_blocks_follow_tracks_and_after(self):
         self.assertEqual(fc_plan.derived_blocks(fc_plan.parse_tracks(TRACKS)),
                          {("NEB-7", "NEB-9"), ("NEB-7", "NEB-12"), ("NEB-9", "NEB-15"), ("NEB-12", "NEB-15")})
+
+    def test_blocks_bridge_over_an_unusable_item_so_the_order_holds(self):
+        text = "1. Sign-in: NEB-7, NEB-8, NEB-9\n2. Onboarding: NEB-12 (after Sign-in)\n3. Billing: NEB-15 (after NEB-8)\n"
+        for skip, want in (({"NEB-8"}, {("NEB-7", "NEB-9"), ("NEB-9", "NEB-12"), ("NEB-7", "NEB-15")}),  # a middle item, and an `after` id
+                           ({"NEB-9"}, {("NEB-7", "NEB-8"), ("NEB-8", "NEB-12"), ("NEB-8", "NEB-15")}),  # the last item of an `after` track
+                           ({"NEB-8", "NEB-9"}, {("NEB-7", "NEB-12"), ("NEB-7", "NEB-15")}),
+                           ({"NEB-7", "NEB-8", "NEB-9"}, set()),  # a track with nothing usable leaves the next one free
+                           ({"NEB-12"}, {("NEB-7", "NEB-8"), ("NEB-8", "NEB-9"), ("NEB-8", "NEB-15")})):
+            with self.subTest(skip):
+                self.assertEqual(fc_plan.derived_blocks(fc_plan.parse_tracks(text), skip), want)
+
+    def test_a_track_after_a_track_with_nothing_usable_waits_on_what_that_track_waits_on(self):
+        text = "1. A: NEB-7\n2. B: NEB-8 (after A)\n3. C: NEB-9 (after B)\n"
+        self.assertEqual(fc_plan.derived_blocks(fc_plan.parse_tracks(text), {"NEB-8"}), {("NEB-7", "NEB-9")})
 
     def test_diff_touches_only_relations_between_plan_features(self):
         current = {"NEB-9": {"NEB-7"}, "NEB-12": {"NEB-5", "NEB-20", "NEB-40"}, "NEB-20": {"NEB-12"}}  # NEB-40 is no plan feature
@@ -249,6 +264,21 @@ class ProductSections(unittest.TestCase):
             ("NEB-10", "story", "NEB-9", "Sign-in", 1, []), ("NEB-11", "story", "NEB-9", "Sign-in", 1, []),
             ("NEB-12", "feature", "NEB-12", "Onboarding", 2, []), ("NEB-15", "feature", "NEB-15", "Billing", 3, ["NEB-9", "NEB-12"])])
 
+    def test_order_waits_across_a_canceled_or_unknown_item_on_the_one_before_it(self):
+        for gone in ({"NEB-8": feat("NEB-8", "Canceled")}, {}, {"NEB-8": feat("NEB-8", labels=("Story",))}):
+            f = {"NEB-7": feat("NEB-7", "In Progress"), "NEB-9": feat("NEB-9"), "NEB-12": feat("NEB-12"), **gone}
+            for text, item in (("1. A: NEB-7, NEB-8, NEB-9\n", "NEB-9"), ("1. A: NEB-7, NEB-8\n2. B: NEB-12 (after A)\n", "NEB-12")):
+                with self.subTest(gone=list(gone.values()), text=text):
+                    order = fc_plan.order_entries(fc_plan.parse_tracks(text), f)
+                    self.assertEqual([e["waits_on"] for e in order if e["id"] == item], [["NEB-7"]])
+                    self.assertFalse([e for e in order if e["id"] == "NEB-8"])
+
+    def test_tracks_in_a_wave_follow_the_list_order_not_the_numbers_written(self):
+        tracks = fc_plan.parse_tracks("2. A: NEB-7\n1. B: NEB-9\n")
+        f = {"NEB-7": feat("NEB-7"), "NEB-9": feat("NEB-9")}
+        self.assertEqual([e["track"] for e in fc_plan.order_entries(tracks, f)], ["A", "B"])
+        self.assertIn("- A: [NEB-7](u/NEB-7) T NEB-7 (Todo)\n- B: ", fc_plan.product_sections(tracks, f, [], [])["## Waves"])
+
     def test_proposals_never_fix_destructively_and_say_why(self):
         self.tracks[3]["items"] += ["NEB-31", "NEB-44"]
         self.assertEqual(fc_plan.product_proposals(self.tracks, self.f), [
@@ -273,6 +303,17 @@ class ProductSections(unittest.TestCase):
         self.assertEqual(sk, "\n\n".join(f"{h}\n\n{fc_plan.PRODUCT_NEXT}" for h in fc_plan.PRODUCT_SECTIONS) + "\n")
         body = fc_plan.with_history(fc_plan.with_history(sk, '- 2026-10-26: tracks set; the product owner said: "auth first"'), "- 2026-10-27: b")
         self.assertTrue(body.rstrip().endswith('## History\n\n- 2026-10-26: tracks set; the product owner said: "auth first"\n- 2026-10-27: b'))
+
+class ProductPlace(unittest.TestCase):
+    def test_a_missing_section_goes_where_the_skeleton_puts_it(self):
+        body = "## Why this order\n\nAuth first.\n\n## History\n\n- 2026-01-01: first\n"
+        out = fc_plan.replace_product_section(body, "## Tracks", "## Tracks\n\n1. A: NEB-7")
+        self.assertEqual(out, "## Tracks\n\n1. A: NEB-7\n\n" + body)
+        out = fc_plan.replace_product_section(out, "## Waves", "w")
+        self.assertEqual([l for l in out.splitlines() if l.startswith("## ")], ["## Tracks", "## Why this order", "## Waves", "## History"])
+        self.assertEqual(fc_plan.replace_product_section("x\n", "## Waves", "w"), fc_plan.replace_section("x\n", "## Waves", "w"))  # nothing after it: appended
+        self.assertEqual(fc_plan.replace_product_section(out, "## Waves", "v"), fc_plan.replace_section(out, "## Waves", "v"))  # present: replaced in place
+
 
 class ProductSeed(unittest.TestCase):
     def setUp(self):

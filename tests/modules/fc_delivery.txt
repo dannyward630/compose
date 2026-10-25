@@ -4,9 +4,11 @@ FEATURES_QUERY
 ISSUE_QUERY
 DOCS_QUERY
 DOC_QUERY
+NOT_FOUND
 _issue
 _paged
 _tracks_text
+_issue_node
 read_product
 product_plan
 delivery_order
@@ -19,6 +21,7 @@ DOC_UPDATE
 DOC_CREATE
 state_path
 last_reconcile
+write_doc
 _blocked_comment
 reconcile
 summary

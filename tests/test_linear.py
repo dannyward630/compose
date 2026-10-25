@@ -885,3 +885,14 @@ class RoutePin(unittest.TestCase):
                                                    "issues": [issue("ENG-7", "T", block(id="001", test="t", route=value))]})
             self.assertEqual(e.exception.code,
                              f"ENG-7: route must be test-first, implement-then-test, fix-then-regression-test or check-only, not {value}")
+
+
+class BlockedByOrder(unittest.TestCase):
+    def test_new_blockers_are_created_before_old_ones_are_deleted(self):
+        calls = []
+        def gql(query, variables):
+            calls.append("delete" if "issueRelationDelete" in query else "create" if "issueRelationCreate" in query else "read")
+            return {"issue": {"inverseRelations": {"nodes": [{"id": "r1", "type": "blocks", "issue": {"id": "u5", "identifier": "ENG-5"}}]}}}
+        with mock.patch.object(fc.fc_linear, "linear_gql", gql), mock.patch.object(fc.fc_linear, "linear_issue", lambda i: {"id": "u-" + i}):
+            fc.fc_linear.linear_blocked_by({"id": "u12"}, ["ENG-9"])
+        self.assertEqual(calls, ["read", "create", "delete"])  # a failed create leaves the old blocker in place

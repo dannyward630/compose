@@ -11,6 +11,7 @@ ISSUE_QUERY = "query($id: String!) { issue(id: $id) { %s url project { id } } }"
 DOCS_QUERY = """query($p: String!, $after: String) { project(id: $p) { documents(first: 50, after: $after) {
   pageInfo { hasNextPage endCursor } nodes { id title url } } } }"""
 DOC_QUERY = "query($id: String!) { document(id: $id) { id title url content } }"
+NOT_FOUND = "Entity not found: Issue"  # Linear's whole answer for an issue id it does not know
 
 def _issue(n):
     """A Linear issue node as the plan's modules read it."""
@@ -33,6 +34,15 @@ def _tracks_text(content):
     span = fc_plan.section_span(lines, "## Tracks")
     return "\n".join(lines[span[0] + 1:span[1]]).strip() if span else ""
 
+def _issue_node(ident):
+    """The issue node for `ident`, or None when Linear does not know the id; any other error still raises."""
+    try:
+        return fc_linear.linear_gql(ISSUE_QUERY, {"id": ident})["issue"]
+    except RuntimeError as e:
+        if str(e) == NOT_FOUND:
+            return None
+        raise
+
 def read_product(repo, tracks=None):
     """{"project", "doc", "tracks", "features"}: the project's features by id with their stories and plan links, and the plan document with its tracks.
     `tracks` stands in for the document's, when they are about to be replaced."""
@@ -44,7 +54,7 @@ def read_product(repo, tracks=None):
         tracks = fc_plan.parse_tracks(_tracks_text(doc["content"] or "")) if doc else []
     features = {f["id"]: f for f in map(_issue, _paged(FEATURES_QUERY, {"p": proj["id"]}, lambda r: r["issues"]))}
     for ident in (i for t in tracks for i in t["items"] if i not in features):
-        n = fc_linear.linear_gql(ISSUE_QUERY, {"id": ident})["issue"]
+        n = _issue_node(ident)
         if n and (n.get("project") or {}).get("id") == proj["id"]:
             features[ident] = _issue(n)
     plans = {d["title"]: d["url"] for d in docs}
@@ -70,7 +80,7 @@ def entry_line(n, e):
     return f"{n}. {e['id']} {e['title']} ({e['state']}; {'feature ' + e['feature'] if e['kind'] == 'story' else 'feature'}, track {e['track']}, wave {e['wave']}{waits})"
 
 def unusable(plan):
-    """{id: why} for the track ids that get no blocks: unknown to Linear, Canceled, or not a feature."""
+    """{id: why} for the track ids that get no blocks (fc_plan.unusable_ids): unknown to Linear, Canceled, or not a feature."""
     out = {}
     for ident in dict.fromkeys(i for t in plan["tracks"] for i in t["items"]):
         f = plan["features"].get(ident)
@@ -116,6 +126,20 @@ def last_reconcile(repo):
     path = state_path(repo)
     return json.loads(path.read_text()) if path.exists() else None
 
+def write_doc(doc, build):
+    """Write build(content) to the document, built from its content as it stands right before the write, so an edit made during
+    the run is kept: the document is read again, and when it changed since `doc` was read, built and checked once more."""
+    base = doc["content"] or ""
+    for _ in range(2):
+        fresh = fc_linear.linear_gql(DOC_QUERY, {"id": doc["id"]})["document"]["content"] or ""
+        if fresh == base:
+            content = build(base)
+            if content.rstrip("\n") != base.rstrip("\n"):
+                fc_linear.linear_gql(DOC_UPDATE, {"id": doc["id"], "content": content})
+            return content
+        base = fresh
+    raise RuntimeError(f"{PRODUCT_TITLE} kept changing while it was being written; nothing written to it")
+
 def _blocked_comment(added, removed, url):
     parts = ([f"now blocked by {', '.join(added)}"] if added else []) + ([f"no longer blocked by {', '.join(removed)}"] if removed else [])
     return f"{PRODUCT_TITLE} reconcile: {'; '.join(parts)}. The plan wins over Linear; change the plan to change this: {url}"
@@ -131,7 +155,7 @@ def reconcile(repo, dry_run=False):
     current = {i: [b["id"] for b in f["blockers"]] for i, f in features.items()}
     skip = unusable(plan)
     report_unusable(plan)
-    derived = {p for p in fc_plan.derived_blocks(tracks) if not skip.keys() & set(p)}
+    derived = fc_plan.plan_blocks(tracks, features)  # bridged over the skipped ids, so the order holds through them
     added, removed = fc_plan.blocks_diff(derived, current, plan_ids - skip.keys())
     proposals = fc_plan.product_proposals(tracks, features)
     result = {"added": [list(p) for p in added], "removed": [list(p) for p in removed], "ready": [], "proposed": proposals, "doc": plan["doc"]["url"]}
@@ -141,17 +165,19 @@ def reconcile(repo, dry_run=False):
         gone = {b for b, k in removed if k == blocked}
         new = [b for b, k in added if k == blocked]
         want = sorted({*current[blocked]} - gone | set(new), key=fc_plan.issue_num)
-        fc_linear.linear_blocked_by(fc_linear.linear_issue(blocked), want)
-        fc_linear.linear_comment(fc_linear.linear_issue(blocked), _blocked_comment(new, sorted(gone, key=fc_plan.issue_num), result["doc"]))
+        issue = fc_linear.linear_issue(blocked)
+        fc_linear.linear_blocked_by(issue, want)
+        fc_linear.linear_comment(issue, _blocked_comment(new, sorted(gone, key=fc_plan.issue_num), result["doc"]))
     for item in dict.fromkeys(e["feature"] if e["kind"] == "story" else e["id"] for e in fc_plan.order_entries(tracks, features)):
         for r in fc_linear.linear_mark_ready(item):
             if r["id"] not in result["ready"]:
                 result["ready"].append(r["id"])
-    content = plan["doc"]["content"] or ""
-    for heading, text in fc_plan.product_sections(tracks, features, result["ready"], proposals).items():
-        content = fc_plan.replace_section(content, heading, text)
-    if content.rstrip("\n") != (plan["doc"]["content"] or "").rstrip("\n"):
-        fc_linear.linear_gql(DOC_UPDATE, {"id": plan["doc"]["id"], "content": content})
+    sections = fc_plan.product_sections(tracks, features, result["ready"], proposals)
+    def build(content):
+        for heading, text in sections.items():
+            content = fc_plan.replace_product_section(content, heading, text)
+        return content
+    write_doc(plan["doc"], build)
     fc_core.atomic_write(state_path(repo), json.dumps({**result, "at": fc_core.now()}, indent=2) + "\n")
     return result
 
@@ -187,10 +213,12 @@ def verb_tracks(a):
     if not doc:
         doc = fc_linear.linear_gql(DOC_CREATE, {"title": PRODUCT_TITLE, "content": fc_plan.product_skeleton(), "projectId": product["project"]["id"]})["documentCreate"]["document"]
     words = " ".join(a.quote.split())
-    if _tracks_text(doc["content"] or "") != text:  # the same tracks again: nothing to write, no new History line
-        content = fc_plan.replace_section(doc["content"] or "", "## Tracks", "## Tracks\n\n" + text)
-        content = fc_plan.with_history(content, f'- {time.strftime("%Y-%m-%d")}: tracks set; the product owner said: "{words}"')
-        fc_linear.linear_gql(DOC_UPDATE, {"id": doc["id"], "content": content})
+    def build(content):
+        if _tracks_text(content) == text:  # the same tracks again: nothing to write, no new History line
+            return content
+        content = fc_plan.replace_product_section(content, "## Tracks", "## Tracks\n\n" + text)
+        return fc_plan.with_history(content, f'- {time.strftime("%Y-%m-%d")}: tracks set; the product owner said: "{words}"')
+    write_doc(doc, build)
     r = _reconciled(a.repo)
     print(f"tracks set on {r['doc']}\n{summary(r)}")
 
@@ -202,7 +230,7 @@ def cmd_delivery(a):
         sys.exit(f"delivery {a.action}: not available yet")
     try:
         verb(a)
-    except ValueError as e:
+    except fc_plan.TracksError as e:
         sys.exit(f"delivery {a.action}: the Tracks section does not parse: {e}")
-    except (RuntimeError, OSError) as e:
+    except (RuntimeError, OSError, ValueError) as e:  # ValueError: a reply or state file that is not JSON
         sys.exit(f"delivery {a.action}: {e}")

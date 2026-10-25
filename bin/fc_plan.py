@@ -163,12 +163,15 @@ PRODUCT_NEXT = "Next: written with the product owner, then kept in step by compo
 TRACK_LINE = re.compile(r"^\d+\.\s+(?P<name>[^:]+?):\s+(?P<ids>.+?)(?:\s+\(after\s+(?P<after>(?:[^()]|\([^)]*\))+)\))?\s*$")
 TRACK_ID = re.compile(r"^[A-Z][A-Z0-9]*-\d+$")
 
+class TracksError(ValueError):
+    """The Tracks section does not parse; the message names the offending line."""
+
 def split_entries(raw):
     """Comma separated entries, each `[X](url)` link reduced to X."""
     return [re.sub(r"^\[([^\]]*)\]\(.*\)$", r"\1", e.strip()) for e in raw.split(",")]
 
 def parse_tracks(text):
-    """The `## Tracks` body as [{"rank", "name", "items", "after"}] in list order; ValueError names the offending line."""
+    """The `## Tracks` body as [{"rank", "name", "items", "after"}] in list order; TracksError names the offending line."""
     tracks, lines = [], []
     seen_items, seen_names = {}, {}
     for n, line in enumerate(text.splitlines(), 1):
@@ -177,15 +180,15 @@ def parse_tracks(text):
         m = TRACK_LINE.match(line.strip())
         items = split_entries(m.group("ids")) if m else []
         if not m or not all(TRACK_ID.match(i) for i in items):
-            raise ValueError('line %d: not a track: "%s" (write "<n>. <name>: <id>, <id> (after <track>, ...)")' % (n, line.strip()))
+            raise TracksError('line %d: not a track: "%s" (write "<n>. <name>: <id>, <id> (after <track>, ...)")' % (n, line.strip()))
         name = m.group("name").strip()
         if name.lower() in seen_names:
-            raise ValueError("line %d: a second track named %s" % (n, name))
+            raise TracksError("line %d: a second track named %s" % (n, name))
         for i in items:
             if items.count(i) > 1:
-                raise ValueError("line %d: %s names %s twice" % (n, name, i))
+                raise TracksError("line %d: %s names %s twice" % (n, name, i))
             if i in seen_items:
-                raise ValueError("line %d: %s names %s, already in track %s" % (n, name, i, seen_items[i]))
+                raise TracksError("line %d: %s names %s, already in track %s" % (n, name, i, seen_items[i]))
         seen_names[name.lower()] = len(tracks)
         seen_items.update({i: name for i in items})
         after = split_entries(m.group("after")) if m.group("after") else []
@@ -195,14 +198,14 @@ def parse_tracks(text):
         for a in t["after"]:
             if TRACK_ID.match(a):
                 if a not in seen_items:
-                    raise ValueError("line %d: %s comes after %s, which no track names" % (n, t["name"], a))
+                    raise TracksError("line %d: %s comes after %s, which no track names" % (n, t["name"], a))
                 target = seen_items[a]
             elif a.lower() in seen_names:
                 target = tracks[seen_names[a.lower()]]["name"]
             else:
-                raise ValueError("line %d: %s comes after %s, which is no track here" % (n, t["name"], a))
+                raise TracksError("line %d: %s comes after %s, which is no track here" % (n, t["name"], a))
             if target.lower() == t["name"].lower():
-                raise ValueError("line %d: %s comes after itself" % (n, t["name"]))
+                raise TracksError("line %d: %s comes after itself" % (n, t["name"]))
     deps = track_deps(tracks)
     state, stack = {}, []
     def walk(i):
@@ -211,7 +214,7 @@ def parse_tracks(text):
         for d in deps[i]:
             if state.get(d) == 1:
                 cycle = stack[stack.index(d):] + [d]
-                raise ValueError("the tracks wait on each other in a loop: " + " -> ".join(tracks[c]["name"] for c in cycle))
+                raise TracksError("the tracks wait on each other in a loop: " + " -> ".join(tracks[c]["name"] for c in cycle))
             if d not in state:
                 walk(d)
         stack.pop()
@@ -239,14 +242,29 @@ def track_waves(tracks):
         waves.setdefault(level(i), []).append(t)
     return [waves[k] for k in sorted(waves)]
 
-def derived_blocks(tracks):
-    """{(blocker, blocked)}: each item blocks the next in its track; an `after` track's last item, or the `after` id, blocks this track's first."""
+def derived_blocks(tracks, skip=()):
+    """{(blocker, blocked)}: each item blocks the next in its track; an `after` track's last item, or the `after` id, blocks this track's first.
+    The ids in `skip` (unknown, Canceled, not a feature) are bridged over, so in `A, X, B` with X skipped A blocks B: the order never breaks through them."""
     by_name = {t["name"].lower(): t for t in tracks}
-    out = set()
+    before = {}
     for t in tracks:
-        out.update(zip(t["items"], t["items"][1:]))
+        for b, k in zip(t["items"], t["items"][1:]):
+            before.setdefault(k, set()).add(b)
         for a in t["after"]:
-            out.add((a if TRACK_ID.match(a) else by_name[a.lower()]["items"][-1], t["items"][0]))
+            before.setdefault(t["items"][0], set()).add(a if TRACK_ID.match(a) else by_name[a.lower()]["items"][-1])
+    out = set()
+    for k, bs in before.items():
+        if k in skip:
+            continue
+        todo, seen = list(bs), set()
+        while todo:
+            b = todo.pop()
+            if b not in seen:
+                seen.add(b)
+                if b in skip:
+                    todo += before.get(b, ())
+                else:
+                    out.add((b, k))
     return out
 
 def blocks_diff(derived, current, plan_ids):
@@ -273,18 +291,26 @@ def _is_feature(f):
 def _canceled(f):
     return f["state"].lower() in fc_tasks.CANCELED
 
+def unusable_ids(tracks, features):
+    """The track ids that get no blocks: unknown to Linear, Canceled, or not a feature."""
+    return {i for t in tracks for i in t["items"] if i not in features or _canceled(features[i]) or not _is_feature(features[i])}
+
+def plan_blocks(tracks, features):
+    """The derived blocks over the usable items only: what Linear holds and what `order` waits on."""
+    return derived_blocks(tracks, unusable_ids(tracks, features))
+
 def _waits_on(item, blocks, features):
     """The feature's derived blockers that are not built yet, by number."""
     return sorted((b for b, k in blocks if k == item and not (b in features and base_built(features[b]["state"], features[b]["labels"]))),
                   key=issue_num)
 
 def _ranked(tracks):
-    waves = track_waves(tracks)
-    return [(n, t) for n, w in enumerate(waves, 1) for t in sorted(w, key=lambda t: t["rank"])]
+    """(wave, track) in build order: by wave, then list order, which is the priority (the numbers written do not count)."""
+    return [(n, t) for n, w in enumerate(track_waves(tracks), 1) for t in w]
 
 def order_entries(tracks, features):
-    """What to build, in order: wave, then the track's rank, then its items, then a feature's stories in lane order."""
-    blocks, out = derived_blocks(tracks), []
+    """What to build, in order: wave, then the track's place in the list, then its items, then a feature's stories in lane order."""
+    blocks, out = plan_blocks(tracks, features), []
     for wave, t in _ranked(tracks):
         for item in t["items"]:
             f = features.get(item)
@@ -299,7 +325,7 @@ def order_entries(tracks, features):
 
 def product_proposals(tracks, features):
     """Fixes to offer, never to apply: each says what is off and why."""
-    blocks, started, rest = derived_blocks(tracks), [], []
+    blocks, started, rest = plan_blocks(tracks, features), [], []
     named = {i for t in tracks for i in t["items"]}
     for _, t in _ranked(tracks):
         for item in t["items"]:
@@ -322,6 +348,18 @@ def product_proposals(tracks, features):
 def product_skeleton():
     return "\n\n".join(f"{h}\n\n{PRODUCT_NEXT}" for h in PRODUCT_SECTIONS) + "\n"
 
+def replace_product_section(body, heading, text):
+    """replace_section, except that a product section the document lacks goes where the skeleton puts it, before the first later one there."""
+    lines = body.split("\n")
+    later = [section_span(lines, h) for h in PRODUCT_SECTIONS[PRODUCT_SECTIONS.index(heading) + 1:]] if heading in PRODUCT_SECTIONS else []
+    later = [s[0] for s in later if s]
+    section = replace_section("", heading, text).strip()
+    if section_span(lines, heading) or not later or not section:
+        return replace_section(body, heading, text)
+    i = min(later)
+    parts = [p for p in ("\n".join(lines[:i]).rstrip("\n"), section, "\n".join(lines[i:]).rstrip("\n")) if p]
+    return "\n\n".join(parts) + "\n"
+
 def _wave_item(item, features):
     f = features.get(item)
     if f is None:
@@ -334,7 +372,7 @@ def product_sections(tracks, features, ready, proposals):
     waves = []
     for n, group in enumerate(track_waves(tracks), 1):
         rows = []
-        for t in sorted(group, key=lambda t: t["rank"]):
+        for t in group:
             after = f" (after {', '.join(t['after'])})" if t["after"] else ""
             rows.append(f"- {t['name']}{after}: " + " -> ".join(_wave_item(i, features) for i in t["items"]))
         waves.append(f"### Wave {n}\n\n" + "\n".join(rows))
