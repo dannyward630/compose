@@ -187,20 +187,25 @@ def hold_tasks(proj, ids, reason):
         if tid not in tasks:
             lines.append(f"{tid}: no such task (run `compose sync` if it is new on Linear)")
             continue
-        hold[tid] = {"reason": reason, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+        paused = {"teammate": True} if (hold.get(tid) or {}).get("teammate") else {}  # a re-hold keeps the teammate an earlier hold paused
+        hold[tid] = {**paused, "reason": reason, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
         placed.append(tid)
     save_hold(proj, hold)  # before reading `running`: run_task writes `running` before it reads the holds
+    steered = []
     for tid in placed:
         res = proj / "results" / f"{tid}.json"
         status = json.loads(res.read_text()).get("status") if res.exists() else None
         late = "; it is running now: the run pauses it within seconds and keeps its work" if status == "running" and fc_tasks.run_alive(proj) else ""
         # an unproven fix's tests-<id> is its regression writer, which the hold leaves to finish its proof
         if status != "unproven" and steer_teammate(proj, tid, TEAMMATE_PAUSE.format(reason=reason)):
-            hold[tid]["teammate"] = True  # the release prompts exactly the teammates a hold paused
+            steered.append(tid)  # the release prompts exactly the teammates a hold paused
             late += "; its test teammate is paused"
         lines.append(f"{tid} held  {reason}{late}")
         fc_linear.linear_note(tasks[tid], f"Held: {reason}{late}")
-    if any(hold[t].get("teammate") for t in placed):
+    if steered:  # read again: a hold or release that landed during the herdr calls stands, and only the flags are added
+        hold = fc_tasks.held(proj)
+        for tid in [t for t in steered if t in hold]:
+            hold[tid]["teammate"] = True
         save_hold(proj, hold)
     return lines
 

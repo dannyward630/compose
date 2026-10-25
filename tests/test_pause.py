@@ -117,6 +117,15 @@ class PauseRunningTask(unittest.TestCase):
             r, _, _ = self.go(impl)
         self.assertEqual(r["status"], "passed")
 
+    def test_a_payment_failure_or_a_contradiction_keeps_its_status_under_a_hold(self):
+        self.addCleanup(fc.fc_proc.resume_task, "009")
+        fc.fc_proc.pause_task("009")
+        ends = fc.fc_implement.fc_pause.ends_paused
+        self.assertEqual([ends(s, "009") for s in ("payment_required", "contradiction", "passed")], [False, False, False])
+        self.assertEqual([ends(s, "009") for s in ("failed", "rejected_tampered", "rejected_regression", "paused")], [True] * 4)
+        fc.fc_proc.resume_task("009")
+        self.assertFalse(ends("failed", "009"))
+
     def test_the_paused_result_is_written_before_the_clone_is_removed(self):
         seen = []
         def impl(cwd, model, prompt, session=None, task=None, timeout=None):
@@ -534,6 +543,32 @@ class TeammateSteer(HoldCase):
         self.hold(release="002")
         self.assertEqual([c[:3] for c in self.calls], [("agent", "prompt", agent)])  # idle and waiting: prompted, not interrupted
         self.assertIn("compose linear get ENG-2 --body", self.calls[-1][3])
+
+    def test_holding_a_held_task_again_keeps_its_paused_teammate_for_the_release(self):
+        agent = fc.fc_herdr.agent_name(self.proj.name, "tests-002")
+        self.live = {agent: "working"}
+        self.hold(only="002", reason="D2 changed")
+        self.hold(only="002", reason="D3 changed too")  # the teammate is idle now: this hold does not pause it again
+        self.assertTrue(fc.fc_tasks.held(self.proj)["002"]["teammate"])
+        self.assertEqual(fc.fc_tasks.held(self.proj)["002"]["reason"], "D3 changed too")
+        self.calls.clear()
+        self.hold(release="002")
+        self.assertEqual([c[:3] for c in self.calls], [("agent", "prompt", agent)])
+
+    def test_a_release_that_lands_while_a_hold_steers_its_teammates_stays_released(self):
+        agent = fc.fc_herdr.agent_name(self.proj.name, "tests-002")
+        self.live = {agent: "working"}
+        self.hold(only="003", reason="x")
+        real = fc.fc_change.steer_teammate
+        def slow(proj, tid, text, release=False):
+            out = real(proj, tid, text, release)
+            if tid == "002" and not release:
+                self.hold(release="003")  # another `compose hold --release 003` lands mid-steer
+            return out
+        with mock.patch.object(fc.fc_change, "steer_teammate", slow):
+            self.hold(only="002", reason="D2 changed")
+        self.assertEqual(sorted(fc.fc_tasks.held(self.proj)), ["002"])
+        self.assertTrue(fc.fc_tasks.held(self.proj)["002"]["teammate"])
 
     def test_a_release_leaves_a_teammate_the_hold_did_not_pause_alone(self):
         agent = fc.fc_herdr.agent_name(self.proj.name, "tests-003")

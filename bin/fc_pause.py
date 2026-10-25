@@ -1,6 +1,6 @@
 import json, shutil, subprocess, time
 from pathlib import Path
-import fc_core, fc_proc, fc_readguard
+import fc_core, fc_proc, fc_readguard, fc_worktree
 
 def snapshot(repo, proj, tid, wt, base):
     """Commit the whole state of a task's worktree (tracked, new and deleted files) on top of `base` and fetch it into `repo` as
@@ -20,8 +20,9 @@ def snapshot(repo, proj, tid, wt, base):
 
 def ends_paused(status, tid):
     """Whether a task's attempts end `paused`: the loop broke on the pause, or a hold landed while the last test or checks ran
-    and they did not pass (a pass that came first stays passed)."""
-    return status == "paused" or (status != "passed" and fc_proc.task_paused(tid))
+    and they failed. A pass that came first stays passed; a payment failure or a contradiction keeps its own status, so the
+    run still halts on the one and reports the other."""
+    return status == "paused" or ((status == "failed" or status.startswith("rejected_")) and fc_proc.task_paused(tid))
 
 def clear_clone(proj, tid, wt):
     """Remove a task's previous clone before a fresh start; one a failed pause snapshot left with its edits is moved aside, and said."""
@@ -32,7 +33,7 @@ def clear_clone(proj, tid, wt):
     except (OSError, ValueError):
         last = {}
     if last.get("snapshot_failed") and last.get("worktree") == str(wt):
-        aside = wt.with_name(f"{wt.name}-unsaved-{time.strftime('%Y%m%d-%H%M%S')}")
+        aside = wt.with_name(f"{wt.name}{fc_worktree.UNSAVED_CLONE}{time.strftime('%Y%m%d-%H%M%S')}")
         shutil.move(str(wt), str(aside))
         fc_core.say(f"{tid} note    the clone a failed pause snapshot kept is moved to {aside}; rescue its edits from there")
         return
