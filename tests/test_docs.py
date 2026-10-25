@@ -687,6 +687,14 @@ class OneWatchCoversTheManagersOwnTeammates(unittest.TestCase):
         for line in body.splitlines():
             self.assertNotRegex(line, r"\. [A-Z]", line)
 
+    def test_planner_command_shapes_an_unshaped_ticket_here_first(self):
+        text = read("commands/planner.md")
+        self.assertIn("When the ticket has no approved design (a feature or epic), or is a story labeled `deep-dive` with no tech doc, brainstorm it here first as sections/0b.md says, then start the planner.", text)
+        self.assertNotIn("Refuse a loose idea", text)
+        self.assertIn("In this session, never plan, write stories, or cut tasks.", text)
+        for tool in ("Bash(compose decide:*)", "Bash(compose buildercheck:*)", "Bash(compose linear:*)"):
+            self.assertIn(tool, text.split("---\n")[1])
+
     def test_0h_says_the_watch_passes_teammates_the_manager_started(self):
         lines = read("sections/0h.md").splitlines()
         loop = next(i for i, l in enumerate(lines) if l.startswith("The engineering manager's loop:"))
