@@ -155,7 +155,7 @@ def plan_sections(lanes):
 
 
 PRODUCT_NEXT = "Next: written with the product owner, then kept in step by compose delivery reconcile."
-TRACK_LINE = re.compile(r"^\d+\.\s+(?P<name>[^:]+?):\s+(?P<ids>.+?)(?:\s+\(after\s+(?P<after>[^)]+)\))?\s*$")
+TRACK_LINE = re.compile(r"^\d+\.\s+(?P<name>[^:]+?):\s+(?P<ids>.+?)(?:\s+\(after\s+(?P<after>(?:[^()]|\([^)]*\))+)\))?\s*$")
 TRACK_ID = re.compile(r"^[A-Z][A-Z0-9]*-\d+$")
 
 def split_entries(raw):
@@ -177,6 +177,8 @@ def parse_tracks(text):
         if name.lower() in seen_names:
             raise ValueError("line %d: a second track named %s" % (n, name))
         for i in items:
+            if items.count(i) > 1:
+                raise ValueError("line %d: %s names %s twice" % (n, name, i))
             if i in seen_items:
                 raise ValueError("line %d: %s names %s, already in track %s" % (n, name, i, seen_items[i]))
         seen_names[name.lower()] = len(tracks)

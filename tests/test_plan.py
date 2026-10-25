@@ -193,6 +193,10 @@ class ProductTracks(unittest.TestCase):
             (3, "Billing", ["NEB-15"], ["Sign-in", "Onboarding"]), (4, "Search", ["NEB-20"], [])])
         self.assertEqual(fc_plan.parse_tracks(fc_plan.PRODUCT_NEXT + "\n"), [])
 
+    def test_a_link_in_after_reads_as_its_text(self):
+        t = fc_plan.parse_tracks("1. A: NEB-7\n2. B: NEB-8 (after [NEB-7](u/NEB-7))")
+        self.assertEqual(t[1]["after"], ["NEB-7"])
+
     def test_a_bad_section_names_the_line(self):
         for text, msg in (("1. Sign-in NEB-7", 'line 1: not a track: "1. Sign-in NEB-7" (write "<n>. <name>: <id>, <id> (after <track>, ...)")'),
                           ("1. A: NEB-7\n2. B: NEB-7", "line 2: B names NEB-7, already in track A"),
@@ -200,6 +204,8 @@ class ProductTracks(unittest.TestCase):
                           ("1. A: NEB-7 (after Pay)", "line 1: A comes after Pay, which is no track here"),
                           ("1. A: NEB-7 (after NEB-31)", "line 1: A comes after NEB-31, which no track names"),
                           ("1. A: NEB-7 (after A)", "line 1: A comes after itself"),
+                          ("1. A: NEB-1, NEB-1", "line 1: A names NEB-1 twice"),
+                          ("1. A: NEB-7 (after C)\n2. B: NEB-8 (after A)\n3. C: NEB-9 (after B)", "the tracks wait on each other in a loop: A -> C -> B -> A"),
                           ("1. A: NEB-7 (after B)\n2. B: NEB-8 (after A)", "the tracks wait on each other in a loop: A -> B -> A")):
             with self.subTest(text), self.assertRaises(ValueError) as e:
                 fc_plan.parse_tracks(text)
