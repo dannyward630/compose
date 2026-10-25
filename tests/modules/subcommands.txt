@@ -41,6 +41,7 @@ yolo
 change
 decisions
 decide
+reconcile
 crew
 report
 tool-bug
