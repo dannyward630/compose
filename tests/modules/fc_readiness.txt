@@ -24,3 +24,5 @@ with_questions
 _asked
 _result
 story_readiness
+readiness_line
+cmd_readiness

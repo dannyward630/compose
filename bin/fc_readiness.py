@@ -1,4 +1,4 @@
-import hashlib, json, os, re, time
+import hashlib, json, os, re, sys, time
 from pathlib import Path
 from types import SimpleNamespace
 import fc_core, fc_tasks, fc_linear, fc_linear_cmd, fc_plan, fc_change, fc_models, fc_claude, fc_config
@@ -227,7 +227,7 @@ def story_readiness(repo, story, refresh=False, write=True):
                 verdict = judge(state, node["identifier"], deep)
             except RuntimeError as e:
                 return {**out, "error": str(e)}
-            verdict, hit = {**verdict, "key": key, "at": time.strftime("%Y-%m-%dT%H:%M:%S")}, None
+            verdict = {**verdict, "key": key, "at": time.strftime("%Y-%m-%dT%H:%M:%S")}
         missing = verdict["missing"]
         out.update(technical=bool(verdict.get("technical")), judge=verdict.get("judge"))
     own = [x for x in missing if x["issue"] == node["identifier"]]
@@ -244,3 +244,44 @@ def story_readiness(repo, story, refresh=False, write=True):
         cache[story] = {"key": key, "at": verdict["at"], "specced": out["specced"], "technical": out["technical"], "judge": out["judge"], "missing": missing}
         fc_core.atomic_write(path, json.dumps(cache, indent=1))
     return out
+
+
+def readiness_line(r):
+    """One line for a story's result: ready, not ready (with what blocks it and what it lacks), not judged, or not open."""
+    if r.get("error"):
+        return f"{r['id']} not judged: {r['error']}"
+    if r.get("specced") is None:
+        return f"{r['id']} not open: {r['state']}"
+    if r["ready"]:
+        return f"{r['id']} ready" + ("" if r["has_tasks"] else " (no tasks yet: the planner cuts them)")
+    held = f" (blocked by {', '.join(r['blocked_by'])})" if r["blocked_by"] else ""
+    asked = "; ".join(f"{x['item']}: {x['question']}" for x in r["missing"])
+    return f"{r['id']} not ready{held}" + (f": {asked}" if asked else "")
+
+
+def cmd_readiness(a):
+    """Print whether each story can be built now; exit 1 when any is not ready or refused. Writes what a story lacks on it as
+    open questions unless --dry-run."""
+    if not fc_config.LINEAR_KEY:
+        sys.exit(fc_config.needs_linear_key("readiness"))
+    repo, results, bad = Path(a.repo).resolve(), [], False
+    for story in a.stories:
+        try:
+            r = story_readiness(repo, story, refresh=a.refresh, write=not a.dry_run)
+        except NotAStory as e:
+            if not a.json:
+                print(f"{story} refused: {e}")
+            else:
+                results.append({"id": story, "ready": False, "refused": str(e)})
+            bad = True
+            continue
+        except RuntimeError as e:
+            sys.exit(f"readiness: {e}")
+        results.append(r)
+        bad = bad or not r["ready"]
+        if not a.json:
+            print(readiness_line(r))
+    if a.json:
+        print(json.dumps(results, indent=2))
+    if bad:
+        sys.exit(1)

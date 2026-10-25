@@ -10,6 +10,7 @@ for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost"
 _spec.loader.exec_module(fc)
 import fc_core, fc_linear, fc_linear_cmd, fc_readiness  # noqa: E402
 import tempfile, time  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
 from unittest import mock  # noqa: E402
 
 TODAY = time.strftime("%Y-%m-%d")
@@ -254,6 +255,70 @@ class StoryReadiness(unittest.TestCase):
     def test_with_questions_removes_the_section_when_nothing_is_left(self):
         body = STORY + "\n## Open questions\n\n- Old? (readiness check, 2026-10-01)\n"
         self.assertNotIn("Open questions", fc_readiness.with_questions(body, [], TODAY))
+
+
+READY = {"id": "ENG-7", "ready": True, "specced": True, "unblocked": True, "blocked_by": [], "has_tasks": True, "missing": [], "error": None, "state": "Todo"}
+NOT_READY = {**READY, "id": "ENG-8", "ready": False, "specced": False, "has_tasks": True,
+             "missing": [{"item": "scope", "issue": "ENG-8", "question": "Where does ENG-8 stop: what is in it and what is left out?"}]}
+
+
+class Cli(unittest.TestCase):
+    def setUp(self):
+        self.repo, self.out = Path(tempfile.mkdtemp()), ""
+        p = mock.patch.object(fc.fc_config, "LINEAR_KEY", "k"); p.start(); self.addCleanup(p.stop)
+
+    def cli(self, *stories, **flags):
+        import io, contextlib
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                fc_readiness.cmd_readiness(SimpleNamespace(**{**dict(stories=list(stories), repo=str(self.repo), project=None, refresh=False, dry_run=False, json=False), **flags}))
+        finally:
+            self.out = buf.getvalue()
+
+    def test_prints_one_line_per_story_and_exits_one_when_any_is_not_ready(self):
+        rs = {"ENG-7": READY, "ENG-8": dict(NOT_READY, blocked_by=["ENG-3"], unblocked=False)}
+        with mock.patch.object(fc_readiness, "story_readiness", side_effect=lambda repo, s, refresh, write: rs[s]) as sr, self.assertRaises(SystemExit) as e:
+            self.cli("ENG-7", "ENG-8", dry_run=True)
+        self.assertEqual(e.exception.code, 1)
+        self.assertEqual(self.out.splitlines(), ["ENG-7 ready", "ENG-8 not ready (blocked by ENG-3): scope: Where does ENG-8 stop: what is in it and what is left out?"])
+        self.assertEqual(sr.call_args.kwargs, {"refresh": False, "write": False})
+
+    def test_all_ready_exits_zero(self):
+        with mock.patch.object(fc_readiness, "story_readiness", side_effect=lambda repo, s, refresh, write: READY):
+            self.cli("ENG-7")
+        self.assertEqual(self.out.splitlines(), ["ENG-7 ready"])
+
+    def test_without_a_linear_key_it_says_how_to_add_one(self):
+        with mock.patch.object(fc.fc_config, "LINEAR_KEY", None), self.assertRaises(SystemExit) as e:
+            self.cli("ENG-7")
+        self.assertIn("readiness", str(e.exception.code))
+
+    def test_a_task_id_is_one_refusal_line_and_json_prints_the_results(self):
+        def sr(repo, s, refresh, write):
+            if s == "ENG-9":
+                raise fc_readiness.NotAStory("ENG-9 is a task: the planner's task lint judges tasks")
+            return READY
+        with mock.patch.object(fc_readiness, "story_readiness", side_effect=sr), self.assertRaises(SystemExit) as e:
+            self.cli("ENG-9")
+        self.assertEqual(e.exception.code, 1)
+        self.assertEqual(self.out.strip(), "ENG-9 refused: ENG-9 is a task: the planner's task lint judges tasks")
+        with mock.patch.object(fc_readiness, "story_readiness", side_effect=sr):
+            self.cli("ENG-7", json=True)
+        self.assertEqual(json.loads(self.out)[0]["id"], "ENG-7")
+
+    def test_line_shapes(self):
+        L = fc_readiness.readiness_line
+        self.assertEqual(L(dict(READY, has_tasks=False)), "ENG-7 ready (no tasks yet: the planner cuts them)")
+        self.assertEqual(L(dict(READY, ready=False, error="boom")), "ENG-7 not judged: boom")
+        self.assertEqual(L(dict(READY, ready=False, specced=None, state="Done")), "ENG-7 not open: Done")
+
+    def test_the_verb_parses_its_flags(self):
+        import subprocess
+        r = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "compose"), "readiness", "--help"], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0)
+        for f in ("--refresh", "--dry-run", "--json"):
+            self.assertIn(f, r.stdout)
 
 
 if __name__ == "__main__":
