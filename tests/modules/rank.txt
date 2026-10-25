@@ -76,6 +76,7 @@ fc_green
 fc_gate
 fc_format
 fc_trailpack
+fc_pause
 fc_implement
 fc_shrink
 fc_jev

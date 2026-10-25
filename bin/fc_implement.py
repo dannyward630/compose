@@ -1,6 +1,6 @@
 import json, os, re, shlex, shutil, signal, subprocess, sys, time, uuid
 from pathlib import Path
-import fc_core, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_load, fc_harness, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_green, fc_gate, fc_fast, fc_format, fc_started, fc_figma, fc_trailpack
+import fc_core, fc_pause, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_load, fc_harness, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_green, fc_gate, fc_fast, fc_format, fc_started, fc_figma, fc_trailpack
 
 def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
     """Route a turn to the harness named by the model id: `pi:<provider/model>` runs pi (as a named herdr agent when the run
@@ -62,6 +62,8 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
             time.sleep(1)
             continue
         break
+    if err and fc_proc.task_paused(meta["id"]):  # the pause hook's esc and pane close ended the wait
+        raise fc_proc.Paused
     def read_turn():  # what pi wrote to its session file since the last turn, priced and added to the ledger
         if not session.get("sfile"):
             session["sfile"] = (((fc_herdr.herdr("agent", "get", session["name"]) or {}).get("agent") or {}).get("agent_session") or {}).get("value")
@@ -353,6 +355,9 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     while attempt < attempts:
         if fc_proc.STOP.is_set():
             raise fc_proc.Stopped
+        if fc_proc.task_paused(tid):
+            status = "paused"
+            break
         attempt += 1
         t0, clk = time.time(), fc_proc.clock()
         ref_before = fc_readguard.refused(wt)
@@ -361,8 +366,15 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             if only_delete:
                 session, reply, tools, usage = None, "", 0, {"cost": 0.0}
             else:
-                session, reply, tools, usage = implementer(wt, meta["model"], prompt, session, task={"proj": proj, "meta": meta, "space": fc_herdr.HERDR_SPACES.get(proj.name)},
-                                                           timeout=fc_models.TURN_TIMEOUT)
+                fc_proc.TASK.id = tid  # a hold pauses the turn's commands, not the checks and tests below
+                try:
+                    session, reply, tools, usage = implementer(wt, meta["model"], prompt, session, task={"proj": proj, "meta": meta, "space": fc_herdr.HERDR_SPACES.get(proj.name)},
+                                                               timeout=fc_models.TURN_TIMEOUT)
+                finally:
+                    fc_proc.TASK.id = None
+        except fc_proc.Paused:
+            status = "paused"
+            break
         except fc_models.RateLimited as e:
             cost += e.usage["cost"]
             reference_cost += e.usage.get("reference_cost") or 0
@@ -532,6 +544,8 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         log.append({"leak_reverted": mine})
     if others:
         fc_core.say(f"{tid} note: main checkout has other uncommitted changes (left alone): {', '.join(others)[:160]}")
+    if status == "paused":
+        return fc_pause.paused_result(repo, proj, meta, wt, base, base_name, log, spent(), cost, started, fc_tasks.held(proj).get(tid, {}).get("reason", ""))
     if status == "passed":
         fc_core.sh(["git", "add", "-A"], wt)
         changed = [f for f in fc_core.sh(["git", "diff", "--cached", "--name-only", base], wt, check=False).stdout.split() if f in meta["files"]]

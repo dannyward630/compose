@@ -102,8 +102,8 @@ def reflect(proj, trigger, evidence, against=()):
             n += 1
 
 def cmd_hold(a):
-    """Hold tasks back from dispatch while the plan they rest on is in question, or release them. A running task finishes;
-    one the run is still preparing goes back to pending before its first turn (fc_implement.run_task)."""
+    """Hold tasks back from dispatch while the plan they rest on is in question, or release them. A running task is paused
+    (its work kept on a ref) and goes back to pending; one the run is still preparing goes back to pending before its first turn (fc_implement.run_task)."""
     proj = fc_core.project_dir(a)
     tasks = {m["id"]: m for m in fc_tasks.load_tasks(proj, required=True)}
     hold = fc_tasks.held(proj)
@@ -133,7 +133,7 @@ def cmd_hold(a):
         for tid in placed:
             res = proj / "results" / f"{tid}.json"
             running = res.exists() and json.loads(res.read_text()).get("status") == "running" and fc_tasks.run_alive(proj)
-            late = "; it is running now: the hold applies to its next start" if running else ""
+            late = "; it is running now: the run pauses it within seconds and keeps its work" if running else ""
             print(f"{tid} held  {a.reason}{late}")
             fc_linear.linear_note(tasks[tid], f"Held: {a.reason}{late}")
 

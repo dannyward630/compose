@@ -289,6 +289,9 @@ def run_tasks(repo, proj, tasks, a):
                 live["open"] = sorted(set(pending) | set(running.values()))
                 write_marker()
             hold = {**waits, **fc_tasks.held(proj)}  # re-read every pass: a hold or a release lands while the run goes on
+            for p in [p for p in running.values() if p in fc_tasks.held(proj) and not fc_proc.task_paused(p)]:  # a hold on a task that runs: pause it, keep its work
+                fc_proc.pause_task(p, fc_herdr.agent_name(proj.name, p))
+                fc_core.say(f"{p} paused  {fc_tasks.held(proj)[p].get('reason', '')}")
             st = None if fc_load.off(getattr(a, "force", False)) else fc_load.update()  # the machine-wide load hold, re-read every pass
             ready = [] if halt else [p for p, d in pending.items() if not d and p not in running.values() and p not in hold]
             free = 0 if st and st["held"] else a.parallel - len(running)  # held: no slot opens; running tasks go on
@@ -344,7 +347,8 @@ def run_tasks(repo, proj, tasks, a):
                     r = {"id": metas[p]["id"], "title": metas[p].get("title"), "status": "unchained", "attempts": 0, "seconds": 0.0, "cost": 0.0,
                          "branch": "-", "log": [{"stop": str(e)}]}
                     fc_core.atomic_write((proj / "results" / f"{p}.json"), json.dumps(r, indent=2))
-                if r["status"] == "held":  # held while it was prepared, before its first turn: pending again, the next pass reads the hold
+                fc_proc.resume_task(p)
+                if r["status"] in ("held", "paused"):  # held while it was prepared, before its first turn: pending again, the next pass reads the hold
                     pending[p] = []
                     continue
                 if "proof" in r:  # a proof round's result replaces the task's row

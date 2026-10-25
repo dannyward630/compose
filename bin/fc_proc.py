@@ -34,6 +34,8 @@ def run(cmd, cwd=None, env=None, timeout=None, input=None):
     p = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL if input is None else subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                          text=True, start_new_session=True)
     RUNNING.add(p.pid)
+    with _LOCK:
+        KILLED.discard(p.pid)  # a reused pid must not inherit a stale entry
     late = False
     if tid is not None:
         with _LOCK:

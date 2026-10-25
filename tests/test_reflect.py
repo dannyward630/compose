@@ -205,6 +205,15 @@ class WatchReflect(unittest.TestCase):
         self.assertTrue(ev[1].startswith("event reflect=/p/r3.json error='no TYPESAFE_API_KEY'"))
         self.assertEqual(fc.fc_watch.watch_events(after, after), [])
 
+    def test_a_pause_wakes_the_team_lead_and_counts_as_held(self):
+        t = lambda state: {"state": state, "attempts": 1, "cost": 0.0, "note": "", "linear": "", "title": "t"}
+        before, after = self.snap({}), self.snap({})
+        before["tasks"], after["tasks"] = {"002": t("running")}, {"002": t("paused")}
+        self.assertIn("task=002 state=paused", fc.fc_watch.watch_events(before, after)[0])
+        snap = {**after, "agents": {}, "crew": {}, "run": False, "verify": None, "last": (1000.0, "x")}
+        ev = fc.fc_watch.watch_stalls(project(), snap, 240, now_s=5000.0)
+        self.assertTrue(any("stall=quiet" in e and "held 1" in e for e in ev), ev)
+
     def test_the_engineering_manager_does_not_get_screens(self):
         ev = ["event reflect=/p/r1.json broken=1 unclear=0 trigger=task:003"]
         self.assertEqual(fc.fc_watch.watch_filter(ev, "hw", ["hw-orchestrator"]), [])
@@ -318,10 +327,10 @@ class Holds(unittest.TestCase):
         self.assertEqual(fc.fc_tasks.held(self.proj), {})
         self.assertEqual(self.notes[-2:], [("002", "Released"), ("003", "Released")])
 
-    def test_holding_a_running_task_says_it_applies_to_its_next_start(self):
+    def test_holding_a_running_task_says_the_run_pauses_it(self):
         (self.proj / "results" / "002.json").write_text(json.dumps({"id": "002", "status": "running"}))
         (self.proj / "results" / "003.json").write_text(json.dumps({"id": "003", "status": "running"}))  # its run died
-        late = "; it is running now: the hold applies to its next start"
+        late = "; it is running now: the run pauses it within seconds and keeps its work"
         with mock.patch.object(fc.fc_tasks, "run_alive", lambda p: True):
             out = self.hold(only="001,002", reason="D2 broken")
         with mock.patch.object(fc.fc_tasks, "run_alive", lambda p: False):
