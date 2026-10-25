@@ -260,8 +260,8 @@ def readiness_line(r):
 
 
 def cmd_readiness(a):
-    """Print whether each story can be built now; exit 1 when any is not ready, refused or errored (the rest are still judged). Writes what a story lacks on it as
-    open questions unless --dry-run."""
+    """Print whether each story can be built now; exit 1 when any is not ready, refused or errored.
+    The rest are still judged. Writes what a story lacks on it as open questions unless --dry-run."""
     if not fc_config.LINEAR_KEY:
         sys.exit(fc_config.needs_linear_key("readiness"))
     repo, results, bad = Path(a.repo).resolve(), [], False

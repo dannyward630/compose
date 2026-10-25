@@ -325,12 +325,13 @@ class Cli(unittest.TestCase):
     def test_an_errored_story_is_a_line_and_the_next_story_is_still_judged(self):
         def sr(repo, s, refresh, write):
             if s == "ENG-6":
-                raise RuntimeError("readiness: the judge failed")
+                raise RuntimeError("the judge failed")
             return READY
         with mock.patch.object(fc_readiness, "story_readiness", side_effect=sr), self.assertRaises(SystemExit) as e:
             self.cli("ENG-6", "ENG-7")
         self.assertEqual(e.exception.code, 1)
-        self.assertEqual(self.out.splitlines(), ["ENG-6 not judged: readiness: the judge failed", "ENG-7 ready"])
+        self.assertEqual(self.out.splitlines(), ["ENG-6 not judged: the judge failed", "ENG-7 ready"])
+        self.assertLessEqual(self.out.splitlines()[0].count("readiness:"), 1, "no doubled readiness: prefix")
 
     def test_line_shapes(self):
         L = fc_readiness.readiness_line
