@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import os, subprocess, tempfile, unittest
+import json, os, subprocess, tempfile, unittest, unittest.mock
 from pathlib import Path
 import importlib.machinery, importlib.util, sys
 # tests/test_modules.py fails a test file without the next line
@@ -118,6 +118,78 @@ class Pick(unittest.TestCase):
         ft.pick(entries, plan_of(NEB_9=[story(e["id"]) for e in entries]), {"dispatched": {}}, 2,
                 lambda s, **kw: calls.append(s) or rd(s, ready=False, specced=False))
         self.assertLessEqual(len(calls), ft.JUDGE_LIMIT)
+
+
+class Dispatch(unittest.TestCase):
+    def setUp(self):
+        d = tempfile.TemporaryDirectory(); self.addCleanup(d.cleanup)
+        self.repo = Path(d.name).resolve() / "repo"; self.wt = Path(d.name).resolve() / "compose-sign-in"
+        self.repo.mkdir(); self.projects, self.leads, self.state = {}, {}, {"dispatched": {}}
+        self.plan = plan_of(NEB_9=[story("NEB-10"), story("NEB-11"), story("NEB-12")])
+        self.plan["features"]["NEB-9"].update(title="Sign in", blockers=[])
+        self.proj = self.wt / ".compose" / "sign-in"
+        for name, new in (("all_projects", lambda repo: dict(self.projects)), ("live_leads", lambda repo: dict(self.leads))):
+            mod = ft.fc_core if name == "all_projects" else ft.fc_reconcile
+            pa = unittest.mock.patch.object(mod, name, new); pa.start(); self.addCleanup(pa.stop)
+        self.cli = unittest.mock.Mock(side_effect=self.fake_cli); self.prompt = unittest.mock.Mock(return_value=True)
+        for name, m in (("compose_cli", self.cli), ("prompt_lead", self.prompt)):
+            pa = unittest.mock.patch.object(ft, name, m); pa.start(); self.addCleanup(pa.stop)
+
+    def make_project(self, slug, linear):
+        self.proj = self.wt / ".compose" / slug; self.proj.mkdir(parents=True, exist_ok=True)
+        (self.proj / "linear.json").write_text(json.dumps(linear)); self.projects[slug] = (self.wt, self.proj)
+
+    def fake_cli(self, args, stdin=None):
+        if args[0] == "init":
+            self.make_project(args[args.index("--project") + 1], {})
+            (self.proj / "linear.json").unlink()
+        return ""
+
+    def test_a_feature_with_no_project_gets_one_scoped_to_the_story_and_a_new_team_lead(self):
+        line = ft.dispatch(self.repo, self.plan, entry("NEB-10", "NEB-9"), "cut", self.state, 100.0)
+        init, start = self.cli.call_args_list
+        self.assertEqual(init.args[0], ["init", "--repo", str(self.repo), "--project", "sign-in"])
+        self.assertEqual(start.args[0][:6], ["crew", "start", "--repo", str(self.wt), "--project", "sign-in"])
+        self.assertIn(ft.HOW["cut"], start.kwargs["stdin"]); self.assertIn("sections/0f.md", start.kwargs["stdin"])
+        self.assertEqual(json.loads((self.proj / "linear.json").read_text()), {"feature": "NEB-9", "stories": ["NEB-10"]})
+        self.assertEqual(self.state["dispatched"]["NEB-10"], {"feature": "NEB-9", "project": "sign-in", "kind": "cut", "at": 100.0})
+        self.assertEqual(line, "event factory=dispatched story=NEB-10 project=sign-in kind=cut  (its team lead builds it; relay it: compose watch --project sign-in --from orchestrator)")
+
+    def test_a_live_team_lead_is_prompted_and_only_a_scoped_project_gains_the_story(self):
+        self.make_project("sign-in", {"feature": "NEB-9", "stories": ["NEB-10"]}); self.leads["sign-in"] = "sign-in-orchestrator"
+        ft.dispatch(self.repo, self.plan, entry("NEB-11", "NEB-9"), "build", self.state, 100.0)
+        self.cli.assert_not_called()
+        self.prompt.assert_called_once_with("sign-in-orchestrator", ft.lead_prompt("NEB-11", "NEB-9", "Sign in", "build"))
+        self.assertEqual(json.loads((self.proj / "linear.json").read_text())["stories"], ["NEB-10", "NEB-11"])
+        self.make_project("sign-in", {"feature": "NEB-9"})
+        ft.dispatch(self.repo, self.plan, entry("NEB-12", "NEB-9"), "build", self.state, 100.0)
+        self.assertEqual(json.loads((self.proj / "linear.json").read_text()), {"feature": "NEB-9"})
+
+    def test_a_lost_team_lead_is_started_again_without_a_second_init(self):
+        self.make_project("sign-in", {"feature": "NEB-9", "stories": ["NEB-10"]})
+        ft.dispatch(self.repo, self.plan, entry("NEB-11", "NEB-9"), "build", self.state, 100.0)
+        self.assertEqual([c.args[0][0] for c in self.cli.call_args_list], ["crew"])
+        self.prompt.assert_not_called()
+
+    def test_a_feature_after_a_verified_unmerged_feature_branches_from_its_project(self):
+        self.make_project("profile", {"feature": "NEB-5"})
+        self.plan["features"]["NEB-9"]["blockers"] = [{"id": "NEB-5", "state": "In Review", "labels": []}]
+        ft.dispatch(self.repo, self.plan, entry("NEB-10", "NEB-9"), "build", self.state, 100.0)
+        self.assertEqual(self.cli.call_args_list[0].args[0][-2:], ["--after", "profile"])
+
+    def test_a_failed_start_records_nothing(self):
+        def boom(args, stdin=None):
+            if args[0] == "crew":
+                raise RuntimeError("herdr is not running")
+            return self.fake_cli(args, stdin)
+        self.cli.side_effect = boom
+        with self.assertRaises(RuntimeError):
+            ft.dispatch(self.repo, self.plan, entry("NEB-10", "NEB-9"), "build", self.state, 100.0)
+        self.assertEqual(self.state["dispatched"], {})
+
+    def test_slugs_are_short_kebab_and_never_taken(self):
+        self.assertEqual(ft.slug_for("Sign in with Google, Apple, and email", set()), "sign-in-with-google")
+        self.assertEqual(ft.slug_for("Sign in", {"sign-in"}), "sign-in-2")
 
 
 if __name__ == "__main__":

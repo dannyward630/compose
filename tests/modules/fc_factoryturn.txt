@@ -7,3 +7,14 @@ classify
 in_flight
 _why
 pick
+LEAD_READS
+HOW
+lead_prompt
+lead_brief
+slug_for
+_linear
+project_for
+after_project
+compose_cli
+prompt_lead
+dispatch
