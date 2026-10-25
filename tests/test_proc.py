@@ -80,6 +80,84 @@ class Proc(unittest.TestCase):
         fc.fc_proc.kill_group(p.pid)
 
 
+class PauseTask(unittest.TestCase):
+    """fc_proc.pause_task: one task's groups die, the rest of the run goes on."""
+
+    def setUp(self):
+        for f in (fc.fc_proc.PAUSED, fc.fc_proc.KILLED, fc.fc_proc.TASK_GROUPS, fc.fc_proc.HOOKS):
+            f.clear(); self.addCleanup(f.clear)
+        fc.fc_proc.STOP.clear(); self.addCleanup(fc.fc_proc.STOP.clear)
+        self.addCleanup(setattr, fc.fc_proc.TASK, "id", None)
+
+    def test_pausing_a_task_kills_only_its_own_group_and_raises_paused_in_its_thread(self):
+        out = {}
+        def worker(tid):
+            fc.fc_proc.TASK.id = tid
+            try:
+                out[tid] = fc.fc_proc.run(["sleep", "30"]).returncode
+            except fc.fc_proc.Paused:
+                out[tid] = "paused"
+        a, b = (threading.Thread(target=worker, args=(t,)) for t in ("004", "005"))
+        a.start(); b.start(); time.sleep(0.5)
+        self.assertTrue(fc.fc_proc.pause_task("004")); a.join(6)
+        self.assertEqual(out, {"004": "paused"})  # within 6 s, the kill_group limit
+        self.assertTrue(b.is_alive())  # the unrelated task keeps going
+        fc.fc_proc.pause_task("005"); b.join(6)
+
+    def test_a_paused_task_starts_nothing_until_resumed_and_a_second_pause_says_false(self):
+        fc.fc_proc.TASK.id = "004"
+        fc.fc_proc.pause_task("004")
+        self.assertFalse(fc.fc_proc.pause_task("004"))
+        self.assertTrue(fc.fc_proc.task_paused("004"))
+        with self.assertRaises(fc.fc_proc.Paused):
+            fc.fc_proc.run(["true"])
+        fc.fc_proc.resume_task("004")
+        self.assertEqual(fc.fc_proc.run(["true"]).returncode, 0)
+        self.assertEqual(fc.fc_proc.TASK_GROUPS.get("004", set()), set())
+
+    def test_a_group_killed_by_a_pause_raises_paused_even_when_resumed_at_once(self):
+        out = {}
+        def worker():
+            fc.fc_proc.TASK.id = "004"
+            try:
+                out["r"] = fc.fc_proc.run(["sleep", "30"]).returncode
+            except fc.fc_proc.Paused:
+                out["r"] = "paused"
+        real = fc.fc_proc.kill_group
+        def kill_then_resume(pid):
+            real(pid); fc.fc_proc.resume_task("004")
+        t = threading.Thread(target=worker); t.start(); time.sleep(0.5)
+        with mock.patch.object(fc.fc_proc, "kill_group", kill_then_resume):
+            fc.fc_proc.pause_task("004"); t.join(6)
+        self.assertEqual(out, {"r": "paused"})
+        self.assertEqual(fc.fc_proc.KILLED, set())
+
+    def test_a_pause_landing_right_after_the_spawn_kills_the_new_group_and_raises_paused(self):
+        real, spawned = subprocess.Popen, []
+        def popen(*a, **k):
+            p = real(*a, **k); spawned.append(p.pid)
+            fc.fc_proc.PAUSED.add("004")  # the pause lands after the spawn, before the group is registered
+            return p
+        fc.fc_proc.TASK.id = "004"
+        with mock.patch.object(fc.fc_proc.subprocess, "Popen", popen), self.assertRaises(fc.fc_proc.Paused):
+            fc.fc_proc.run(["sleep", "30"])
+        time.sleep(0.2)
+        with self.assertRaises(ProcessLookupError):
+            os.killpg(spawned[0], 0)
+        self.assertEqual((fc.fc_proc.KILLED, fc.fc_proc.TASK_GROUPS.get("004", set())), (set(), set()))
+
+    def test_pause_calls_the_named_hook_only(self):
+        called = []
+        fc.fc_proc.HOOKS.update({"p-004": lambda: called.append("004"), "p-005": lambda: called.append("005")})
+        fc.fc_proc.pause_task("004", "p-004")
+        self.assertEqual(called, ["004"])
+
+    def test_a_thread_with_no_task_is_never_paused(self):
+        fc.fc_proc.TASK.id = None
+        fc.fc_proc.pause_task("004")
+        self.assertEqual(fc.fc_proc.run(["true"]).returncode, 0)
+
+
 class Slots(unittest.TestCase):
     """fc_proc.slot lanes: a scoped run never queues behind a suite."""
 

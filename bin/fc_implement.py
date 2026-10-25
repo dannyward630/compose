@@ -1,6 +1,6 @@
 import json, os, re, shlex, shutil, signal, subprocess, sys, time, uuid
 from pathlib import Path
-import fc_core, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_load, fc_harness, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_green, fc_gate, fc_fast, fc_format, fc_started, fc_figma, fc_trailpack
+import fc_core, fc_pause, fc_config, fc_providers, fc_readguard, fc_tasks, fc_linear, fc_claude, fc_models, fc_proc, fc_load, fc_harness, fc_herdr, fc_worktree, fc_layers, fc_libapi, fc_green, fc_gate, fc_fast, fc_format, fc_started, fc_figma, fc_trailpack
 
 def implementer(cwd, model, prompt, session=None, task=None, timeout=None):
     """Route a turn to the harness named by the model id: `pi:<provider/model>` runs pi (as a named herdr agent when the run
@@ -62,6 +62,8 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
             time.sleep(1)
             continue
         break
+    if fc_proc.task_paused(meta["id"]):  # the pause hook's esc and pane close ended the wait, with an error or without
+        raise fc_proc.Paused
     def read_turn():  # what pi wrote to its session file since the last turn, priced and added to the ledger
         if not session.get("sfile"):
             session["sfile"] = (((fc_herdr.herdr("agent", "get", session["name"]) or {}).get("agent") or {}).get("agent_session") or {}).get("value")
@@ -217,7 +219,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     wt = proj / "worktrees" / (tid + tag)
     # A separate clone, not a git worktree: opencode links worktrees to the main checkout as "project copies" and
     # resolves edits of existing files there. A clone has its own .git, so nothing can leak. Shared objects keep it cheap.
-    if wt.exists(): shutil.rmtree(wt)
+    fc_pause.clear_clone(proj, tid, wt)  # a clone a failed pause snapshot kept is moved aside, never deleted
     fc_core.sh(["git", "worktree", "prune"], repo, check=False)
     why = not tag and fc_tasks.task_finished(proj, meta, redo=bool(os.environ.get("COMPOSE_REDO")))
     if why:
@@ -241,7 +243,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         fc_core.sh(["git", "commit", "-qam", fc_core.typed("reset implementation", "deps", fc_core.commit_convention(proj)) if fc_core.commit_convention(proj) else "bench: reset implementation"], wt, check=False)
     before = fc_core.digests(wt, meta["protected"])
     # Red first: a test that already passes on HEAD means the task is done or the test is vacuous. Do not spend an implementer on it.
-    fast = fc_fast.workflow(proj, meta) == "fix-then-regression-test"
+    fast = not (tag or reset_files) and fc_fast.workflow(proj, meta) == "fix-then-regression-test"  # a bench run is never routed: it leaves the real result and Linear alone
     red = run_test(meta, wt)
     if fast and red.returncode:
         return fc_fast.broken_base(proj, meta, red, base_name, branch, wt)
@@ -250,10 +252,13 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         result = {"id": tid, "title": meta.get("title"), "status": "already_green", "model": meta["model"], "attempts": 0,
                   "seconds": 0.0, "cost": 0.0, "branch": branch, "worktree": str(wt), "diffstat": "", "log": []}
         (proj / "results").mkdir(exist_ok=True)
-        fc_core.atomic_write((proj / "results" / f"{tid}.json"), json.dumps(result, indent=2))
+        fc_core.atomic_write((proj / "results" / f"{tid}{tag}.json"), json.dumps(result, indent=2))
         return result
     if delete:  # the task's own deletions, applied in the clone before any turn
         fc_core.sh(["git", "rm", "-r", "-q", "--"] + delete, wt)
+    res = proj / "results" / f"{tid}{tag}.json"  # a bench run keeps its own file: the real task's result (and its paused record) stays
+    last = res.read_text() if res.exists() else None  # the pre-run result, before progress("running") replaces it
+    kept = [] if tag or reset_files else fc_pause.carry_over(repo, wt, meta, json.loads(last) if last else {})
     checks, limit = task_checks(fc_core.project_config(proj)), int(meta.get("test_timeout") or fc_models.TEST_TIMEOUT)
     def checked(where):  # the project's checks run a long time: each one says what it runs, and where, before it starts
         def run(cmd, tree, secs, env=None):
@@ -282,7 +287,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     root = str(wt.resolve())
     abs_files = ", ".join(str(wt.resolve() / f) for f in meta["files"]) or "files under the root as needed"
     abs_protected = ", ".join(str(wt.resolve() / f) for f in meta["protected"]) or "none"
-    prompt = (f"You are implementing one small task in this repository.\n\n"
+    prompt = (fc_pause.carry_note(kept) + f"You are implementing one small task in this repository.\n\n"
               f"REPOSITORY ROOT FOR THIS TASK: {root}\n"
               f"Every file you read, create, or edit must be under that root. Project docs may mention other absolute paths "
               f"(for example the original checkout this task was cloned from); those are read-only references, never edit them.\n\n"
@@ -310,11 +315,9 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     spent = lambda: len({e["attempt"] for e in log if "attempt" in e and not e.get("rate_limited") and "payment_required" not in e and "slept" not in e})
     def progress(state):  # a parked `watch` and the status board read this while the task runs
         (proj / "results").mkdir(exist_ok=True)
-        fc_core.atomic_write((proj / "results" / f"{tid}.json"), json.dumps({"id": tid, "title": meta.get("title"), "status": state, "model": meta["model"],
+        fc_core.atomic_write(res, json.dumps({"id": tid, "title": meta.get("title"), "status": state, "model": meta["model"],
             "attempts": spent(), "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": round(time.time() - started, 1),
-            "cost": round(cost, 6), "branch": branch, "base": base_name, "worktree": str(wt), "log": log}, indent=2))
-    res = proj / "results" / f"{tid}.json"
-    last = res.read_text() if res.exists() else None
+            "cost": round(cost, 6), "branch": branch, "base": base_name, "worktree": str(wt), "log": log, **fc_pause.carried(last)}, indent=2))
     progress("running")
     # A hold placed while the run cloned, based, and installed lands here, before any turn. `running` is on disk before the
     # holds are read, and `hold` writes the hold before it reads `running`: either this sees the hold, or `hold` says it runs.
@@ -353,6 +356,9 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     while attempt < attempts:
         if fc_proc.STOP.is_set():
             raise fc_proc.Stopped
+        if fc_proc.task_paused(tid):
+            status = "paused"
+            break
         attempt += 1
         t0, clk = time.time(), fc_proc.clock()
         ref_before = fc_readguard.refused(wt)
@@ -361,8 +367,17 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
             if only_delete:
                 session, reply, tools, usage = None, "", 0, {"cost": 0.0}
             else:
-                session, reply, tools, usage = implementer(wt, meta["model"], prompt, session, task={"proj": proj, "meta": meta, "space": fc_herdr.HERDR_SPACES.get(proj.name)},
-                                                           timeout=fc_models.TURN_TIMEOUT)
+                fc_proc.TASK.id = tid  # a hold pauses the turn's commands, not the checks and tests below
+                try:
+                    session, reply, tools, usage = implementer(wt, meta["model"], prompt, session, task={"proj": proj, "meta": meta, "space": fc_herdr.HERDR_SPACES.get(proj.name)},
+                                                               timeout=fc_models.TURN_TIMEOUT)
+                finally:
+                    fc_proc.TASK.id = None
+                if fc_proc.task_paused(tid):  # a harness that swallowed the cut: the turn's edits are kept, never tested or committed
+                    raise fc_proc.Paused
+        except fc_proc.Paused:
+            status = "paused"
+            break
         except fc_models.RateLimited as e:
             cost += e.usage["cost"]
             reference_cost += e.usage.get("reference_cost") or 0
@@ -532,6 +547,8 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         log.append({"leak_reverted": mine})
     if others:
         fc_core.say(f"{tid} note: main checkout has other uncommitted changes (left alone): {', '.join(others)[:160]}")
+    if fc_pause.ends_paused(status, tid):  # a hold during the last test or checks that did not pass pauses too
+        return fc_pause.paused_result(repo, proj, meta, wt, base, base_name, log, spent(), cost, started, fc_tasks.held(proj).get(tid, {}).get("reason", ""))
     if status == "passed":
         fc_core.sh(["git", "add", "-A"], wt)
         changed = [f for f in fc_core.sh(["git", "diff", "--cached", "--name-only", base], wt, check=False).stdout.split() if f in meta["files"]]
@@ -564,7 +581,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
               "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": total, "cost": round(cost, 6),
               "reference_cost": round(reference_cost, 6), "branch": branch, "base": base_name, "worktree": str(wt), "diffstat": diff, "log": log}
     (proj / "results").mkdir(exist_ok=True)
-    fc_core.atomic_write((proj / "results" / f"{tid}.json"), json.dumps(result, indent=2))
+    fc_core.atomic_write(res, json.dumps(result, indent=2))
     if not reset_files and not tag:
         fc_linear.linear_event(proj, meta, status if status in ("passed", "unproven") else "failed", result)
     return result

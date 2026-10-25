@@ -1723,8 +1723,9 @@ REPLAN = [
     "1. If no change is open: sync, then `compose change start --why \"<one line>\"`.",
     "2. The planner teammate edits Linear: `## Plan`; it cancels the tasks that rest on the old line (a canceled task loses its `compose` block), edits the briefs that change, and adds new tasks with the next ids, and `compose testcrews --only <new and changed ids> --redo` for their tests: `--redo` rewrites the test of a passed task whose brief changed.",
     "3. The 3b gate applies unchanged: a list that matches what the product owner just settled dispatches at once, and anything past it goes back up.",
-    "4. Sync, then `compose change done`: it comments the change on the feature.",
-    "5. `compose hold --release <ids>`, then `compose run --only <new and redone ids> --redo` for the layers built on the old line.",
+    "4. Settle each task `compose status` shows paused: `compose change keep|part|discard <id> [--files a,b]`; keep when its work still fits the new brief, part for the files that still do, discard when what it rested on is gone.",
+    "5. Sync, then `compose change done`: it comments the change on the feature, and refuses while a paused task is unsettled.",
+    "6. `compose hold --release <ids>`, then `compose run --only <new and redone ids> --redo` for the layers built on the old line, adding the paused tasks you kept, part kept or discarded when the run has ended (a live run restarts them on release).",
 ]
 
 
@@ -1743,11 +1744,20 @@ class PlanOwnership(unittest.TestCase):
     def test_replan_list_unchanged_and_nothing_else_between(self):
         self.assertEqual(self.lines.count(REPLAN[0]), 1)
         i = self.lines.index(REPLAN[0])
-        self.assertEqual(self.lines[i:i + 6], REPLAN)
+        self.assertEqual(self.lines[i:i + 7], REPLAN)
         self.assertEqual(self.lines.count(PLAN_LINES[0]), 1, "no delivery plan block")
         j = self.lines.index(PLAN_LINES[0])
-        self.assertGreater(j, i + 5)
-        self.assertEqual([l for l in self.lines[i + 6:j] if l.strip()], [])
+        self.assertGreater(j, i + 6)
+        self.assertEqual([l for l in self.lines[i + 7:j] if l.strip()], [])
+
+    def test_hold_pauses_running_work(self):
+        self.assertIn("1. Hold first: `compose hold --project <slug> --rests-on <decision ids, issue ids, or reflect> --reason \"<one line>\"` holds every task that rests on the change, and pauses the running ones within seconds with their work kept.", self.lines)
+        self.assertIn("   Hold before you confirm: a pause costs nothing, and a release with no change keeps all the work.", self.lines)
+        rows = {l.split("|")[1].strip(): l for l in read("docs/cli.md").splitlines() if l.startswith("| `")}
+        hold = rows["`hold`"]
+        self.assertIn("--rests-on", hold)
+        self.assertIn("one already running pauses within seconds and keeps its work on a ref", hold)
+        self.assertIn("keep\\|part\\|discard", rows["`change start\\|done\\|undo`"] if "`change start\\|done\\|undo`" in rows else next(l for k, l in rows.items() if k.startswith("`change")))
 
     def test_house_rules(self):
         self.assertNotIn("\u2014", read("sections/8.md"))

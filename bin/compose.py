@@ -120,10 +120,10 @@ def main():
                             ("designcrews", fc_figma.cmd_designcrews, "start one design-NNN builder per open design task"),
                             ("triage", fc_run.cmd_triage, "fast-model look at each passed task: clean or flag (run does this at its end)"),
                             ("reflect", fc_change.cmd_reflect, "screen the settled decisions against evidence with Jev: HOLDS | BROKEN | UNCLEAR per line"),
-                            ("hold", fc_change.cmd_hold, "hold tasks back from dispatch while the plan changes: --only ids --reason why; --release ids|all"),
+                            ("hold", fc_change.cmd_hold, "hold tasks back from dispatch while the plan changes: --only ids|--rests-on refs --reason why; --release ids|all"),
                             ("away", fc_yolo.cmd_yolo, "the product owner is away until their first message: [--push] [words] enters, `decided \"<q>: <a>\"` logs an answer taken, --clear-words empties the words, `digest` prints the digest, `off` prints it and archives"),
                             ("yolo", fc_yolo.cmd_yolo, "the engineering manager answers until an explicit off, and the product owner may steer: [--push] [words] enters, `decided \"<q>: <a>\"` logs an answer taken, --clear-words empties the words, `digest` prints the digest, `off` prints it and archives"),
-                            ("change", fc_change.cmd_change, "start | done | undo a change of course: what changed in Linear and why, undoable"),
+                            ("change", fc_change.cmd_change, "start | done | undo | keep|part|discard <task id> [--files a,b] a change of course: what changed in Linear and why, undoable; settle paused work"),
                             ("decisions", fc_decide.cmd_decisions, "print the project's pending-decisions page: every open card in full, when it was asked, and the decisions so far; --issue picks another map"),
                             ("decide", fc_decide.cmd_decide, "record the product owner's answers on the map (`\"Q1: A\" ...` or --accept-all) with their words attached: --quote \"<what they said>\"; without it, only under away or yolo, as unconfirmed"),
                             ("reconcile", fc_reconcile.cmd_reconcile, "the one-time cleanup of a messy Linear project: list | check --file | show | apply --go | notices"),
@@ -283,6 +283,7 @@ def main():
             s.add_argument("--against", action="append", help="a Linear line the evidence contradicts, quoted; repeatable")
         if name == "hold":
             s.add_argument("--only", help="comma-separated task ids to hold")
+            s.add_argument("--rests-on", dest="rests_on", help="comma-separated refs: an issue id, a tech doc title, a decision id (D3), or reflect; holds every unfinished task resting on them")
             s.add_argument("--reason", help="one line: why they wait")
             s.add_argument("--release", help="comma-separated task ids, or all")
         if name in ("away", "yolo"):
@@ -303,9 +304,10 @@ def main():
             s.add_argument("--accept-all", action="store_true", help="record every open card's recommendation (answers given win)")
             s.add_argument("--change", help="the open change of course these cards belong to, e.g. C2: the line each card supersedes is struck through")
         if name == "change":
-            s.add_argument("action", choices=("start", "done", "undo"))
-            s.add_argument("id", nargs="?", help="undo: the change to undo, e.g. C2")
+            s.add_argument("action", choices=("start", "done", "undo", "keep", "part", "discard"))
+            s.add_argument("id", nargs="?", help="undo: the change to undo, e.g. C2; keep|part|discard: the paused task id")
             s.add_argument("--why", help="start: one line, the reason for the change")
+            s.add_argument("--files", help="part: comma-separated files of the paused work to keep")
         if name == "crew":
             s.add_argument("action", choices=("start", "list", "focus", "stop"))
             s.add_argument("--role", help="orchestrator (the team lead), architect, or a helper's job; the agent is named <slug>-<role>")

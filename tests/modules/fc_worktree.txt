@@ -34,6 +34,7 @@ stack_worktree
 exclude_paths
 TOOL_DIRS
 WIRING
+UNSAVED_CLONE
 dirty_paths
 graph_dir
 ignore_tool_files

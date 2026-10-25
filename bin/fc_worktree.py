@@ -398,6 +398,7 @@ def exclude_paths(wt, rules):
 
 TOOL_DIRS = ("graft/", ".trail/", ".compose/")  # trail moves a repo's graph from graft/ to .trail/cache/
 WIRING = (".claude/settings.json", ".claude/settings.local.json")  # the agent wiring trail's and graft's session hooks rewrite
+UNSAVED_CLONE = "-unsaved-"  # in the name of a task clone a failed pause snapshot kept, moved aside: `compose clean` names it before it goes
 
 def dirty_paths(repo):
     """The paths `git status` shows changed or untracked in a checkout, without the agent wiring (WIRING) and the tools' own

@@ -6,7 +6,7 @@ import fc_core, fc_proc, fc_tasks, fc_herdr, fc_change, fc_reports, fc_crew, fc_
 YOLO_HINT = "  {m}=on (answer with the recommendation; log it: compose {m} decided ...)"
 
 # ---------- watch ----------
-FINAL_STATES = ("passed", "already_green", "failed", "contradiction", "unproven", "broken_base", "rejected_size", "rejected_docs", "rejected_scope", "rejected_regression", "rejected_tampered", "payment_required", "interrupted", "hand_done", "unchained")
+FINAL_STATES = ("passed", "already_green", "failed", "contradiction", "unproven", "broken_base", "rejected_size", "rejected_docs", "rejected_scope", "rejected_regression", "rejected_tampered", "payment_required", "interrupted", "hand_done", "unchained", "paused")
 
 AGENTS_INTERVAL = 10.0  # seconds between `herdr agent list` calls in one watch loop: a teammate's status moves at the pace of its turns
 
@@ -187,7 +187,7 @@ def watch_stalls(proj, snap, limit, now_s=None, key="all", woke=None, agent_limi
     last = {n: (r[-1]["state"], fc_core.report_time(r[-1]["at"])) for n, r in snap.get("crew", {}).items() if r}
     closed = set(snap.get("closed", ()))
     pending = [t for t, v in snap["tasks"].items() if v["state"] in ("pending", "running", "interrupted")]
-    on_hold = [t for t, v in snap["tasks"].items() if v["state"] == "held"]  # waiting on a change of course: still work to move
+    on_hold = [t for t, v in snap["tasks"].items() if v["state"] in ("held", "paused")]  # waiting on a change of course: still work to move
     working = [n for n, (st, _) in last.items() if st == "working" and n != orch and n not in closed]
     mem = watch_mem(proj, key)
     was = json.dumps([sorted(mem.get("fired", [])), mem.get("seen", {}), mem.get("spells", {})])
