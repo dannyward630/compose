@@ -18,6 +18,7 @@ _without_open_questions
 judge_state
 judge
 CHECK_VERSION
+HOMED
 cache_path
 cache_key
 with_questions

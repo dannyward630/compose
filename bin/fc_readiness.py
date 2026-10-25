@@ -1,4 +1,4 @@
-import hashlib, json, os, re, sys, time
+import hashlib, json, os, re, subprocess, sys, time
 from pathlib import Path
 from types import SimpleNamespace
 import fc_core, fc_tasks, fc_linear, fc_linear_cmd, fc_plan, fc_change, fc_models, fc_claude, fc_config
@@ -13,7 +13,7 @@ class NotAStory(Exception):
 
 
 READINESS_TREE = """query($id: String!) { issue(id: $id) { id identifier title description state { name } labels { nodes { name } }
-  children { nodes { state { name } description } }
+  children { nodes { state { name type } description } }
   inverseRelations(first: 250) { nodes { type issue { identifier state { name } labels { nodes { name } } } } }
   project { documents(first: 250) { nodes { title content url } } }
   parent { id identifier title description labels { nodes { name } }
@@ -35,7 +35,8 @@ def story_chain(tree):
         raise NotAStory(f"{ident} is not a story: readiness judges stories (a child of a feature)")
     epic = (feature or {}).get("parent")
     return {"story": tree, "feature": feature, "epic": epic if epic and "epic" in _labels(epic) else None,
-            "tasks": [c for c in (tree.get("children") or {}).get("nodes") or () if fc_tasks.TASK_BLOCK.search(c.get("description") or "")],
+            "tasks": [c for c in (tree.get("children") or {}).get("nodes") or () if fc_tasks.TASK_BLOCK.search(c.get("description") or "")
+                      and (c.get("state") or {}).get("type") != "canceled" and ((c.get("state") or {}).get("name") or "").lower() != "canceled"],
             "docs": ((tree.get("project") or {}).get("documents") or {}).get("nodes") or []}
 
 
@@ -137,7 +138,10 @@ def judge(state, story, deep_dive):
     questions["kind"] = {"type": "choice", "criteria": KIND_CHOICES, "instructions": {"story": story, "rules": READINESS_RULES}}
     env = fc_models.fast_env()
     fc_config.typesafe_key(env, "Jev readiness")
-    answers = fc_models.jev_ask(env, {}, state, questions, "Jev readiness").get("answers") or {}
+    try:
+        answers = fc_models.jev_ask(env, {}, state, questions, "Jev readiness").get("answers") or {}
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise RuntimeError(f"readiness: Jev could not answer: {e}")
     prob = lambda k, c: float(((answers.get(k) or {}).get("probabilities") or {}).get(c, 0) or 0)
     technical = deep_dive or prob("kind", "TECHNICAL") >= TECHNICAL_FLOOR
     question = lambda k: items[k][1].format(id=story)
@@ -145,7 +149,10 @@ def judge(state, story, deep_dive):
         missing = [k for k in items if not ((answers.get(k) or {}).get("choice") == "READY" and prob(k, "READY") >= READY_FLOOR)]
         return {"technical": False, "judge": "jev", "missing": [{"item": k, "issue": story, "question": question(k)} for k in missing]}
     model, effort = fc_config.READINESS_MODEL
-    reply = fc_claude.claude_json(fc_core.scrub(STRONG_SYSTEM), fc_core.scrub(json.dumps({"state": state, "items": {k: v[0] for k, v in items.items()}})), model, timeout=600, effort=effort)
+    try:
+        reply = fc_claude.claude_json(fc_core.scrub(STRONG_SYSTEM), fc_core.scrub(json.dumps({"state": state, "items": {k: v[0] for k, v in items.items()}})), model, timeout=600, effort=effort)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise RuntimeError(f"readiness: the stronger model could not answer: {e}")
     try:
         got = fc_models.lenient_json(reply, key="items")
     except (ValueError, json.JSONDecodeError) as e:
@@ -160,6 +167,7 @@ def judge(state, story, deep_dive):
 
 
 CHECK_VERSION = 1
+HOMED = ('design', 'cards', 'open questions')  # gaps with a home of their own: reported, never written on the story
 
 
 def cache_path(repo):
@@ -181,9 +189,14 @@ def with_questions(description, missing, today):
     body = description or ""
     m = re.search(r"^#+[ \t]*Open questions[^\n]*$(.*?)(?=^#|\Z)", body, re.M | re.S)
     kept = [l for l in (m.group(1) if m else "").splitlines() if l.strip() and not TAG_RE.search(l)]
-    lines = kept + [f"- {x['question'].rstrip('.')} (readiness check, {today})" for x in missing]
+    if len(kept) == 1 and kept[0].strip().rstrip(".").lower() == "none":
+        kept = []
+    one = lambda q: re.sub(r"^#+\s*", "", " ".join(str(q).split())).rstrip(".")
+    lines = kept + [f"- {one(x['question'])} (readiness check, {today})" for x in missing]
     if not lines and not m:
         return body
+    if m:
+        body = body[:m.start()] + "## Open questions" + body[m.start() + len(body[m.start():].split("\n")[0]):]
     return fc_plan.replace_section(body, "## Open questions", "\n".join(lines))
 
 
@@ -219,7 +232,8 @@ def story_readiness(repo, story, refresh=False, write=True):
             cache = json.loads(path.read_text())
         except (OSError, ValueError):
             cache = {}
-        hit = cache.get(story) if isinstance(cache.get(story), dict) else None
+        ident = node["identifier"]
+        hit = cache.get(ident) if isinstance(cache.get(ident), dict) else None
         if hit and hit.get("key") == key and not refresh:
             verdict, out["cached"] = hit, True
         else:
@@ -230,7 +244,7 @@ def story_readiness(repo, story, refresh=False, write=True):
             verdict = {**verdict, "key": key, "at": time.strftime("%Y-%m-%dT%H:%M:%S")}
         missing = verdict["missing"]
         out.update(technical=bool(verdict.get("technical")), judge=verdict.get("judge"))
-    own = [x for x in missing if x["issue"] == node["identifier"]]
+    own = [x for x in missing if x["issue"] == node["identifier"] and x["item"] not in HOMED]
     out.update(specced=not missing, missing=missing)
     out["ready"] = out["specced"] and out["unblocked"]
     description = node.get("description") or ""
@@ -241,7 +255,7 @@ def story_readiness(repo, story, refresh=False, write=True):
         fc_linear_cmd.drop_get_cache(SimpleNamespace(repo=str(repo)))
     if not gaps and not out["cached"]:
         path.parent.mkdir(parents=True, exist_ok=True)
-        cache[story] = {"key": key, "at": verdict["at"], "specced": out["specced"], "technical": out["technical"], "judge": out["judge"], "missing": missing}
+        cache[ident] = {"key": key, "at": verdict["at"], "specced": out["specced"], "technical": out["technical"], "judge": out["judge"], "missing": missing}
         fc_core.atomic_write(path, json.dumps(cache, indent=1))
     return out
 
@@ -275,7 +289,7 @@ def cmd_readiness(a):
                 results.append({"id": story, "ready": False, "refused": str(e)})
             bad = True
             continue
-        except RuntimeError as e:
+        except (RuntimeError, OSError) as e:
             if a.json:
                 results.append({"id": story, "ready": False, "error": str(e)})
             else:

@@ -82,7 +82,7 @@ class Gates(unittest.TestCase):
 
 
 import json  # noqa: E402
-import fc_claude, fc_models  # noqa: E402
+import fc_claude, fc_models, fc_tasks  # noqa: E402
 
 STATE = {"story": {"id": "ENG-7", "title": "Pay", "description": STORY}, "feature": FEATURE, "epic": "", "tech_docs": []}
 
@@ -157,6 +157,18 @@ class Judge(unittest.TestCase):
         sent = " ".join(str(a) for a in self.strong.call_args.args)
         self.assertNotIn("sk-live-0123456789abcdef", sent)
         self.assertIn("<redacted>", sent)
+
+
+    def test_any_transport_failure_of_either_model_is_a_runtime_error(self):
+        import socket, subprocess, urllib.error
+        for err in (urllib.error.URLError("down"), socket.timeout("slow"), FileNotFoundError("claude"), OSError("io")):
+            with mock.patch.object(fc_models, "jev_ask", side_effect=err), self.assertRaises(RuntimeError, msg=repr(err)):
+                fc_readiness.judge(STATE, "ENG-7", deep_dive=False)
+        self.jev = {"kind": ("TECHNICAL", 0.9)}
+        for err in (subprocess.TimeoutExpired("claude", 600), FileNotFoundError("claude"), urllib.error.URLError("down")):
+            self.strong.side_effect = err
+            with self.assertRaises(RuntimeError, msg=repr(err)):
+                fc_readiness.judge(STATE, "ENG-7", deep_dive=False)
 
 
 class ClaudeJson(unittest.TestCase):
@@ -242,6 +254,41 @@ class StoryReadiness(unittest.TestCase):
         self.assertIn("no acceptance criteria (readiness check,", body)
         self.assertNotIn("design is not approved", body)
 
+    def test_homed_gaps_are_reported_but_never_written(self):
+        story = STORY + "\n## Not yet specified\n\n- Which flow?\n\n## Open questions\n\n- Which card brands?\n"
+        self.tree = tree(story=story, feature="## Intent\n\nA shop.\n")
+        r = fc_readiness.story_readiness(self.repo, "ENG-7")
+        self.assertEqual({m["item"] for m in r["missing"]}, {"design", "cards", "open questions"})
+        self.assertEqual(self.updates, [])
+
+    def test_a_multi_line_question_is_one_tagged_line(self):
+        body = fc_readiness.with_questions(STORY, [{"item": "x", "issue": "ENG-7", "question": "## Which queue?\nAnd which retry policy?"}], TODAY)
+        self.assertIn(f"- Which queue? And which retry policy? (readiness check, {TODAY})", body)
+        self.assertNotIn("\n## Which", body)
+        self.assertEqual(fc_linear.open_questions(body), [f"Which queue? And which retry policy? (readiness check, {TODAY})"])
+
+    def test_a_heading_variant_is_replaced_in_place_and_none_is_dropped(self):
+        miss = [{"item": "x", "issue": "ENG-7", "question": "Where?"}]
+        body = fc_readiness.with_questions(STORY + "\n## Open questions:\n\nNone.\n\n## Other\n\nx\n", miss, TODAY)
+        self.assertEqual(body.count("Open questions"), 1)
+        self.assertNotIn("None", body)
+        self.assertIn(f"- Where? (readiness check, {TODAY})", body)
+        self.assertIn("## Other", body)
+
+    def test_the_cache_is_keyed_by_the_identifier_not_the_id_as_typed(self):
+        fc_readiness.story_readiness(self.repo, "eng-7")
+        again = fc_readiness.story_readiness(self.repo, "ENG-7")
+        self.assertTrue(again["cached"])
+        self.assertEqual(self.judge.call_count, 1)
+
+    def test_canceled_tasks_do_not_count_as_tasks(self):
+        block = "```compose\nid: t\n```"
+        self.assertTrue(fc_tasks.TASK_BLOCK.search(block), "fixture must be a task")
+        self.tree = tree(tasks=[{"state": {"name": "Canceled"}, "description": block}])
+        self.assertFalse(fc_readiness.story_readiness(self.repo, "ENG-7")["has_tasks"])
+        self.tree = tree(tasks=[{"state": {"name": "Todo"}, "description": block}])
+        self.assertTrue(fc_readiness.story_readiness(self.repo, "ENG-7")["has_tasks"])
+
     def test_write_false_never_writes(self):
         self.verdict["missing"] = [{"item": "intent", "issue": "ENG-7", "question": "What is ENG-7 for, and who is it for?"}]
         fc_readiness.story_readiness(self.repo, "ENG-7", write=False)
@@ -321,6 +368,17 @@ class Cli(unittest.TestCase):
         self.assertEqual(got[0], {"id": "ENG-9", "ready": False, "refused": "ENG-9 is a task"})
         self.assertEqual(got[1], {"id": "ENG-6", "ready": False, "error": "readiness: the judge failed"})
         self.assertEqual(got[2]["id"], "ENG-7")
+
+    def test_a_transport_error_is_an_error_result_and_json_still_prints_all(self):
+        def sr(repo, s, refresh, write):
+            if s == "ENG-6":
+                raise OSError("connection reset")
+            return READY
+        with mock.patch.object(fc_readiness, "story_readiness", side_effect=sr), self.assertRaises(SystemExit) as e:
+            self.cli("ENG-6", "ENG-7", json=True)
+        self.assertEqual(e.exception.code, 1)
+        got = json.loads(self.out)
+        self.assertEqual((got[0]["id"], got[0]["error"], got[1]["id"]), ("ENG-6", "connection reset", "ENG-7"))
 
     def test_an_errored_story_is_a_line_and_the_next_story_is_still_judged(self):
         def sr(repo, s, refresh, write):
