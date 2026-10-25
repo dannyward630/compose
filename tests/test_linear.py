@@ -868,3 +868,10 @@ class RoutePin(unittest.TestCase):
                                                    "issues": [issue("ENG-7", "T", block(id="001", test="t", route=value))]})
             self.assertEqual(e.exception.code,
                              f"ENG-7: route must be test-first, implement-then-test, fix-then-regression-test or check-only, not {value}")
+
+
+class OpenQuestions(unittest.TestCase):
+    def test_open_questions_reads_star_bullets_and_treats_none_as_empty(self):
+        self.assertEqual(fc.fc_linear.open_questions("## Open questions\n\n* a\n- b\n\n## Notes\n\nx"), ["a", "b"])
+        self.assertEqual(fc.fc_linear.open_questions("## Open questions\n\nNone.\n"), [])
+        self.assertEqual(fc.fc_linear.open_questions(""), [])

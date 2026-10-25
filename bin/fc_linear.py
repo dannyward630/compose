@@ -1,4 +1,4 @@
-import json, os, sys, threading, time, urllib.error, urllib.request
+import json, os, re, sys, threading, time, urllib.error, urllib.request
 from pathlib import Path
 import fc_core, fc_config, fc_plan, fc_tasks
 
@@ -341,6 +341,13 @@ def ready_ids(issues):
             if (i["state"]["name"] or "").lower() in ("todo", "backlog")
             and all(fc_tasks.blocker_finished(r["issue"]["state"]["name"], [l["name"] for l in r["issue"]["labels"]["nodes"]])
                     for r in i["inverseRelations"]["nodes"] if r["type"] == "blocks")]
+
+def open_questions(description):
+    """The list items under an `## Open questions` heading (any level, `-` or `*` bullets); [] when the section is absent,
+    empty or says None."""
+    m = re.search(r"^#+[ \t]*Open questions[^\n]*$(.*?)(?=^#|\Z)", description or "", re.M | re.S)
+    items = [b.group(1) for b in map(re.compile(r"^\s*[-*]\s+(.*\S)").match, (m.group(1) if m else "").splitlines()) if b]
+    return [i for i in items if i.strip().rstrip(".").lower() != "none"]
 
 LINEAR_READY_TREE = """query($id: String!) { issue(id: $id) { team { labels { nodes { id name } } }
   children { nodes { ...ReadyNode } } parent { children { nodes { ...ReadyNode } } } } }
