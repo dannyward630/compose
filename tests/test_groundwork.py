@@ -110,6 +110,8 @@ class Groundwork(unittest.TestCase):
         for i in runs:  # every mention forbids it; none tells the planner to dispatch
             self.assertRegex(brief[max(0, i - 60):i], r"[Nn]ever|[Nn]ot\b|\b[Nn]o\b")
         self.assertTrue(brief.rstrip().endswith("Spec: README.md"))
+        self.assertIn("deep-dive", brief)
+        self.assertIn("fold what the tech doc decides into each task brief: implementers never read Linear", brief)
 
     MCP_TOOLS = ("save_issue", "get_issue", "list_issues", "save_comment", "get_project", "list_issue_labels", "create_issue_label",
                  "save_document", "mcp__claude_ai_Linear")

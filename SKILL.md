@@ -42,7 +42,7 @@ Stop and ask the user, never guess, when:
 
 ### 0i. The levels: project, epic, feature, story, task
 Linear has projects, issues, sub-issues, and labels; compose maps five levels onto them.
-Labels `Epic`, `Feature`, `Story`, `Task`, and `Ready` live on the Engineering team (`Feature` exists; create the others once with `compose linear labels --create <name>` if `compose linear labels` does not show them).
+Labels `Epic`, `Feature`, `Story`, `Task`, `Ready`, and `deep-dive` (a deep dive, 0b) live on the Engineering team (`Feature` exists; create the others once with `compose linear labels --create <name>` if `compose linear labels` does not show them).
 `Ready` marks a story or feature that can start now, and `compose ready` sets it.
 
 | level | in Linear | in compose | holds |
@@ -242,7 +242,7 @@ model: pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast
   Every repo change is teammate work or a task for `run`.
   For the team lead a hook enforces it: its tab carries `COMPOSE_ROLE=orchestrator`, and the plugin's `compose guard` denies its Write and Edit calls inside a repository.
   Never route around the hook through Bash.
-- Every document you write for a human is shaped by the `i-have-adhd` skill: Linear descriptions and comments (maps, specs, plans, stories, tasks, grilling notes, steers) and briefs for teammates.
+- Every document you write for a human is shaped by the `i-have-adhd` skill: Linear descriptions and comments (designs, specs, plans, stories, tasks, grilling notes, steers) and briefs for teammates.
   The Skill tool cannot load it (user-invoked only); before the first document of a session, read `~/.claude/plugins/marketplaces/i-have-adhd/skills/i-have-adhd/SKILL.md` and apply its rules to everything you write after.
   Writing-plans and the task issue format fix the sections; i-have-adhd fixes the shape inside them: first line is the next action, multi-step work is numbered, lists stop at five, no preamble, no recap.
 - You steer, you do not type.
@@ -257,10 +257,10 @@ model: pi:openrouter-fast/z-ai/glm-5.3-flash@preset/glm-5-3-flash-fast
   Switching model or provider, keys, and anything that costs money are still the product owner's.
 - Linear is the source of truth.
   What it records as decided is decided: read it before asking the user anything (0b), and write every new answer back to it.
-  Nothing written in words is ever a file in the repo: no plan, task, ticket, map, decision, grilling note, or task list, not under `.compose/` and not anywhere else (the only files there are the CLI's JSON: `linear.json`, `verify.json`, and `results/`, plus the layers' PR text under `pr/` (step 4), the Lavish pages under `lavish/` (0b, step 8), and the Frame0 wireframes in `design.f0` (app data in `frame0/`), all ignored and never committed); everything a human would read as a ticket is an issue under the feature issue, its state kept true at every step and level (0s): a task is Todo when written, In Progress when dispatched, In Review when its layer passed, Done when merged, Canceled when dropped or re-split, and its story, feature, and epic roll up from it in the same step.
+  Nothing written in words is ever a file in the repo: no plan, task, ticket, design, decision, grilling note, or task list, not under `.compose/` and not anywhere else (the only files there are the CLI's JSON: `linear.json`, `verify.json`, and `results/`, plus the layers' PR text under `pr/` (step 4), the Lavish pages under `lavish/` (0b, step 8), and the Frame0 wireframes in `design.f0` (app data in `frame0/`), all ignored and never committed); everything a human would read as a ticket is an issue under the feature issue, its state kept true at every step and level (0s): a task is Todo when written, In Progress when dispatched, In Review when its layer passed, Done when merged, Canceled when dropped or re-split, and its story, feature, and epic roll up from it in the same step.
 - Rule, do not stall: a judgment call that is not a product decision (which split, which `after:`, whether a finding is a defect, which of two equal libraries) is the team lead's, made in the wake that raised it and logged as one comment on the issue it touches.
   Only a choice the product owner must make (one they settled, scope, money, anything user-facing they have not seen) goes up, as one `needs-user` line with its recommendation (0h), never as a question buried in another report.
-- After the first dispatch, a change to the map, plan, or a task brief is a change of course (step 8): opened with `change start`, closed with `change done`, never an untracked edit, so it can be undone.
+- After the first dispatch, a change to the approved design, plan, or a task brief is a change of course (step 8): opened with `change start`, closed with `change done`, never an untracked edit, so it can be undone.
   That includes step 7's re-split of an exhausted task and the product owner's edits to the task list in 3b.
 - A `PAYMENT REQUIRED` stop is the user's, not yours.
   When `run` or `verify` exits 3 with that banner, stop everything and tell the user in one short message: which provider refused, its own words, the top-up link the banner printed, and that `compose resume --repo <path> --project <name>` continues exactly where it stopped (passed tasks keep their branches, remaining tasks run, a halted verify reruns).

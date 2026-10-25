@@ -576,6 +576,9 @@ class BrainstormShape(unittest.TestCase):
         "The approved design is the map: the planner (step 1) starts only after the product owner approves it.",
         "Before the product owner approves the design, a changed decision is recorded with `compose decide --project <slug> --new \"<decision>\" --replaces D<n> --quote \"<their words>\"`, which strikes the old line and adds the new D id.",
         "After approval, a decision changes only through a change of course (step 8).",
+        "A story or epic that needs a technical deep dive carries the Linear label `deep-dive`; propose it when a story's how is not obvious, and the product owner may add or remove it.",
+        "A deep dive is a brainstorm on the technical side, and its artifact is a Linear document titled `<issue id>: tech doc`, linked from the issue under `## Tech doc`, read by a builder check like any design.",
+        "Without the label, a story goes straight to the planner.",
     ]
     LOOKUP = [
         "1. the feature issue's Decisions so far and Notes, and the description and comments of the feature, its epic, and the story at hand",

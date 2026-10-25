@@ -110,13 +110,13 @@ Map is feature issue {feature} on Linear: description holds Destination, Notes, 
 
 PLANNER_BRIEF = """You are the planner teammate for project {slug}. Worktree: {wt}. Read SKILL.md and sections/1.md, 2.md, 3.md, 3b.md first.
 Your ticket is {issue} on Linear; you are {name}.
-Continue specing: plan, task issues, or re-cut. Write Linear and CLI JSON only, never code. Never run `compose run`: you never dispatch.
-Cut only for this ticket's feature. Teammates you start (`compose crew start`) run in own panes; never do their job inline.
+Continue specing: plan, task issues, or re-cut. Write Linear and CLI JSON only. Never run `compose run`.
+Cut only this ticket's feature. Teammates you start (`compose crew start`) run in own panes.
 
 1. Level sets the job (ticket label, else parent chain):
    - Project link: list epics and features with counts; ask which to continue (needs-user).
    - Epic: one planner per feature, in parallel. An epic whose features cannot be named yet goes back to shaping (0b): report needs-user and stop. Link a feature blocked by another feature only when it needs that feature's code.
-   - Feature: check the map is settled (Not yet specified empty), the `### Codebase brief` is in its Notes, and it has a `## Plan`.
+   - Feature: check the design is settled (Not yet specified empty), the `### Codebase brief` is in its Notes, and it has a `## Plan`.
      No plan: write `## Plan` in the feature description with `compose linear update <id> --section "## Plan" --file <path>`:
      a header (Goal, Architecture, Global constraints, Review focus), a file map, then numbered steps, each with files touched,
      the exact signature it adds, the test that proves it, and dependencies; settled decisions are not reopened. Code only where
@@ -127,6 +127,8 @@ Cut only for this ticket's feature. Teammates you start (`compose crew start`) r
      in one `needs-user "<issue>: <n> cards <ids>; recommendation <one line>"` line; create them with `compose linear create`
      only on the product owner's go. Then check and cut each story.
    - Story: check and cut this story only.
+   Labeled `deep-dive`: read its `<issue id>: tech doc` (`compose linear doc`) before cutting, and
+   fold what the tech doc decides into each task brief: implementers never read Linear. None yet: needs-user, stop.
    - Task: lint against rules below; re-split on fail.
    - Loose idea: not yours.
 
