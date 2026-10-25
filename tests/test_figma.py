@@ -285,6 +285,24 @@ class FigmaJudge(unittest.TestCase):
         res = self.judge("001", {"Cart page": [("MET", 0.95)]})
         self.assertEqual(res["branch"], "figma:LibKey123456789")
 
+    def test_a_violation_shown_only_by_a_node_inside_an_instance_is_no_violation_of_built_from_instances(self):
+        """Design 107: the confirm step quoted a RECTANGLE inside an instance as hand-drawn although the saved tree marks it inInstance."""
+        crit = "Built only from component instances plus layout frames"
+        fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
+            judge_task("ENG-6", "004", "Pay", [crit, "Has a card field"])]})
+        doc = {"nodes": [{"id": "1:2", "type": "FRAME", "children": [
+            {"id": "5:1", "type": "INSTANCE", "children": [{"id": "I5:1;7:2", "type": "RECTANGLE", "inInstance": "5:1"}]},
+            {"id": "1:3", "type": "RECTANGLE"}]}]}
+        (self.proj / "results" / "004.tree.txt").write_text("NODE 1:2\n" + json.dumps(doc, indent=2) + "\n")
+        inside, loose = ({"violated": True, "evidence": f"Node {i} is type RECTANGLE, not INSTANCE or FRAME"} for i in ("I5:1;7:2", "1:3"))
+        res = self.judge("004", {"Pay": [("NOT_MET", 0.9), ("NOT_MET", 0.9)]}, confirm=inside, reask="MET", blocks=True)
+        first, second = res["criteria"]
+        self.assertEqual((first["confirmed"], first["choice"], [r["criterion"] for r in res["failed"]]), (False, "MET", ["Has a card field"]))
+        self.assertIn("only nodes inside a component instance", first["evidence"])
+        self.assertTrue(second["confirmed"])  # a criterion that is not about instances keeps the verdict
+        res = self.judge("004", {"Pay": [("NOT_MET", 0.9), ("MET", 0.9)]}, confirm=loose, blocks=True)
+        self.assertEqual((res["criteria"][0]["confirmed"], res["status"]), (True, "failed"))
+
     def test_a_confirm_error_blocks_with_no_re_ask(self):
         res = self.judge("004", {"Pay": [("NOT_MET", 0.9)]}, fail=RuntimeError("down"), reask="MET", blocks=True)
         self.assertEqual((res["status"], res["criteria"][0]["choice"], self.ask.call_count), ("blocked", "NOT_MET", 1))

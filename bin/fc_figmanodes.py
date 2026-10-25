@@ -112,6 +112,29 @@ def self_contained(docs):
     mark_instance_contents([n for d in docs for n in d.get("nodes") or []])  # after the hidden slots are put back: they are contents too
     return sorted(absent)
 
+NODE_ID = re.compile(r"I?\d+:\d+(?:;\d+:\d+)*")
+
+def tree_node_ids(text):
+    """(every node id, the ids marked `inInstance`) of a saved tree file; a section that is not a JSON document holds none."""
+    every, inside = set(), set()
+    for sec in re.split(r"\n\n(?=NODE |WRITE RESULT)", text.strip("\n")):
+        try:
+            doc = json.loads(sec.partition("\n")[2])
+        except ValueError:
+            continue
+        for n in walk(doc.get("nodes") or []) if isinstance(doc, dict) else []:
+            if "id" in n:
+                every.add(n["id"])
+                if n.get("inInstance"):
+                    inside.add(n["id"])
+    return every, inside
+
+def names_only_instance_contents(evidence, text):
+    """True when `evidence` names tree nodes and every one of them is inside a component instance (marked `inInstance`)."""
+    every, inside = tree_node_ids(text)
+    named = {t for t in NODE_ID.findall(evidence) if t in every}
+    return bool(named) and named <= inside
+
 
 TREE_CHUNK_CHARS = 30000  # one judge request's share of a tree; the whole tree is judged in as many requests as it takes
 

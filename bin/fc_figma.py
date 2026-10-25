@@ -248,6 +248,13 @@ SETTLE = ("You are checking whether a node tree SATISFIES every part of one acce
 CONFIRM_PART = (" The tree shown is one part of a larger tree: a node the criterion names that this part does not hold may be in another part, "
                 "so its absence here is never a violation. Confirm only a node in this part that violates the criterion.")
 
+BUILT_FROM = re.compile(r"instances?\b|hand[- ]?(?:drawn|built|made)", re.I)  # a criterion about what a frame is built from
+
+def instance_contents_only(criterion, evidence, text):
+    """True when a confirmed violation of a criterion about what a frame is built from is shown only by nodes inside component instances:
+    an instance's own contents are never hand-drawn, whatever the confirm model says (it took a pill's fill inside an instance for one)."""
+    return bool(BUILT_FROM.search(criterion)) and fc_figmanodes.names_only_instance_contents(evidence, text)
+
 def combine_choices(choices):
     """One criterion over every chunk: NOT_MET if any chunk shows it, else MET if any chunk shows it, else UNCLEAR."""
     return "NOT_MET" if "NOT_MET" in choices else "MET" if "MET" in choices else "UNCLEAR"
@@ -486,6 +493,8 @@ def cmd_figma(a):
                 except Exception as e:  # noqa: BLE001
                     errors.append(str(e))
                     continue
+                if row["confirmed"] and instance_contents_only(c, row["evidence"], text):
+                    row["confirmed"], row["evidence"] = False, f"{row['evidence']} (not a violation: only nodes inside a component instance)"
                 if row["confirmed"]:
                     break
             if errors and not row.get("confirmed"):
