@@ -181,3 +181,43 @@ class PlanLinkPlacement(unittest.TestCase):
             self.assertEqual(self.link(desc), desc)
         out = self.link("## Goal\n\n### Detail\n\nShip it.\n")
         self.assertEqual([l for l in out.splitlines() if l.strip()], ["## Goal", "### Detail", "Ship it.", "## Notes", self.LINK])
+
+
+TRACKS = "1. Sign-in: NEB-7, [NEB-9](u/NEB-9)\n\n2. Onboarding: NEB-12 (after NEB-7)\n3. Billing: NEB-15 (after Sign-in, Onboarding)\n4. Search: NEB-20\n"
+
+class ProductTracks(unittest.TestCase):
+    def test_tracks_parse_in_list_order_with_links_and_after(self):
+        t = fc_plan.parse_tracks(TRACKS)
+        self.assertEqual([(x["rank"], x["name"], x["items"], x["after"]) for x in t], [
+            (1, "Sign-in", ["NEB-7", "NEB-9"], []), (2, "Onboarding", ["NEB-12"], ["NEB-7"]),
+            (3, "Billing", ["NEB-15"], ["Sign-in", "Onboarding"]), (4, "Search", ["NEB-20"], [])])
+        self.assertEqual(fc_plan.parse_tracks(fc_plan.PRODUCT_NEXT + "\n"), [])
+
+    def test_a_bad_section_names_the_line(self):
+        for text, msg in (("1. Sign-in NEB-7", 'line 1: not a track: "1. Sign-in NEB-7" (write "<n>. <name>: <id>, <id> (after <track>, ...)")'),
+                          ("1. A: NEB-7\n2. B: NEB-7", "line 2: B names NEB-7, already in track A"),
+                          ("1. A: NEB-7\n2. a: NEB-8", "line 2: a second track named a"),
+                          ("1. A: NEB-7 (after Pay)", "line 1: A comes after Pay, which is no track here"),
+                          ("1. A: NEB-7 (after NEB-31)", "line 1: A comes after NEB-31, which no track names"),
+                          ("1. A: NEB-7 (after A)", "line 1: A comes after itself"),
+                          ("1. A: NEB-7 (after B)\n2. B: NEB-8 (after A)", "the tracks wait on each other in a loop: A -> B -> A")):
+            with self.subTest(text), self.assertRaises(ValueError) as e:
+                fc_plan.parse_tracks(text)
+            self.assertEqual(str(e.exception), msg)
+
+    def test_waves_are_parallel_by_default_and_after_forces_order(self):
+        waves = fc_plan.track_waves(fc_plan.parse_tracks(TRACKS))
+        self.assertEqual([[t["name"] for t in w] for w in waves], [["Sign-in", "Search"], ["Onboarding"], ["Billing"]])
+
+    def test_blocks_follow_tracks_and_after(self):
+        self.assertEqual(fc_plan.derived_blocks(fc_plan.parse_tracks(TRACKS)),
+                         {("NEB-7", "NEB-9"), ("NEB-7", "NEB-12"), ("NEB-9", "NEB-15"), ("NEB-12", "NEB-15")})
+
+    def test_diff_touches_only_relations_between_plan_features(self):
+        current = {"NEB-9": {"NEB-7"}, "NEB-12": {"NEB-5", "NEB-20", "NEB-40"}, "NEB-20": {"NEB-12"}}  # NEB-40 is no plan feature
+        added, removed = fc_plan.blocks_diff({("NEB-7", "NEB-9"), ("NEB-7", "NEB-12")}, current, {"NEB-5", "NEB-7", "NEB-9", "NEB-12", "NEB-20"})
+        self.assertEqual(added, [("NEB-7", "NEB-12")])
+        self.assertEqual(removed, [("NEB-5", "NEB-12"), ("NEB-20", "NEB-12"), ("NEB-12", "NEB-20")])
+
+    def test_a_verified_base_counts_as_built(self):
+        self.assertEqual([fc_plan.base_built(s, l) for s, l in (("In Review", []), ("Done", []), ("In Progress", ["Design"]))], [True, True, False])

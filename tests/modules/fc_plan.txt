@@ -13,3 +13,13 @@ lanes_text
 waves_text
 critical_path_text
 plan_sections
+PRODUCT_NEXT
+TRACK_LINE
+TRACK_ID
+split_entries
+parse_tracks
+track_deps
+track_waves
+derived_blocks
+blocks_diff
+base_built
