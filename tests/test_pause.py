@@ -141,9 +141,6 @@ class RunLoopPauses(unittest.TestCase):
         self.assertIn("run done", out)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class CarryOver(unittest.TestCase):
     def pause_with(self, edits, choice=None, keep=None):
@@ -169,7 +166,7 @@ class CarryOver(unittest.TestCase):
         (repo / name).write_text(text)
         git(repo, "add", "-A"); git(repo, "commit", "-qm", f"move {name}")
 
-    def resume(self, repo, proj, files=None):
+    def resume(self, repo, proj, files=None, stop=False):
         """A fresh run_task over the same repo and project; returns (a.txt, b.txt, prompt) of the first turn."""
         meta = {"id": "001", "title": "answer", "files": files or ["a.txt", "b.txt"], "protected": [], "test": "grep -q yes a.txt",
                 "model": "pi:p/primary", "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}
@@ -177,13 +174,18 @@ class CarryOver(unittest.TestCase):
         def impl(cwd, model, prompt, session=None, task=None, timeout=None):
             if not first:
                 first.append(tuple((Path(cwd) / n).read_text() if (Path(cwd) / n).exists() else None for n in ("a.txt", "b.txt")) + (prompt,))
+            if stop:
+                raise KeyboardInterrupt
             (Path(cwd) / "a.txt").write_text("yes\n")
             return "s", "", 1, {"cost": 0.0}
         with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement.fc_trailpack, "trail_pack", return_value=""), \
                 mock.patch.object(fc.fc_config, "TEST_READER", None), mock.patch.dict(os.environ, ENV), \
                 mock.patch.object(fc.fc_linear, "linear_event", lambda *a: None), \
                 mock.patch.object(fc.fc_core, "say", lambda m, *a, **k: self.said.append(m)):
-            fc.fc_implement.run_task(repo, proj, meta, 3)
+            try:
+                fc.fc_implement.run_task(repo, proj, meta, 3)
+            except KeyboardInterrupt:
+                pass
         self.resume_prompt = first[0][2]
         return first[0]
 
@@ -208,3 +210,75 @@ class CarryOver(unittest.TestCase):
         seen = self.resume(repo, proj)
         self.assertEqual(seen[0], "no\n")
         self.assertFalse(seen[2].startswith("WORK KEPT"))
+
+    def test_a_file_whose_diff_fails_is_dropped_and_never_kept(self):
+        r, repo, proj = self.pause_with({"a.txt": "half\n", "b.txt": "new\n"})
+        real = subprocess.run
+        def flaky(cmd, *a, **k):
+            if cmd[:3] == ["git", "diff", "--binary"] and cmd[-1] == "b.txt":
+                return subprocess.CompletedProcess(cmd, 128, b"", b"bad object")
+            return real(cmd, *a, **k)
+        with mock.patch.object(fc.fc_implement.fc_pause.subprocess, "run", flaky):
+            seen = self.resume(repo, proj)
+        self.assertEqual(seen[:2], ("half\n", None))
+        self.assertTrue(seen[2].startswith("WORK KEPT FROM BEFORE A PLAN CHANGE: a.txt already hold"))
+        self.assertIn("001 kept    a.txt; dropped b.txt: they stay on", "\n".join(self.said))
+
+    def test_a_ref_that_cannot_be_fetched_is_said(self):
+        r, repo, proj = self.pause_with({"a.txt": "half\n"})
+        path = proj / "results" / "001.json"
+        data = json.loads(path.read_text())
+        data["paused"]["ref"] = "refs/compose/gone"
+        path.write_text(json.dumps(data))
+        seen = self.resume(repo, proj)
+        self.assertEqual(seen[0], "no\n")
+        self.assertIn("001 kept    nothing; the ref refs/compose/gone could not be fetched", "\n".join(self.said))
+
+    def test_a_bench_run_starts_from_scratch(self):
+        r, repo, proj = self.pause_with({"a.txt": "half\n"})
+        meta = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt",
+                "model": "pi:p/primary", "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}
+        with mock.patch.object(fc.fc_implement.fc_pause, "carry_over", side_effect=AssertionError("carried")):
+            with mock.patch.object(fc.fc_implement, "implementer", lambda cwd, *a, **k: ("s", "", 1, {"cost": 0.0})), \
+                    mock.patch.object(fc.fc_implement.fc_trailpack, "trail_pack", return_value=""), mock.patch.dict(os.environ, ENV), \
+                    mock.patch.object(fc.fc_core, "say", lambda *a, **k: None):
+                try:
+                    fc.fc_implement.run_task(repo, proj, meta, 3, reset_files=True)
+                except AssertionError as e:
+                    self.fail(str(e))
+                except Exception:
+                    pass
+
+    def test_kept_edits_survive_a_released_run_that_is_stopped(self):
+        r, repo, proj = self.pause_with({"a.txt": "half\n", "b.txt": "new\n"})
+        self.resume(repo, proj, stop=True)
+        self.assertEqual(json.loads((proj / "results" / "001.json").read_text())["status"], "running")
+        seen = self.resume(repo, proj)
+        self.assertEqual(seen[:2], ("half\n", "new\n"))
+        self.assertTrue(seen[2].startswith("WORK KEPT"))
+        self.assertNotIn("kept_from", json.loads((proj / "results" / "001.json").read_text()))
+
+    def test_a_base_that_moved_without_a_conflict_takes_the_edit_on_top(self):
+        r, repo, proj = self.pause_with({"a.txt": "half\n", "b.txt": "new\n"})
+        self.commit_on_main(repo, "c.txt", "other\n")
+        seen = self.resume(repo, proj)
+        self.assertEqual(seen[:2], ("half\n", "new\n"))
+
+    def test_a_dropped_file_stays_absent_and_the_index_is_clean(self):
+        r, repo, proj = self.pause_with({"a.txt": "half\n", "b.txt": "new\n"})
+        self.commit_on_main(repo, "a.txt", "moved\n")
+        wts = []
+        real = fc.fc_implement.fc_pause.carry_over
+        def spy(repo_, wt, meta, last):
+            out = real(repo_, wt, meta, last)
+            wts.append(subprocess.run(["git", "status", "--porcelain"], cwd=wt, capture_output=True, text=True).stdout)
+            return out
+        with mock.patch.object(fc.fc_implement.fc_pause, "carry_over", spy):
+            seen = self.resume(repo, proj, files=["a.txt", "b.txt"])
+        self.assertEqual(seen[0], "moved\n")
+        self.assertFalse(any(l[:2] in ("UU", "AA", "DU", "UD") for l in wts[0].splitlines()))
+        self.assertNotIn("a.txt", wts[0])
+
+
+if __name__ == "__main__":
+    unittest.main()

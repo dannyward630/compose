@@ -45,22 +45,31 @@ def carry_note(files):
 
 def _apply_one(wt, base, name):
     """One kept file's change onto the fresh clone; False (and the file back as HEAD has it) when it does not apply."""
-    diff = subprocess.run(["git", "diff", "--binary", base, "FETCH_HEAD", "--", name], cwd=wt, capture_output=True).stdout
-    if diff and subprocess.run(["git", "apply", "--3way", "--index"], cwd=wt, input=diff, capture_output=True).returncode:
+    made = subprocess.run(["git", "diff", "--binary", base, "FETCH_HEAD", "--", name], cwd=wt, capture_output=True)
+    if made.returncode or not made.stdout or subprocess.run(["git", "apply", "--3way", "--index"], cwd=wt, input=made.stdout, capture_output=True).returncode:
         subprocess.run(["git", "checkout", "HEAD", "--", name], cwd=wt, capture_output=True)
         return False
     return True
 
+def carried(last):
+    """The paused block a released task keeps in its `running` result, so a stopped run still carries its edits next start."""
+    data = json.loads(last) if last else {}
+    block = data.get("paused") if data.get("status") == "paused" else data.get("kept_from")
+    return {"kept_from": block} if block else {}
+
 def carry_over(repo, wt, meta, last):
     """Start a released task from the edits its pause kept: those the new brief still owns, that the chosen `keep` allows
     and that apply to the fresh clone. Returns the files kept; the rest stay on the ref."""
-    paused = last.get("paused") if last.get("status") == "paused" else None
+    paused = last.get("paused") if last.get("status") == "paused" else last.get("kept_from")
     choice = (paused or {}).get("choice") or "keep"
     if not paused or choice == "discard":
         return []
     ref, base = paused["ref"], paused["base"]
     wanted = [f for f in paused["files"] if choice != "part" or f in paused.get("keep", [])]
-    if not wanted or subprocess.run(["git", "fetch", "-q", str(repo), ref], cwd=wt, capture_output=True).returncode:
+    if not wanted:
+        return []
+    if subprocess.run(["git", "fetch", "-q", str(repo), ref], cwd=wt, capture_output=True).returncode:
+        fc_core.say(f"{meta['id']} kept    nothing; the ref {ref} could not be fetched")
         return []
     kept, dropped = [], []
     for f in wanted:
