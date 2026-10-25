@@ -2266,6 +2266,46 @@ class UserDocsShaping(unittest.TestCase):
         self.assertNotRegex(read("docs/herdr.md"), r"compose architect --project <slug> --extra")
 
 
+class ReconcileFlow(unittest.TestCase):
+    FRONT = ("---\ndescription: Reconcile a messy Linear project - sort every open ticket into keep, cancel, or verify, and apply it on your go\n"
+             'argument-hint: "<Linear project link>"\nallowed-tools: Bash(compose:*), Bash(herdr:*), Bash(trail:*)\n---\n')
+    LINES = (
+        "### 0k. Reconcile an existing project",
+        "A reconcile is the one-time cleanup of a messy Linear project: every open ticket ends up kept, canceled, merged into the ticket it joins, or left for the product owner to verify.",
+        "It never fixes build order or blockers, and a missing design, PRD, or delivery plan is not its job: say so in the report and leave it to planning.",
+        "Research first, in parallel, with one helper per source: the code (the trunk and every unmerged `compose/*` branch), the designs, and Linear (every open ticket from `compose reconcile list`, its body, and the project's documents).",
+        "Write what they found to a Linear document titled `<project name>: reconcile research <date>`: what the product is, what is built, designed, and planned, the contradictions, and the tickets that look stale.",
+        "Sort with the product owner one question at a time, a group of tickets per question; a ticket a recorded decision already settles is your call, named with that decision.",
+        "Write the sheet and its reason files outside the repo, then run `compose reconcile check --file <sheet>` until it passes.",
+        'Write the proposal with `compose reconcile show | compose linear doc create --title "<project name>: reconcile <date>"`, give the product owner its link and the counts, and ask for their go.',
+        'On their go, run `compose reconcile apply --go "<their words>"`; report every skipped or FAILED line as it is, and run apply again for the failed ones.',
+        "Never delete or re-parent a ticket: a ticket that belongs elsewhere goes in the report for the product owner.",
+        'Then run `compose reconcile notices` and send each live team lead its lines with `herdr agent prompt <slug>-orchestrator "<message>"`.',
+        "The message asks it to stop work on what was canceled and wind down the teammates on it, save what is worth keeping under the main checkout's `.compose/<slug>`, update its plan and Decisions so far, merge nothing, delete no branch, worktree, or ticket, cancel no ticket itself, and report back what it changed and what is worth salvaging.",
+        "Under away or yolo, research and the sheet go ahead, and the apply waits for the product owner.",
+    )
+
+    def test_command_file(self):
+        text = read("commands/reconcile.md")
+        self.assertTrue(text.startswith(self.FRONT))
+        body = text[len(self.FRONT):].splitlines()
+        self.assertIn("You are the engineering manager for `$ARGUMENTS`.", body)
+        self.assertIn("Follow sections/0k.md from its first step.", body)
+
+    def test_section_lines_appear_once(self):
+        lines = read("sections/0k.md").splitlines()
+        self.assertEqual(lines[0], self.LINES[0])
+        for want in self.LINES:
+            self.assertEqual(lines.count(want), 1, want)
+
+    def test_plain_dashes_and_one_sentence_per_line(self):
+        for rel in ("sections/0k.md", "commands/reconcile.md"):
+            for line in read(rel).splitlines():
+                self.assertNotIn("\u2014", line)
+                if not line.startswith(("#", "---", "description:", "argument-hint:", "allowed-tools:", "- ", "  ")):
+                    self.assertNotRegex(line, r"[.!?] [A-Z]", line)
+
+
 if __name__ == "__main__":
     unittest.main()
 
