@@ -6,6 +6,7 @@ inline_styles
 sub_id
 renamed
 restore_hidden
+mark_instance_contents
 self_contained
 TREE_CHUNK_CHARS
 hard_split
