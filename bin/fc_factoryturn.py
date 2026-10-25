@@ -1,7 +1,7 @@
 """The build loop's decision step: what is in flight, and which ready stories to start next."""
 import json, os, re, subprocess, sys
 from pathlib import Path
-import fc_core, fc_herdr, fc_plan, fc_readiness, fc_reconcile, fc_tasks
+import fc_config, fc_core, fc_herdr, fc_plan, fc_readiness, fc_reconcile, fc_tasks
 
 JUDGE_LIMIT = 6
 OPEN = ("todo", "backlog")
@@ -75,6 +75,7 @@ def pick(entries, plan, state, free, judge):
         out["offer"] = candidate
     return out
 
+CLI_TIMEOUT = 1800  # crew start waits while the machine is loaded
 LEAD_READS = ("SKILL.md, sections/0h.md, sections/0a.md, sections/0e.md, sections/0f.md, sections/0g.md, sections/4.md, sections/5.md, "
               "sections/6.md, sections/6a.md, sections/7.md, sections/8.md and ~/.claude/skills/herdr/SKILL.md")
 HOW = {"build": "Its tasks are cut: run them through the 3b gate.",
@@ -100,6 +101,16 @@ def slug_for(title, taken):
     while slug in taken:
         slug, n = f"{base}-{n}", n + 1
     return slug
+
+class _Taken:
+    """Names `slug_for` must not make: the repo's projects, and any leftover branch or sibling worktree folder `init` would trip on."""
+    def __init__(self, repo, names):
+        self.repo, self.names = Path(repo), set(names)
+        self.prefix = fc_config.settings(fc_config.read_config())[1].get("branch_prefix", "compose/")
+
+    def __contains__(self, slug):
+        return (slug in self.names or (self.repo.parent / f"compose-{slug}").exists()
+                or fc_core.sh(["git", "rev-parse", "--verify", "-q", self.prefix + slug], self.repo, check=False).returncode == 0)
 
 def _linear(proj):
     try:
@@ -128,8 +139,11 @@ def after_project(repo, plan, feature):
 def compose_cli(args, stdin=None):
     """Run one compose command as the engineering manager; its stdout, or RuntimeError with its stderr."""
     env = {k: v for k, v in os.environ.items() if k != "COMPOSE_ROLE"}
-    p = subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "compose.py"), *map(str, args)], input=stdin,
-                       capture_output=True, text=True, env=env)
+    try:
+        p = subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "compose.py"), *map(str, args)], input=stdin,
+                           stdin=None if stdin is not None else subprocess.DEVNULL, capture_output=True, text=True, env=env, timeout=CLI_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"compose {args[0]} did not finish in {CLI_TIMEOUT // 60} minutes")
     if p.returncode:
         raise RuntimeError((p.stderr or p.stdout).strip() or f"compose {args[0]} exited {p.returncode}")
     return p.stdout
@@ -138,30 +152,42 @@ def prompt_lead(name, text):
     """Send a prompt to a live team lead; whether herdr took it."""
     return fc_herdr.herdr("agent", "prompt", name, text) is not None
 
-def dispatch(repo, plan, entry, kind, state, now):
-    """Hand a ready story to its feature's team lead, making the project and starting the lead when missing. Returns the event line."""
-    feature, story = entry["feature"], entry["id"]
-    title = (plan["features"].get(feature) or {}).get("title") or feature
-    found = project_for(repo, feature)
-    if not found:
-        slug = slug_for(title, set(fc_core.all_projects(Path(repo))))
-        after = after_project(repo, plan, feature)
-        compose_cli(["init", "--repo", str(repo), "--project", slug] + (["--after", after] if after else []))
-        found = project_for(repo, feature) or next(((s, Path(w), Path(p)) for s, (w, p) in fc_core.all_projects(Path(repo)).items() if s == slug), None)
-        if not found:
-            raise RuntimeError(f"compose init made no project {slug}")
-        fc_core.atomic_write(found[2] / "linear.json", json.dumps({"feature": feature, "stories": [story]}, indent=2) + "\n")
-    slug, wt, proj = found
+def _add_story(proj, story):
     meta = _linear(proj)
     if isinstance(meta.get("stories"), list) and story not in meta["stories"]:
         meta["stories"].append(story)
         fc_core.atomic_write(proj / "linear.json", json.dumps(meta, indent=2) + "\n")
+
+def _new_project(repo, plan, feature, title, story):
+    """The feature's project as (slug, worktree, project dir): an `init` that died before linking is taken up, else a new one is made."""
+    projects = fc_core.all_projects(Path(repo))
+    slug = slug_for(title, set())
+    if slug in projects and not _linear(projects[slug][1]).get("feature"):
+        wt, proj = projects[slug]
+    else:
+        slug = slug_for(title, _Taken(repo, projects))
+        after = after_project(repo, plan, feature)
+        compose_cli(["init", "--repo", str(repo), "--project", slug] + (["--after", after] if after else []))
+        got = fc_core.all_projects(Path(repo)).get(slug)
+        if not got:
+            raise RuntimeError(f"compose init made no project {slug}")
+        wt, proj = got
+    fc_core.atomic_write(Path(proj) / "linear.json", json.dumps({"feature": feature, "stories": [story]}, indent=2) + "\n")
+    return slug, Path(wt), Path(proj)
+
+def dispatch(repo, plan, entry, kind, state, now):
+    """Hand a ready story to its feature's team lead, making the project and starting the lead when missing. Returns the event line."""
+    feature, story = entry["feature"], entry["id"]
+    title = (plan["features"].get(feature) or {}).get("title") or feature
+    slug, wt, proj = project_for(repo, feature) or _new_project(repo, plan, feature, title, story)
     prompt = lead_prompt(story, feature, title, kind)
     lead = fc_reconcile.live_leads(repo).get(slug)
     if lead:
         if not prompt_lead(lead, prompt):
             raise RuntimeError(f"could not prompt {lead}")
+        _add_story(proj, story)
     else:
+        _add_story(proj, story)  # a new lead reads its scope at start
         compose_cli(["crew", "start", "--repo", str(wt), "--project", slug, "--role", "orchestrator", "--title", "orchestrator", "--brief", "-"],
                     stdin=lead_brief(slug, wt, feature, prompt))
     state["dispatched"][story] = {"feature": feature, "project": slug, "kind": kind, "at": now}

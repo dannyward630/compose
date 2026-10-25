@@ -187,6 +187,48 @@ class Dispatch(unittest.TestCase):
             ft.dispatch(self.repo, self.plan, entry("NEB-10", "NEB-9"), "build", self.state, 100.0)
         self.assertEqual(self.state["dispatched"], {})
 
+    def test_a_failed_prompt_to_a_live_lead_records_nothing_and_adds_no_story(self):
+        self.make_project("sign-in", {"feature": "NEB-9", "stories": ["NEB-10"]}); self.leads["sign-in"] = "sign-in-orchestrator"
+        self.prompt.return_value = False
+        with self.assertRaises(RuntimeError):
+            ft.dispatch(self.repo, self.plan, entry("NEB-11", "NEB-9"), "build", self.state, 100.0)
+        self.assertEqual((self.state["dispatched"], json.loads((self.proj / "linear.json").read_text())["stories"]), ({}, ["NEB-10"]))
+
+    def test_the_turn_after_a_failed_start_retries_with_only_crew_start(self):
+        real = self.cli.side_effect
+        def boom(args, stdin=None):
+            if args[0] == "crew":
+                raise RuntimeError("herdr is not running")
+            return real(args, stdin)
+        self.cli.side_effect = boom
+        with self.assertRaises(RuntimeError):
+            ft.dispatch(self.repo, self.plan, entry("NEB-10", "NEB-9"), "build", self.state, 100.0)
+        self.cli.reset_mock(); self.cli.side_effect = real
+        ft.dispatch(self.repo, self.plan, entry("NEB-10", "NEB-9"), "build", self.state, 101.0)
+        self.assertEqual([c.args[0][0] for c in self.cli.call_args_list], ["crew"])
+        self.assertEqual(self.state["dispatched"]["NEB-10"]["at"], 101.0)
+
+    def test_a_live_lead_with_a_long_slug_is_prompted_not_started_again(self):
+        self.plan["features"]["NEB-9"]["title"] = "Onboarding checklist for teams"
+        self.make_project("onboarding-checklist-for", {"feature": "NEB-9"}); self.leads["onboarding-checklist-for"] = "onboarding-checklis-orchestrator"
+        ft.dispatch(self.repo, self.plan, entry("NEB-11", "NEB-9"), "build", self.state, 100.0)
+        self.cli.assert_not_called()
+        self.assertEqual(self.prompt.call_args.args[0], "onboarding-checklis-orchestrator")
+
+    def test_a_project_init_made_but_never_linked_is_taken_up_not_numbered(self):
+        self.make_project("sign-in", {}); (self.proj / "linear.json").unlink()
+        ft.dispatch(self.repo, self.plan, entry("NEB-10", "NEB-9"), "build", self.state, 100.0)
+        self.assertEqual([c.args[0][0] for c in self.cli.call_args_list], ["crew"])
+        self.assertEqual(json.loads((self.proj / "linear.json").read_text()), {"feature": "NEB-9", "stories": ["NEB-10"]})
+
+    def test_a_leftover_sibling_folder_or_branch_makes_a_slug_taken(self):
+        (self.repo.parent / "compose-sign-in").mkdir()
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "branch", "compose/sign-in-2"], check=True)
+        ft.dispatch(self.repo, self.plan, entry("NEB-10", "NEB-9"), "build", self.state, 100.0)
+        self.assertEqual(self.cli.call_args_list[0].args[0][-1], "sign-in-3")
+
     def test_slugs_are_short_kebab_and_never_taken(self):
         self.assertEqual(ft.slug_for("Sign in with Google, Apple, and email", set()), "sign-in-with-google")
         self.assertEqual(ft.slug_for("Sign in", {"sign-in"}), "sign-in-2")

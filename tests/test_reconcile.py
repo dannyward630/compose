@@ -294,6 +294,16 @@ class Reconcile(unittest.TestCase):
         agents = [{"name": f"{n}-orchestrator", "workspace_id": f"w-{n}"} for n in live]
         p = mock.patch.object(fc.fc_herdr, "live_agents", return_value=agents); p.start(); self.addCleanup(p.stop)
 
+    def test_live_leads_find_a_cut_lead_name_and_return_the_numbered_agent(self):
+        for slug, rec in (("onboarding-checklist-for", {"name": "onboarding-checklis-orchestrator", "space": "w1"}),
+                          ("rec", {"name": "rec-orchestrator", "agent": "rec-orchestrator-2", "space": "w2"})):
+            crew = self.project_dir(slug) / "results" / "crew"; crew.mkdir(parents=True, exist_ok=True)
+            (self.project_dir(slug) / "linear.json").write_text(json.dumps({"feature": "NEB-3"}))
+            (crew / f"{rec['name']}.json").write_text(json.dumps(rec))
+        agents = [{"name": "onboarding-checklis-orchestrator", "workspace_id": "w1"}, {"name": "rec-orchestrator-2", "workspace_id": "w2"}]
+        with mock.patch.object(fc.fc_herdr, "live_agents", return_value=agents):
+            self.assertEqual(fc.fc_reconcile.live_leads(self.repo), {"onboarding-checklist-for": "onboarding-checklis-orchestrator", "rec": "rec-orchestrator-2"})
+
     def test_notices_name_each_touched_project_and_whether_its_team_lead_is_live(self):
         self.assertEqual(self.fails("notices")[1], 'nothing applied yet: compose reconcile apply --go "<their words>" first')
         self.checked(extra=1)
