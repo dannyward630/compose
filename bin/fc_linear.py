@@ -217,16 +217,16 @@ def linear_note(meta, body):
 LINEAR_BLOCKERS = "query($id: String!) { issue(id: $id) { inverseRelations { nodes { id type issue { id identifier } } } } }"
 
 def linear_blocked_by(issue, want):
-    """Make exactly the issues in `want` (identifiers) block `issue`."""
+    """Make exactly the issues in `want` (identifiers) block `issue`: creates first, then deletes, so a failed create never leaves it under-blocked."""
     rels = [r for r in linear_gql(LINEAR_BLOCKERS, {"id": issue["id"]})["issue"]["inverseRelations"]["nodes"] if r["type"] == "blocks"]
     have = {r["issue"]["identifier"]: r["id"] for r in rels}
-    for ident, rid in have.items():
-        if ident not in want:
-            linear_gql("mutation($id: String!) { issueRelationDelete(id: $id) { success } }", {"id": rid})
     for ident in want:
         if ident not in have:
             linear_gql("mutation($a: String!, $b: String!) { issueRelationCreate(input: {issueId: $a, relatedIssueId: $b, type: blocks}) { success } }",
                        {"a": linear_issue(ident)["id"], "b": issue["id"]})
+    for ident, rid in have.items():
+        if ident not in want:
+            linear_gql("mutation($id: String!) { issueRelationDelete(id: $id) { success } }", {"id": rid})
 
 def linear_restore(ident, fields):
     """Put an issue's title, description, state, and blockers back as `fields` names them."""
@@ -387,7 +387,8 @@ def open_questions(description):
     return [i for i in items if i.strip().rstrip(".").lower() != "none"]
 
 LINEAR_READY_TREE = """query($id: String!) { issue(id: $id) { team { labels { nodes { id name } } }
-  children { nodes { ...ReadyNode } } parent { children { nodes { ...ReadyNode } } } } }
+  children { nodes { ...ReadyNode } } parent { children { nodes { ...ReadyNode } } }
+  inverseRelations(first: 50) { nodes { type issue { identifier state { name } labels { nodes { name } } } } } } }
 fragment ReadyNode on Issue { id identifier title description state { name } labels { nodes { id name } } children { nodes { state { name } } }
   inverseRelations(first: 250) { nodes { type issue { identifier state { name } labels { nodes { name } } } } } }"""
 
@@ -395,18 +396,20 @@ def linear_mark_ready(feature):
     """Set the team's Ready label on the feature's children that can start now and take it off the rest, the same for the
     epic's children when the feature has one; one read, then one update per issue whose labels change. A story with no task
     that is not Canceled has nothing to start, so it is not ready; a feature needs no story. Returns the ready issues, the
-    feature's children first. An issue with open questions waits."""
+    feature's children first. No story is ready while a feature that blocks this one is not built yet. An issue with open questions waits."""
     tree = linear_gql(LINEAR_READY_TREE, {"id": feature})["issue"]
     ready_label = next((l["id"] for l in tree["team"]["labels"]["nodes"] if l["name"].lower() == "ready"), None)
     if not ready_label:
         raise RuntimeError("team has no label 'Ready'; compose linear labels --create Ready makes it")
     update = "mutation($id: String!, $labels: [String!]!) { issueUpdate(id: $id, input: {labelIds: $labels}) { success } }"
     out = []
+    waiting = any(r["type"] == "blocks" and not fc_plan.base_built(r["issue"]["state"]["name"] or "", [l["name"] for l in r["issue"]["labels"]["nodes"]])
+                  for r in tree["inverseRelations"]["nodes"])
     groups = [(tree["children"]["nodes"], True), *([(tree["parent"]["children"]["nodes"], False)] if tree["parent"] else [])]
     for group, stories in groups:
         cut = {n["identifier"] for n in group if any((c["state"]["name"] or "").lower() != "canceled" for c in n["children"]["nodes"])}
         asking = {n["identifier"] for n in group if open_questions(n.get("description"))}
-        ready = {i for i in ready_ids(group) if (i in cut or not stories) and i not in asking}
+        ready = {i for i in ready_ids(group) if (i in cut or not stories) and i not in asking and not (stories and waiting)}
         for n in group:
             have = [l["id"] for l in n["labels"]["nodes"]]
             if n["identifier"] in ready:

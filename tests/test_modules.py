@@ -113,6 +113,10 @@ class ModuleChecks:
         self.assertEqual(bad_refs(entry), [])
 
 
+class FcDelivery(ModuleChecks, unittest.TestCase):
+    module = "fc_delivery"
+
+
 class FcConfig(ModuleChecks, unittest.TestCase):
     module = "fc_config"
 

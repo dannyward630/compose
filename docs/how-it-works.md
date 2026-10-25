@@ -105,6 +105,8 @@ Handed a story, the planner writes that story's tasks only.
 Handed a task, it lints and re-splits it, and that task is dispatched alone.
 Like the team lead, the planner's tab is denied edits, so it plans and never writes code.
 
+One product delivery plan in Linear sets the order across features, in parallel tracks; `compose delivery reconcile` makes Linear follow it and proposes anything destructive.
+
 You can also start it yourself from the engineering manager with `/compose:planner <issue or Linear project link>`.
 Its model is the `planner` entry under `models.crew`, as [workspaces.md](workspaces.md#crew-models) describes.
 
