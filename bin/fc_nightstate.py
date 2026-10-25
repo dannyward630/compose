@@ -1,6 +1,6 @@
 """Night mode's record: its limits (an end time and a dollar budget), what the night has spent, the cap that drops to zero when it drains, and its notes."""
 from __future__ import annotations
-import json, subprocess, sys, time
+import json, math, subprocess, sys, time
 from pathlib import Path
 
 import fc_core, fc_config, fc_factorystate
@@ -25,7 +25,8 @@ def night_spend(repo, since) -> float:
         for path in Path(proj, "results").glob("[0-9][0-9][0-9].json"):
             try:
                 if path.stat().st_mtime >= since:
-                    total += float(json.loads(path.read_text()).get("cost") or 0)
+                    cost = float(json.loads(path.read_text()).get("cost") or 0)
+                    total += cost if math.isfinite(cost) else 0.0
             except (OSError, ValueError, TypeError, AttributeError):
                 continue
     return total

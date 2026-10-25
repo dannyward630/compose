@@ -69,6 +69,8 @@ class Limits(unittest.TestCase):
         self.make_proj("sign-in"); self.make_proj("billing")
         self.result("sign-in", "001", 0.40, mtime=50.0); self.result("sign-in", "002", 1.25, mtime=150.0); self.result("billing", "001", 0.75, mtime=200.0)
         self.assertAlmostEqual(ns.night_spend(self.repo, 100.0), 2.0)
+        self.result("billing", "002", "nan", mtime=300.0); self.result("billing", "003", "inf", mtime=300.0)
+        self.assertAlmostEqual(ns.night_spend(self.repo, 100.0), 2.0)  # a cost that is not a number of dollars counts 0, never disables the budget
 
     def test_the_night_drains_at_morning_or_at_the_budget_and_the_cap_follows(self):
         n = ns.new_night(0.0, 1000.0, 5.0, None)
