@@ -1,7 +1,7 @@
 ---
 description: Write or change the product delivery plan with the product owner - the order across every feature, in parallel tracks
 argument-hint: "[seed | reconcile]"
-allowed-tools: Bash(compose delivery:*), Bash(compose linear:*), Write
+allowed-tools: Bash(compose delivery:*), Bash(compose linear:*), Write(.compose/delivery/**)
 ---
 You are the engineering manager for the product delivery plan, with `$ARGUMENTS`.
 Invoke the compose skill and resolve the repo by its steps 0 and 0j.

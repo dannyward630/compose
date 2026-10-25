@@ -2271,6 +2271,7 @@ ZERO_P = [
     "When there is none, start with `compose delivery seed`: it lists the open features, their own delivery plans, and a guess at the tracks from the blocks relations Linear holds today.",
     "Shape it with the product owner as sections/0b.md shapes anything: one question at a time, the guess played back as a guess, and every track settled in their words.",
     "Write the tracks with `compose delivery tracks --file <path> --quote \"<their words>\"`; it refuses without their words, under away and yolo too.",
+    "Put both files under `.compose/delivery/` in the repo, the one place this command writes without asking.",
     "The delivery plan wins: `compose delivery reconcile` fixes the blocks relations between plan features and the Ready labels, and only proposes what would cancel, delete, or re-parent a ticket.",
     "Bring every proposed fix to the product owner with its reason; never cancel, delete, or re-parent a ticket for the plan without their yes.",
     "When a re-plan adds, drops, or reorders features, play the new tracks back and write them again.",
@@ -2307,7 +2308,7 @@ class ProductDeliveryPlan(unittest.TestCase):
         head = text.split("---\n", 2)[1].splitlines()
         self.assertEqual(head, ["description: Write or change the product delivery plan with the product owner - the order across every feature, in parallel tracks",
                                 'argument-hint: "[seed | reconcile]"',
-                                "allowed-tools: Bash(compose delivery:*), Bash(compose linear:*), Write"])  # Write: the --file for tracks and Why this order
+                                "allowed-tools: Bash(compose delivery:*), Bash(compose linear:*), Write(.compose/delivery/**)"])  # Write: the --file for tracks and Why this order, and nothing else
         body = self.body("commands/delivery.md")
         for line in ("Follow sections/0p.md.", "In this session, never plan stories or cut tasks."):
             self.assertEqual(body.count(line), 1, line)
