@@ -154,6 +154,27 @@ class FigmaTree(unittest.TestCase):
         self.assertEqual(fetch.call_args.kwargs, {"node": "3:4", "depth": 3})
         self.assertIn("001.tree.txt", out)
 
+    def test_every_node_inside_an_instance_is_marked_as_part_of_it(self):
+        """A judge reading `built only from instances` took an instance's own text, icon, and fill for hand-drawn nodes: the
+        tree must say which nodes are an instance's contents, on each node, since a chunk holds a node without its ancestors."""
+        doc = {"metadata": {}, "nodes": [{"id": "1:2", "name": "Light", "type": "FRAME", "children": [
+            {"id": "5:1", "name": "Card", "type": "INSTANCE", "componentId": "9:9", "children": [
+                {"id": "I5:1;7:1", "type": "TEXT", "text": "Walk"},
+                {"id": "I5:1;7:2", "name": "Pill", "type": "INSTANCE", "children": [{"id": "I5:1;7:2;8:1", "type": "RECTANGLE"}]}]},
+            {"id": "1:3", "type": "RECTANGLE"}]}]}
+        with mock.patch.object(fc.fc_figma, "framelink_fetch", side_effect=lambda key, node=None, depth=None: json.dumps(doc)):
+            self.tree(node="1:2")
+        saved = json.loads((self.proj / "results" / "001.tree.txt").read_text().split("\n", 1)[1])
+        light = saved["nodes"][0]
+        card, loose = light["children"]
+        text, pill = card["children"]
+        self.assertEqual([n.get("inInstance") for n in (light, card, loose)], [None, None, None])
+        self.assertEqual([n.get("inInstance") for n in (text, pill, pill["children"][0])], ["5:1", "5:1", "I5:1;7:2"])
+
+    def test_the_judge_is_told_an_instances_contents_are_not_hand_drawn(self):
+        for rules in (fc.fc_figma.TREE_READING, fc.fc_figma.CONFIRM):
+            self.assertIn("inInstance", rules)
+
     def test_refuses_a_missing_id_node_non_design_task_and_a_failed_fetch(self):
         for kw, msg in ((dict(only=None), "needs --only"), (dict(node=None), "needs --only"), (dict(only="002"), "002 is not a design task")):
             with self.assertRaises(SystemExit) as e:
