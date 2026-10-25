@@ -30,6 +30,7 @@ payment_halt
 lenient_json
 fast_env
 fast_json
+parse_reply
 CUT_RETRY
 fast_json_whole
 EmptyReply

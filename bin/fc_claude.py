@@ -1,4 +1,4 @@
-import json, os
+import json, os, tempfile
 from pathlib import Path
 import fc_mcp, fc_core, fc_proc, fc_readguard
 
@@ -68,6 +68,24 @@ def claude_once(cwd, prompt, timeout=900, model=None, tools="Read,Edit,Write,Bas
     return None, str(out.get("result", ""))[-1500:], out.get("num_turns", 0), {"tokens_in": tokens_in, "tokens_out": usage.get("output_tokens", 0),
                                                                                 "cost": 0.0, "reference_cost": out.get("total_cost_usd")}
 
+def claude_json(system, user, model, timeout=300):
+    """The reply text of one tool-less Claude Code call on the subscription, for a caller that wants JSON back: `system` replaces
+    Claude Code's own system prompt and `user` goes in on stdin. --safe-mode leaves out the user's CLAUDE.md, skills, plugins, hooks
+    and MCP servers, and an empty folder means no repo's instructions are read either."""
+    with tempfile.TemporaryDirectory() as cwd:
+        cmd = ["claude", "-p", "--safe-mode", "--tools", "", "--system-prompt", system, "--output-format", "json", "--no-session-persistence",
+               "--model", claude_id(model) or os.environ.get("COMPOSE_CLAUDE_MODEL", "claude-sonnet-5-5"), "--settings", NO_ATTRIBUTION]
+        p = fc_proc.run(cmd, cwd=cwd, env=headless_env(), timeout=timeout, input=user)
+    try:
+        out = json.loads(p.stdout)
+    except json.JSONDecodeError:
+        out = {}
+    if not out or out.get("is_error"):
+        raise RuntimeError(f"claude -p error: {str(out.get('result') or p.stderr or p.stdout)[:300]}")
+    usage = out.get("usage", {})
+    tokens_in = usage.get("input_tokens", 0) + usage.get("cache_read_input_tokens", 0) + usage.get("cache_creation_input_tokens", 0)
+    fc_core.LEDGER.add("claude-subscription", tokens_in, usage.get("output_tokens", 0), 0.0)
+    return str(out.get("result") or "")
 
 def claude_trusted(path):
     """Whether Claude Code has accepted its folder-trust dialog for `path` (None when it cannot tell), by Claude Code's own rule:

@@ -28,6 +28,9 @@ FALLBACK_MODEL = None
 FALLBACK_AFTER = 2
 # Reads a failed test run and writes the implementer's short fix brief, in Claude Code with read-only tools. None sends the raw tail alone.
 TEST_READER = "claude:claude-haiku-5-5"
+# Reviews a diff in verify and `compose review`, and confirms each finding: `models.review` in the config. A `claude:<id>` runs
+# Claude Code on the subscription, any other id the OpenRouter fast-model endpoint. None keeps the .env's TEXT_MODEL.
+REVIEW_MODEL = None
 JEV_DIR = Path(__file__).resolve().parent.parent / "jev"  # the browser agent verify's e2e cases drive: its own uv project
 # Harness-reported cost is wrong when a request is pinned to a specific host: OpenCode prices by OpenRouter's catalog default, not
 # the pinned provider's rate. These override the reported cost (dollars per million input, output) for the models we pin. The claude:
@@ -38,7 +41,7 @@ BUILTIN_PRICES = {"openrouter/openai/gpt-oss-120b": (0.35, 0.75), "openrouter-fa
                   "claude:claude-haiku-5-5": (0.10, 0.50, 0.125, 0.01), "claude:claude-fable-5-1": (10, 50, 12.50, 0.25)}
 PRICES = dict(BUILTIN_PRICES)
 CONFIG_PATH = Path(os.environ.get("COMPOSE_CONFIG", Path.home() / ".compose" / "config.json"))
-ENV_FILE = CONFIG_PATH.parent / ".env"  # TEXT_MODEL* (Mercury review, jev's text helper) and TYPESAFE_MODEL; keys live in auth.json; the process env wins
+ENV_FILE = CONFIG_PATH.parent / ".env"  # TEXT_MODEL* (the fast model: review unless models.review, jev's text helper) and TYPESAFE_MODEL; keys live in auth.json; the process env wins
 AUTH_PATH = CONFIG_PATH.parent / "auth.json"  # every key: see fc_auth; mode 600 in a 700 directory
 OPENROUTER_KEY = None  # the active workspace's key; None leaves each harness on its own auth store
 MAX_DIFF_LINES = 350          # per task branch, added plus deleted, against its base; a reviewer reads one layer at a time
@@ -143,8 +146,8 @@ def settings(cfg, harness=None):
 
 def apply_config(move=True, harness=None):
     """Point models, keys, and env at the active workspace. Its key wins over the shell and the jev .env, and every
-    OpenRouter caller (pi, OpenCode, the Mercury review, jev's e2e text helper) bills to it."""
-    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL, CLAUDE_PARALLEL, LOAD, PROVIDERS, TIERS, PRICES, HARNESS
+    OpenRouter caller (pi, OpenCode, the fast-model review, jev's e2e text helper) bills to it."""
+    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, REVIEW_MODEL, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL, CLAUDE_PARALLEL, LOAD, PROVIDERS, TIERS, PRICES, HARNESS
     if move:
         for line in fc_auth.move_keys(CONFIG_PATH, ENV_FILE, AUTH_PATH):  # old keys leave config.json and .env first, stdout stays clean
             print(line, file=sys.stderr)
@@ -209,6 +212,7 @@ def apply_config(move=True, harness=None):
     FALLBACK_MODEL = models.get("fallback", FALLBACK_MODEL)
     FALLBACK_AFTER = int(models.get("fallback_after", FALLBACK_AFTER))
     TEST_READER = models.get("test_reader", TEST_READER)
+    REVIEW_MODEL = models.get("review", REVIEW_MODEL)
     if "fix" in models:
         os.environ["COMPOSE_FIX_MODEL"] = models["fix"]
     for m in [m for m in (models.get("implementer"), models.get("fallback"), models.get("fix"), models.get("test_reader"), *CREW_MODELS.values(),

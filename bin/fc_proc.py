@@ -13,17 +13,17 @@ HOOKS = {}  # name -> zero-argument callable stop() calls: herdr agents register
 RUNNING = set()  # pids of the groups `run` is waiting on
 
 
-def run(cmd, cwd=None, env=None, timeout=None):
+def run(cmd, cwd=None, env=None, timeout=None, input=None):
     """Like subprocess.run(cmd, capture_output=True, text=True, stdin=DEVNULL), but in a session of its own and tracked in
-    RUNNING while it runs. Returns a subprocess.CompletedProcess; raises Stopped after the stop, TimeoutExpired past `timeout`."""
+    RUNNING while it runs. `input` goes in on stdin instead. Returns a subprocess.CompletedProcess; raises Stopped after the stop, TimeoutExpired past `timeout`."""
     if STOP.is_set():
         raise Stopped
-    p = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    p = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL if input is None else subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                          text=True, start_new_session=True)
     RUNNING.add(p.pid)
     try:
         try:
-            out, err = p.communicate(timeout=timeout)
+            out, err = p.communicate(input, timeout=timeout)
         except subprocess.TimeoutExpired as e:
             kill_group(p.pid)
             e.stdout, e.stderr = p.communicate()  # what the command printed before it was killed

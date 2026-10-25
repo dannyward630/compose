@@ -7,5 +7,6 @@ crew_settings
 REPO_INSTRUCTIONS
 repo_instructions
 claude_once
+claude_json
 claude_trusted
 untrusted

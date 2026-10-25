@@ -30,6 +30,8 @@ def llm_review(cfg, diff, plan, docs_text, tests_pass):
     """Parallel fast-model reviews, one per perspective, then a confirmation pass on each high or medium finding.
     Only confirmed findings count. Fails on any confirmed high."""
     env = {**fc_core.load_env(cfg.get("env_file", fc_config.ENV_FILE)), **os.environ}
+    if fc_config.REVIEW_MODEL:
+        env["TEXT_MODEL"] = fc_config.REVIEW_MODEL
     wanted = cfg.get("perspectives", ["correctness", "security", "spec"] + (["docs"] if docs_text else []))
     schema = ('Return JSON {"issues": [{"file": str, "line": int|null, "severity": "high|medium|low", "note": str}]}. '
               "Be concrete and terse. An empty list means clean. Never invent files not in the input. "

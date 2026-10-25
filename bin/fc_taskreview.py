@@ -1,4 +1,4 @@
-"""compose review: Mercury's review of one task's change, or of a commit range, outside the full verify."""
+"""compose review: the diff review of one task's change, or of a commit range, outside the full verify."""
 
 import json, re, sys, time
 from pathlib import Path

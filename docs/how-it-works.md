@@ -28,7 +28,7 @@ A frontier model plans and checks the work, cheap fast models write the code in 
   ┌──────────────────────────────────▼──────────────────────────────────────────────────────┐
   │ 1 checks   lint + unit tests                                                            │
   │ then, in parallel:                                                                      │
-  │ 2 review   Mercury, one call per perspective ─▶ confirm each finding (must quote code)  │
+  │ 2 review   reviewer, one call per perspective ─▶ confirm each finding (must quote code) │
   │ 3 jev      one MET / NOT_MET / UNCLEAR question per acceptance criterion                │
   │ 4 e2e      jev drives a real browser to the goal, then YOUR assert checks it            │
   │ 5 fix      confirmed findings ─▶ fix model, rerun; still failing ─▶ escalate            │
@@ -44,7 +44,7 @@ Eight roles split the decisions.
 | Designer (Claude teammate) | design stories and tasks in Figma, built by its own crew; never writes repo files or decides a product question |
 | Fast implementer (GLM 5.3 Flash in pi; any model id) | makes one test green in one session; never writes or runs tests |
 | Test reader (Claude Haiku) | reads a failed test run and writes the implementer's short fix brief; never edits or runs anything |
-| Mercury | raises review findings, then confirms or drops them |
+| reviewer (`models.review`) | raises review findings, then confirms or drops them |
 | Jev (TypeSafe) | scores acceptance criteria, drives the browser, screens settled decisions against new evidence |
 | CLI | red check, every test run, protected-file guard, timing, cost ledger |
 
@@ -210,7 +210,8 @@ Both passed every task.
 Reasoning has to be on.
 With reasoning `none`, the model plans but never edits, and `low` fixed that at about twice the cost.
 
-The reviewer is whichever model `~/.compose/.env` names as `TEXT_MODEL`, and it defaults to Mercury 2.5.
+The reviewer is the config's `models.review`, such as `claude:claude-sonnet-5-5`.
+Without it, the reviewer is whichever model `~/.compose/.env` names as `TEXT_MODEL`, which defaults to Mercury 2.5.
 You set the planner and teammate models per role in the config, as [workspaces.md](workspaces.md#crew-models) describes.
 
 These figures come from small benchmarks and one prototype.

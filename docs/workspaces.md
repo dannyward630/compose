@@ -82,7 +82,7 @@ The active workspace is merged over the top level:
 }
 ```
 
-The workspace key reaches pi, OpenCode, the Mercury review, and jev, so every OpenRouter call bills that account.
+The workspace key reaches pi, OpenCode, an OpenRouter review model, and jev, so every OpenRouter call bills that account.
 OpenRouter presets belong to an account, so create `glm-5-3-flash-fast` in each workspace's account.
 `run` and `resume` send each model one tiny prompt first.
 If an id or preset is wrong, the run stops with the provider's message.

@@ -550,15 +550,36 @@ class FixScope(unittest.TestCase):
             def fj(env, system, user, **kw):
                 if any(PERSPECTIVES[name] in system for name in answers):
                     return {"issues": []}
-                raise RuntimeError("openrouter (Mercury review): HTTP 429 Too Many Requests")
+                raise RuntimeError("openrouter (fast model): HTTP 429 Too Many Requests")
             with mock.patch.object(fc.fc_models, "fast_json", fj), mock.patch.object(fc.fc_core, "load_env", return_value={}):
                 return fc.fc_verify.fc_review.llm_review({"perspectives": ["correctness", "security"]}, "diff", "plan", "", True)
         PERSPECTIVES = fc.fc_verify.fc_review.PERSPECTIVES
         rv = review(())
         self.assertFalse(rv["pass"])
-        self.assertTrue(rv["error"].startswith("no review perspective returned a result (2 of 2 failed): RuntimeError: openrouter (Mercury review): HTTP 429"), rv["error"])
+        self.assertTrue(rv["error"].startswith("no review perspective returned a result (2 of 2 failed): RuntimeError: openrouter (fast model): HTTP 429"), rv["error"])
         rv = review(("security",))  # one answered: the other's gap is a low note, as before
         self.assertEqual((rv["pass"], "error" in rv), (True, False))
+
+    def test_a_claude_review_model_reviews_and_confirms_through_claude_code_never_openrouter(self):
+        calls = []
+        def run(cmd, cwd=None, env=None, timeout=None, input=None):
+            calls.append((cmd, cwd, env, input))
+            reply = {"requirement": "add adds", "wrong_line": "return a - b", "fixed_line": "return a + b", "proof": "", "confirmed": True} \
+                if "verifying one code-review claim" in cmd[cmd.index("--system-prompt") + 1] \
+                else {"issues": [{"file": "a.py", "line": 1, "severity": "high", "note": "adds with minus"}]}
+            return subprocess.CompletedProcess(cmd, 0, json.dumps({"result": json.dumps(reply), "usage": {"input_tokens": 9, "output_tokens": 3}}), "")
+        with mock.patch.object(fc.fc_config, "REVIEW_MODEL", "claude:claude-sonnet-x"), mock.patch.object(fc.fc_proc, "run", run), \
+                mock.patch.object(fc.fc_models, "http_json", side_effect=AssertionError("reached OpenRouter")), \
+                mock.patch.object(fc.fc_core, "load_env", return_value={"TEXT_MODEL": "inception/mercury-2.5", "TEXT_MODEL_API_KEY": "k"}):
+            rv = fc.fc_verify.fc_review.llm_review({"perspectives": ["correctness"]}, "def add(a, b): return a - b", "add adds", "", True)
+        self.assertEqual(len(calls), 2)  # the review, then the confirm of its high finding
+        self.assertEqual((rv["pass"], [i["note"] for i in rv["confirmed"]]), (False, ["adds with minus"]))
+        for cmd, cwd, env, user in calls:
+            self.assertEqual(cmd[cmd.index("--model") + 1], "claude-sonnet-x")
+            self.assertEqual((cmd[cmd.index("--tools") + 1], "--safe-mode" in cmd, "-p" in cmd), ("", True, True))
+            self.assertFalse(any(k.startswith("ANTHROPIC_") for k in env))  # it bills to the subscription
+        self.assertIn("return a - b", calls[0][3])  # the diff goes in on stdin, never on the command line
+        self.assertFalse(any("return a - b" in a for a in calls[0][0]))
 
     def test_a_review_cut_off_at_its_token_budget_is_asked_again_with_a_bigger_one(self):
         full = json.dumps({"issues": [{"file": "a.go", "severity": "low", "note": "n"}]})
@@ -704,7 +725,7 @@ class Workspaces(unittest.TestCase):
         root = Path(tempfile.mkdtemp())
         self.path, self.auth = root / "config.json", root / "auth.json"
         self.path.write_text('{"workspace": "work", "models": {"implementer": "pi:a/b", "fallback": "pi:g/h", "fallback_after": 3,'
-                             ' "test_reader": "claude:claude-haiku-x"},'
+                             ' "test_reader": "claude:claude-haiku-x", "review": "claude:claude-sonnet-x"},'
                              ' "workspaces": {"work": {}, "personal": {"models": {"fallback": null}}}}')
         self.auth.write_text(json.dumps({"workspaces": {"default": {"openrouter": "sk-or-test-d0d0", "linear": "lin-test-def"},
                                                         "work": {"openrouter": "sk-or-test-w1x2"}}, "typesafe": "ts-test"}))
@@ -713,7 +734,7 @@ class Workspaces(unittest.TestCase):
                   mock.patch.dict(os.environ, {"PATH": os.environ["PATH"], "HOME": os.environ["HOME"]}, clear=True),  # the real environment may hold real keys
                   mock.patch.object(fc.fc_config, "DEFAULT_MODEL", fc.fc_config.DEFAULT_MODEL), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", fc.fc_config.FALLBACK_MODEL),
                   mock.patch.object(fc.fc_config, "OPENROUTER_KEY", None), mock.patch.object(fc.fc_config, "LINEAR_KEY", None), mock.patch.object(fc.fc_config, "PARALLEL", None), mock.patch.object(fc.fc_config, "CLAUDE_PARALLEL", 3),
-                  mock.patch.object(fc.fc_config, "FALLBACK_AFTER", fc.fc_config.FALLBACK_AFTER), mock.patch.object(fc.fc_config, "TEST_READER", fc.fc_config.TEST_READER),
+                  mock.patch.object(fc.fc_config, "FALLBACK_AFTER", fc.fc_config.FALLBACK_AFTER), mock.patch.object(fc.fc_config, "TEST_READER", fc.fc_config.TEST_READER), mock.patch.object(fc.fc_config, "REVIEW_MODEL", None),
                   mock.patch.object(fc.fc_config, "WORKSPACE", fc.fc_config.WORKSPACE), mock.patch.object(fc.fc_config, "CREW_MODELS", fc.fc_config.CREW_MODELS),
                   mock.patch.object(fc.fc_config, "CREW_EFFORT", fc.fc_config.CREW_EFFORT), mock.patch.object(fc.fc_config, "CREW_FALLBACK", fc.fc_config.CREW_FALLBACK)):
             p.start(); self.addCleanup(p.stop)
@@ -731,7 +752,7 @@ class Workspaces(unittest.TestCase):
         self.same((fc.fc_config.apply_config(), *self.keys()), ("work", "sk-or-test-w1x2", "lin-test-def", "sk-or-test-w1x2", "sk-or-test-w1x2"))
         self.same((os.environ.get("TYPESAFE_API_KEY"), "OPENCODE_CONFIG_CONTENT" in os.environ), ("ts-test", False))  # OpenCode reads its key from a file
         self.assertEqual((fc.fc_config.DEFAULT_MODEL, fc.fc_models.fallback_for("pi:a/b")), ("pi:a/b", "pi:g/h"))
-        self.assertEqual((fc.fc_config.FALLBACK_AFTER, fc.fc_config.TEST_READER), (3, "claude:claude-haiku-x"))
+        self.assertEqual((fc.fc_config.FALLBACK_AFTER, fc.fc_config.TEST_READER, fc.fc_config.REVIEW_MODEL), (3, "claude:claude-haiku-x", "claude:claude-sonnet-x"))
         ws("personal")  # no auth.json entry of its own
         self.same((fc.fc_config.apply_config(), *self.keys()), ("personal", "sk-or-test-d0d0", "lin-test-def", "sk-or-test-d0d0", "sk-or-test-d0d0"))
 

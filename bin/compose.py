@@ -87,7 +87,7 @@ def main():
                             ("init", fc_init.cmd_init, "create .compose/<project>/ skeleton"),
                             ("run", fc_run.cmd_run, "dispatch tasks to parallel implementers (pi by default)"),
                             ("verify", fc_verify.cmd_verify, "local no-mistakes-style pipeline: checks, confirmed fast-model review, jev e2e, auto-fix loop"),
-                            ("review", fc_taskreview.cmd_review, "Mercury's diff review of one task's change (--only ids) or of a commit range (--range base..tip), recorded on the task's Linear issue"),
+                            ("review", fc_taskreview.cmd_review, "the diff review of one task's change (--only ids) or of a commit range (--range base..tip), recorded on the task's Linear issue"),
                             ("bench", fc_bench.cmd_bench, "frozen task set x models: pass rate, attempts, p50/p95 time, cost per task"),
                             ("resume", fc_run.cmd_resume, "continue a run or verify that stopped on PAYMENT REQUIRED"),
                             ("done", fc_status.cmd_done, "record tasks the team lead finished by hand: --only ids --note why"),

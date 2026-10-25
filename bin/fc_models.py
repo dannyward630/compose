@@ -416,19 +416,25 @@ def fast_env():
     return {**fc_core.load_env(fc_config.ENV_FILE), **os.environ}
 
 def fast_json(env, system, user, max_tokens=1500, timeout=90, key=None):
-    """One call to the fast text model in ~/.compose/.env (Mercury 2.5 by default) through OpenRouter. Cost is exact. `key` names
-    the field the caller needs, so the object holding it is the one read."""
+    """One call to the fast text model in ~/.compose/.env (Mercury 2.5 by default) through OpenRouter, cost exact, or to Claude Code
+    when TEXT_MODEL is a `claude:<id>` (models.review sets it for the review). `key` names the field the caller needs, so the object
+    holding it is the one read."""
+    if fc_claude.is_claude(env.get("TEXT_MODEL", "")):  # no token cap to cut it off; a whole diff takes longer than a fast model
+        return parse_reply(fc_claude.claude_json(fc_core.scrub(system), fc_core.scrub(user), env["TEXT_MODEL"], timeout=max(timeout, 300)), False, max_tokens, key)
     body = {"model": env.get("TEXT_MODEL", "inception/mercury-2.5"), "max_tokens": max_tokens, "temperature": 0,  # the same code gets the same review
             "response_format": {"type": "json_object"}, "reasoning": {"enabled": False}, "usage": {"include": True},
             "messages": [{"role": "system", "content": fc_core.scrub(system)}, {"role": "user", "content": fc_core.scrub(user)}]}
     req = urllib.request.Request(env.get("TEXT_MODEL_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/") + "/chat/completions",
                                  data=json.dumps(body).encode(),
                                  headers={"Authorization": f"Bearer {env['TEXT_MODEL_API_KEY']}", "Content-Type": "application/json"})
-    out = http_json(req, "openrouter (Mercury review)", timeout=timeout)
+    out = http_json(req, "openrouter (fast model)", timeout=timeout)
     u = out.get("usage", {})
     fc_core.LEDGER.add("openrouter", u.get("prompt_tokens", 0), u.get("completion_tokens", 0), u.get("cost"))
     choice = (out.get("choices") or [{}])[0]
-    content, cut = (choice.get("message") or {}).get("content"), choice.get("finish_reason") == "length"
+    return parse_reply((choice.get("message") or {}).get("content"), choice.get("finish_reason") == "length", max_tokens, key)
+
+def parse_reply(content, cut, max_tokens, key):
+    """The JSON object in a fast-model reply, as fast_json returns it; `cut` says the reply ran out of tokens."""
     try:
         if not content or not str(content).strip():
             raise EmptyReply("model returned an empty reply")

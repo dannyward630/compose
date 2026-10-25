@@ -75,6 +75,7 @@ Everything else you edit by hand.
 | `models.fallback` | a model id or `null` | `null` | The model a task moves to after `fallback_after` failed attempts. |
 | `models.fallback_after` | a whole number | `2` | Failed attempts on the task's own model before the fallback takes over. |
 | `models.test_reader` | a `claude:` or `codex:` model id, or `null` | `claude:claude-haiku-5-5` | Reads a failed test run and writes the fix brief. `null` sends the raw output. |
+| `models.review` | a `claude:` model id, or an OpenRouter model id | unset: the `.env`'s `TEXT_MODEL` | Reviews the diff in `verify` and `compose review`, and confirms each finding. A `claude:` id runs Claude Code on the subscription, with no tools and none of your customizations. |
 | `models.fix` | a model id | the implementer | The model of verify's fix rounds. A project's `verify.json` `fix_model` beats it. |
 | `models.crew` | a map of role to entry | none | The model of each teammate role, see [Crew models](#crew-models). |
 | `models.tiers` | a map of `cheap`, `standard`, `frontier` to a list of entries | see [Model tiers](#model-tiers-prices-and-the-frontier-budget) | The models of each tier, in order. A tier you leave out keeps its default list. |
@@ -315,7 +316,7 @@ All of these live in `~/.compose/` (the folder of `config.json`).
 |---|---|---|
 | `config.json` | This page. | Yes. |
 | `auth.json` | Every key, at mode 600 in a directory of mode 700: `{"workspaces": {"<name>": {"openrouter": ..., "linear": ..., "provider:<name>": ...}}, "typesafe": ...}`. | Through `compose workspace key`, never by hand. |
-| `.env` | `TEXT_MODEL*` and `TYPESAFE_MODEL` settings for the Mercury review and jev's text helper. The process environment wins over it. | Yes, for those settings. |
+| `.env` | `TEXT_MODEL*` and `TYPESAFE_MODEL` settings for the fast model (the review when `models.review` is unset) and jev's text helper. The process environment wins over it. | Yes, for those settings. |
 | `model-probe.json` | The day's cached crew model probes. | No. `compose models --probe` clears it. |
 | `pi-providers.js` | The pi extension generated from `providers`. | No. It is rewritten when `providers` changes. |
 | `<name>.key` | A 0600 key file for OpenCode: `openrouter.key`, or `<provider>.key` for a keyed local provider. | No. `compose` writes it. |

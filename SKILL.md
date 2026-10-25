@@ -16,7 +16,7 @@ This skill is the whole flow: when the user invokes it with a task, start at ste
 | Teammates (Claude sessions in the project's space, 0h) | Acceptance tests with the stubs and groundwork they need, escalated work, conflict fixes, docs after merge, architect questions, research; a toolsmith (briefed by `compose toolsmith`) files compose's bugs on GitHub and, on the maintainer's machine, fixes them on a branch | Plan, re-scope their brief, address the product owner except through `report` and their own pane |
 | Designer (a Claude teammate in its own pane, 0d) | Continue design work in Figma from the ticket's level: read inputs, write the design-system epic, design stories, and design tasks on Linear, start `design-NNN` builders and a `design-review` reviewer in own panes, run the gate, hand off to code | Build in Figma (builders do), write any file in the repo (Linear only), decide a product question |
 | Implementer (fast model via pi or OpenCode; inside herdr a named pi agent in own pane of the `implementers` tab) | One task issue's brief, named files, until its test passes, at most 350 changed lines, no documents added | Edit protected files, plan, touch other tasks, address the product owner |
-| `compose verify` | Checks, jev browser e2e (through `bp` for extensions), Mercury diff review | Push, open PRs, run CI |
+| `compose verify` | Checks, jev browser e2e (through `bp` for extensions), diff review | Push, open PRs, run CI |
 
 ## Workflow
 
