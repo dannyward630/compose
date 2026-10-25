@@ -32,6 +32,7 @@ TEST_READER = "claude:claude-haiku-5-5"
 # Claude Code on the subscription, any other id the OpenRouter fast-model endpoint. None keeps the .env's TEXT_MODEL.
 REVIEW_MODEL = None
 READINESS_MODEL = ("claude:claude-opus-5-5", "high")  # the stronger judge of a technical story's readiness: `models.readiness`, a claude: id or {"model", "effort"}
+NIGHT_MODEL = ("claude:claude-opus-5-5", "high")  # the overnight lead: `models.night`, a claude: id or {"model", "effort"}
 JEV_DIR = Path(__file__).resolve().parent.parent / "jev"  # the browser agent verify's e2e cases drive: its own uv project
 # Harness-reported cost is wrong when a request is pinned to a specific host: OpenCode prices by OpenRouter's catalog default, not
 # the pinned provider's rate. These override the reported cost (dollars per million input, output) for the models we pin. The claude:
@@ -57,7 +58,8 @@ CREW_MODELS = {}  # models.crew from the config: role (or default, small) -> cla
 PARALLEL = None  # `parallel` from the config; None keeps each command's own default
 CLAUDE_PARALLEL = 3  # `claude_parallel` from the config: how many Claude Code writers (run's tasks, testcrews' test writers) run at once
 LOAD = {}  # `load` from the config: the keys that move limits() off its defaults
-FACTORY_DEFAULTS = {"day_tickets": 2, "turn_seconds": 120, "offer_snooze_minutes": 60}
+FACTORY_DEFAULTS = {"day_tickets": 2, "turn_seconds": 120, "offer_snooze_minutes": 60,
+                    "night_tickets": 6, "night_until": "07:00", "night_budget": 20.0, "prep_ahead": 3}
 FACTORY = dict(FACTORY_DEFAULTS)  # `factory` from the config over FACTORY_DEFAULTS: the build loop's pace, turn length and offer snooze
 LINEAR_KEY = None  # the active workspace's Linear API key, set by apply_config; never printed or passed in argv
 WORKSPACE = "default"
@@ -149,7 +151,7 @@ def settings(cfg, harness=None):
 def apply_config(move=True, harness=None):
     """Point models, keys, and env at the active workspace. Its key wins over the shell and the jev .env, and every
     OpenRouter caller (pi, OpenCode, the fast-model review, jev's e2e text helper) bills to it."""
-    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, REVIEW_MODEL, READINESS_MODEL, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL, CLAUDE_PARALLEL, LOAD, FACTORY, PROVIDERS, TIERS, PRICES, HARNESS
+    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, REVIEW_MODEL, READINESS_MODEL, NIGHT_MODEL, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL, CLAUDE_PARALLEL, LOAD, FACTORY, PROVIDERS, TIERS, PRICES, HARNESS
     if move:
         for line in fc_auth.move_keys(CONFIG_PATH, ENV_FILE, AUTH_PATH):  # old keys leave config.json and .env first, stdout stays clean
             print(line, file=sys.stderr)
@@ -185,6 +187,13 @@ def apply_config(move=True, harness=None):
     for k, least in (("day_tickets", 1), ("turn_seconds", 10), ("offer_snooze_minutes", 1)):
         if type(FACTORY[k]) is not int or FACTORY[k] < least:
             sys.exit(f"{CONFIG_PATH}: factory.{k} must be a whole number of {least} or more, not {FACTORY[k]!r}")
+    for k, least in (("night_tickets", 1), ("prep_ahead", 0)):
+        if type(FACTORY[k]) is not int or FACTORY[k] < least:
+            sys.exit(f"{CONFIG_PATH}: factory.{k} must be a whole number of {least} or more, not {FACTORY[k]!r}")
+    if type(FACTORY["night_budget"]) not in (int, float) or FACTORY["night_budget"] < 0:
+        sys.exit(f"{CONFIG_PATH}: factory.night_budget must be a number of dollars, 0 or more, not {FACTORY['night_budget']!r}")
+    if not (isinstance(FACTORY["night_until"], str) and re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", FACTORY["night_until"])):
+        sys.exit(f"{CONFIG_PATH}: factory.night_until must be HH:MM, not {FACTORY['night_until']!r}")
     WORKSPACE = name
     HARNESS = harness
     auth = fc_auth.read_auth(AUTH_PATH)
@@ -224,6 +233,9 @@ def apply_config(move=True, harness=None):
             sys.exit(f"{CONFIG_PATH}: models.readiness must be a claude: model id")
     else:
         READINESS_MODEL = ("claude:claude-opus-5-5", "high")
+    NIGHT_MODEL = entry(models["night"]) if "night" in models else ("claude:claude-opus-5-5", "high")
+    if not (isinstance(NIGHT_MODEL[0], str) and NIGHT_MODEL[0].startswith("claude:")):
+        sys.exit(f"{CONFIG_PATH}: models.night must be a claude: model id")
     if "fix" in models:
         os.environ["COMPOSE_FIX_MODEL"] = models["fix"]
     for m in [m for m in (models.get("implementer"), models.get("fallback"), models.get("fix"), models.get("test_reader"), *CREW_MODELS.values(),

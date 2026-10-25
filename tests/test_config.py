@@ -25,7 +25,15 @@ class FactoryConfig(unittest.TestCase):
             with self.assertRaises(SystemExit) as c: self.apply(factory)
             self.assertEqual(c.exception.code, f"{fc_config.CONFIG_PATH}: {msg}")
         self.apply({"day_tickets": 3})
-        self.assertEqual(fc_config.FACTORY, {"day_tickets": 3, "turn_seconds": 120, "offer_snooze_minutes": 60})
+        self.assertEqual(fc_config.FACTORY, {**fc_config.FACTORY_DEFAULTS, "day_tickets": 3})
+
+    def test_night_keys_are_checked(self):
+        for factory, msg in (({"night_until": "7am"}, "factory.night_until must be HH:MM, not '7am'"),
+                             ({"night_budget": -1}, "factory.night_budget must be a number of dollars, 0 or more, not -1"),
+                             ({"night_tickets": 0}, "factory.night_tickets must be a whole number of 1 or more, not 0"),
+                             ({"prep_ahead": -1}, "factory.prep_ahead must be a whole number of 0 or more, not -1")):
+            with self.assertRaises(SystemExit) as c: self.apply(factory)
+            self.assertEqual(c.exception.code, f"{fc_config.CONFIG_PATH}: {msg}")
 
 
 if __name__ == "__main__":

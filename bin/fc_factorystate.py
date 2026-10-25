@@ -4,7 +4,8 @@ import copy, fcntl, json, time
 import fc_core, fc_config
 
 EMPTY = {"pid": None, "started": None, "stopped": None, "mode": "day", "day_tickets": None, "dispatched": {}, "prints": {}, "offer": None,
-         "declined_until": None, "planning": None, "out_of_order": [], "said": {}, "turns": 0, "backoff": {}, "manager_pane": None}
+         "declined_until": None, "planning": None, "out_of_order": [], "said": {}, "turns": 0, "backoff": {}, "manager_pane": None,
+         "night": None, "prep": {}}
 
 def state_path(repo):
     return fc_core.repo_link(repo).with_name("factory.json")
