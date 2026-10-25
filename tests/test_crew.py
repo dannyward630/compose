@@ -1232,11 +1232,10 @@ class RestrictedStart(unittest.TestCase):
                 self.assertFalse(any("AUTO_COMPACT" in x or x.startswith("--autocompact") for x in args))
 
     def test_briefs_name_skill_md_and_their_sections(self):
-        p, d, w = fc.fc_briefs.PLANNER_BRIEF, fc.fc_figma.DESIGNER_BRIEF, fc.fc_briefs.ARCHITECT_BRIEF
+        p, d = fc.fc_briefs.PLANNER_BRIEF, fc.fc_figma.DESIGNER_BRIEF
         self.assertTrue("Read SKILL.md and sections/1.md, 2.md, 3.md, 3b.md first." in p and "as sections/2.md says" in p and "step 2 of the" not in p)
         self.assertTrue("1. Read SKILL.md and sections/0d.md, then follow 0d." in d)
-        self.assertTrue(-1 < w.find("Read SKILL.md and sections/0b.md first.") < w.index("1. Read the map"))
-        self.assertFalse(any("invoke the compose skill" in b.lower() for b in (p, d, w)))
+        self.assertFalse(any("invoke the compose skill" in b.lower() for b in (p, d)))
 
 
 LINEAR_LINE = ("Linear is the record: read and write it with `compose linear` (get, list, create, update, comment), never a Linear MCP tool; "
@@ -1296,21 +1295,18 @@ class CardsById(unittest.TestCase):
         self.assertTrue(lines, text)
         return lines
 
-    def test_architect_and_change_wait_without_polling_linear(self):
-        for brief in (fc.fc_briefs.ARCHITECT_BRIEF, fc.fc_briefs.CHANGE_BRIEF):
-            self.assertIn("Never loop or poll `compose linear` while you wait", self.flat(brief, " 4. ", " 5. "))
+    def test_the_change_architect_waits_without_polling_linear(self):
+        self.assertIn("Never loop or poll `compose linear` while you wait", self.flat(fc.fc_briefs.CHANGE_BRIEF, " 4. ", " 5. "))
 
-    def test_architect_and_change_step_3_write_cards_then_report_one_line(self):
-        for name, brief in (("architect", fc.fc_briefs.ARCHITECT_BRIEF), ("change", fc.fc_briefs.CHANGE_BRIEF)):
-            with self.subTest(name):
-                step = self.flat(brief, " 3. ", " 4. ")
-                self.assertNotIn("the text cards in full", step)
-                self.assertIn("Not yet specified", step)  # cards land on the map first ...
-                self.assertLess(step.index("Not yet specified"), step.index("needs-user"))  # ... before the report
-                for line in self.needs_user(step):
-                    self.assertIn("cards", line)
-                    self.assertIn("recommendation", line)
-                    self.assertNotIn("in full", line)
+    def test_the_change_architects_step_3_writes_cards_then_reports_one_line(self):
+        step = self.flat(fc.fc_briefs.CHANGE_BRIEF, " 3. ", " 4. ")
+        self.assertNotIn("the text cards in full", step)
+        self.assertIn("Not yet specified", step)  # cards land on the map first ...
+        self.assertLess(step.index("Not yet specified"), step.index("needs-user"))  # ... before the report
+        for line in self.needs_user(step):
+            self.assertIn("cards", line)
+            self.assertIn("recommendation", line)
+            self.assertNotIn("in full", line)
         self.assertTrue(self.needs_user(self.flat(fc.fc_briefs.CHANGE_BRIEF, " 3. ", " 4. "))[0].startswith("change {cid}: "))
 
     def test_planner_decision_cards_and_story_proposal_report_one_line(self):
@@ -1333,7 +1329,7 @@ class CardsById(unittest.TestCase):
         self.assertIn("pins a line width or exact text, the brief holds that text verbatim", (Path(__file__).resolve().parents[1] / "sections" / "2.md").read_text())
 
     def test_answers_travel_by_card_id_and_the_line_is_forwarded_unchanged(self):
-        for name in ("ARCHITECT_BRIEF", "CHANGE_BRIEF", "PLANNER_BRIEF"):
+        for name in ("CHANGE_BRIEF", "PLANNER_BRIEF"):
             with self.subTest(name):
                 text = " ".join(getattr(fc.fc_briefs, name).split())
                 self.assertIn("card id", text)
@@ -1341,14 +1337,13 @@ class CardsById(unittest.TestCase):
 
     def test_placeholders_and_the_rest_of_the_template_stay(self):
         import string
-        fields = {"ARCHITECT_BRIEF": {"feature", "name", "page", "slug", "wt"}, "PLANNER_BRIEF": {"issue", "name", "slug", "wt"},
+        fields = {"PLANNER_BRIEF": {"issue", "name", "slug", "wt"},
                   "CHANGE_BRIEF": {"cid", "feature", "name", "page", "reflect", "slug", "why", "wt"}}
         for name, want in fields.items():
             with self.subTest(name):
                 text = getattr(fc.fc_briefs, name)
                 self.assertEqual({f for _, f, _, _ in string.Formatter().parse(text) if f}, want)  # no stray {n} or {ids}
-        for brief in (fc.fc_briefs.ARCHITECT_BRIEF, fc.fc_briefs.CHANGE_BRIEF):
-            self.assertIn("npx -y lavish-axi poll {page}", brief)  # visual cards still go through the Lavish page
+        self.assertIn("npx -y lavish-axi poll {page}", fc.fc_briefs.CHANGE_BRIEF)  # visual cards still go through the Lavish page
 
 
 LINEAR_TEXT_LINE = "Linear text: concise, readable English. Lead with the action, one idea per line, no preamble or recap."

@@ -65,27 +65,15 @@ class Groundwork(unittest.TestCase):
         self.assertIn("`compose verify --project p --prove`: each must fail only because the feature is missing, and `run` refuses", brief)
         self.assertTrue(brief.rstrip().endswith("Stub Open(dsn string) (*sql.DB, error)."))
 
-    def test_architect_brief_asks_by_text_and_opens_lavish_only_for_visual_cards(self):
-        (self.proj / "linear.json").write_text(json.dumps({"feature": "NEB-9"}))
-        out = io.StringIO()
-        with self.patched()[0], self.patched()[1], mock.patch("sys.stdout", out):
-            fc.fc_briefs.cmd_architect(SimpleNamespace(repo=str(self.repo), project="p", extra="Spec: README.md"))
-        brief = out.getvalue()
-        page = str(self.proj / "lavish" / "architect.html")
-        self.assertIn("NEB-9", brief)
-        self.assertIn("Words are text (the default)", brief)
-        self.assertIn("A visual card is never asked as text", brief)
-        self.assertIn("Visual cards go on the map like every card, and on one page as well", brief)
-        self.assertIn("needs-user", brief)
-        self.assertIn("before any poll", brief)
-        self.assertIn('data-lavish-annotate="off"', brief)
-        self.assertIn("data-lavish-question", brief)
-        self.assertIn("Answers arrive in the poll's `text`", brief)
-        self.assertIn('answer: [{question, answer}, ...]', brief)
-        self.assertIn("run it again at once", brief)
-        self.assertIn(f"npx -y lavish-axi poll {page}", brief)
-        self.assertIn("Decisions so far", brief)
-        self.assertTrue(brief.rstrip().endswith("Spec: README.md"))
+    def test_the_architect_is_only_the_change_of_course_one_and_shaping_is_the_brainstorm(self):
+        r = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "compose.py"), "architect", "--project", "p"],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("the following arguments are required: --change", r.stderr)
+        self.assertFalse(hasattr(fc.fc_briefs, "ARCHITECT_BRIEF"))
+        r = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "compose.py"), "architect", "--help"],
+                           capture_output=True, text=True)
+        self.assertIn("sections/0b.md", " ".join(r.stdout.split()))
 
     def test_a_test_crew_commits_its_files_as_separate_paths(self):
         brief = fc.fc_briefs.test_brief({"id": "005", "protected": ["tests/test_a.py", "tests/test_b.py"], "test": "true"}, "")
@@ -125,15 +113,11 @@ class Groundwork(unittest.TestCase):
 
     def test_briefs_name_compose_linear_verbs_and_no_linear_mcp_tool(self):
         b = fc.fc_briefs
-        printed = [self.printed(c, **kw) for c, kw in ((b.cmd_groundwork, {}), (b.cmd_architect, {}), (b.cmd_planner, {"issue": None}),
-                                                         (b.cmd_explore, {}))]
-        consts = [getattr(b, n) for n in ("GROUNDWORK_BRIEF", "EXPLORE_BRIEF", "ARCHITECT_BRIEF", "PLANNER_BRIEF", "TOOLSMITH_BRIEF", "CHANGE_BRIEF")]
+        printed = [self.printed(c, **kw) for c, kw in ((b.cmd_groundwork, {}), (b.cmd_planner, {"issue": None}), (b.cmd_explore, {}))]
+        consts = [getattr(b, n) for n in ("GROUNDWORK_BRIEF", "EXPLORE_BRIEF", "PLANNER_BRIEF", "TOOLSMITH_BRIEF", "CHANGE_BRIEF")]
         for brief in printed + consts:
             self.assertEqual([t for t in self.MCP_TOOLS if t in brief], [], brief[:60])
-        _, architect, planner, explore = printed
-        self.assertIn('compose linear list --search', architect)
-        self.assertNotRegex(architect, r'compose linear update[^`]*--section "## Decisions so far"')  # answers land through `compose decide`
-        self.assertIn("compose decide", architect)
+        _, planner, explore = printed
         self.assertRegex(planner, r'compose linear update[^`]*--section "## Plan"')
         self.assertIn("compose linear create", planner)
         self.assertIn("`compose sync` (it reads the feature and every issue under it from Linear) as sections/2.md says", planner)
@@ -326,9 +310,8 @@ class Explore(unittest.TestCase):
     def test_no_brief_names_a_graft_command(self):
         b = fc.fc_briefs
         self.assertIn('trail ask "<question>" --source', b.GROUNDWORK_BRIEF)
-        self.assertIn('trail ask "<question>" --source', b.ARCHITECT_BRIEF)
         self.assertIn('trail ask "<question>" --source', b.CHANGE_BRIEF)
-        for name in ("GROUNDWORK_BRIEF", "EXPLORE_BRIEF", "ARCHITECT_BRIEF", "PLANNER_BRIEF", "CHANGE_BRIEF"):
+        for name in ("GROUNDWORK_BRIEF", "EXPLORE_BRIEF", "PLANNER_BRIEF", "CHANGE_BRIEF"):
             self.assertNotRegex(getattr(b, name), r"\bgraft (ask|callers|map|skeleton|grep)\b", name)
             self.assertNotRegex(getattr(b, name), r"`graft\b", name)
 
@@ -353,13 +336,13 @@ class SectionRewrite(unittest.TestCase):
             cmd(SimpleNamespace(repo=str(self.repo), project="p", extra=None, **kw))
         return " ".join(out.getvalue().split())
 
-    def test_architect_and_change_briefs_never_write_decisions_so_far_in_step_5(self):
-        for brief in (self.printed(fc.fc_briefs.cmd_architect), " ".join(fc.fc_briefs.CHANGE_BRIEF.split())):
-            step = brief[brief.index(" 5. "):brief.index(" 6. ")]
-            self.assertTrue(step.startswith(" 5. You never write a Decisions so far line."), step[:80])
-            for s in ("`compose decide", self.GET, "run by the engineering manager with the product owner's words attached"):
-                self.assertIn(s, step)
-            self.assertNotIn('--section "## Decisions so far"', brief)
+    def test_the_change_brief_never_writes_decisions_so_far_in_step_5(self):
+        brief = " ".join(fc.fc_briefs.CHANGE_BRIEF.split())
+        step = brief[brief.index(" 5. "):brief.index(" 6. ")]
+        self.assertTrue(step.startswith(" 5. You never write a Decisions so far line."), step[:80])
+        for s in ("`compose decide", self.GET, "run by the engineering manager with the product owner's words attached"):
+            self.assertIn(s, step)
+        self.assertNotIn('--section "## Decisions so far"', brief)
 
     def test_change_brief_keeps_its_strike_through_format(self):
         change = " ".join(fc.fc_briefs.CHANGE_BRIEF.split())
@@ -375,9 +358,9 @@ class SectionRewrite(unittest.TestCase):
 
     def test_no_brief_says_patch_append(self):
         b = fc.fc_briefs
-        printed = [self.printed(c, **kw) for c, kw in ((b.cmd_groundwork, {}), (b.cmd_architect, {}), (b.cmd_planner, {"issue": None}), (b.cmd_explore, {}))]
+        printed = [self.printed(c, **kw) for c, kw in ((b.cmd_groundwork, {}), (b.cmd_planner, {"issue": None}), (b.cmd_explore, {}))]
         consts = [" ".join(getattr(b, n).split()) for n in dir(b) if n.endswith("_BRIEF")] + [" ".join(fc.fc_figma.DESIGNER_BRIEF.split())]
-        self.assertEqual(len(consts), 7)
+        self.assertEqual(len(consts), 6)
         self.assertEqual([brief[:60] for brief in printed + consts if "patch append" in brief], [])
 
 
@@ -1191,14 +1174,13 @@ class ContractSlice(unittest.TestCase):
 class TerseTemplatesB(unittest.TestCase):
     B = fc.fc_briefs
     META = {"id": "001", "title": "t", "protected": ["tests/test_a.py"], "test": "x", "files": ["a.py"]}
-    SIZES = {"GROUNDWORK_BRIEF": 3250, "ARCHITECT_BRIEF": 5800, "CHANGE_BRIEF": 3900}
-    PLACEHOLDERS = {"GROUNDWORK_BRIEF": "contract e2e_dir slug stacks trunk verify wt", "ARCHITECT_BRIEF": "feature name page slug wt",
+    SIZES = {"GROUNDWORK_BRIEF": 3250, "CHANGE_BRIEF": 3900}
+    PLACEHOLDERS = {"GROUNDWORK_BRIEF": "contract e2e_dir slug stacks trunk verify wt",
                     "CHANGE_BRIEF": "cid feature name page reflect slug why wt"}
     LAVISH = ["npx -y lavish-axi poll {page} --owner {name} --takeover", "lavish-axi reply {page} --agent-reply", "npx -y lavish-axi end {page}",
               "npx -y lavish-axi {page}", "--reopen", "`yolo:`", "reminder:", "(yolo recommendation, unconfirmed, <date>)", "`away:`"]
     KEPT = {"GROUNDWORK_BRIEF": ["`compose verify --project {slug} --prove`", '`working "stubs ready: <commit>; contract at {contract}"`',
                                  '`blocked "<task>: brief lacks <what>"`', "`compose timed`", "`protected:`", "`test:`"],
-            "ARCHITECT_BRIEF": LAVISH + ["`compose decide`", "`compose decisions --project {slug}`", "`compose linear get <id> --body`"],
             "CHANGE_BRIEF": LAVISH + ["`evidence`", "`compose linear get <id> --body`", "change {cid}: "]}
 
     def text(self, name):

@@ -204,19 +204,17 @@ class Ask(unittest.TestCase):
 
 
 class Briefs(unittest.TestCase):
-    def test_architect_and_change_briefs_carry_the_ask_rules(self):
-        for brief in (fc.fc_briefs.ARCHITECT_BRIEF, fc.fc_briefs.CHANGE_BRIEF):
-            flat = " ".join(brief.split())
-            for want in ("visual cards open in Lavish: <url>", "`url:`", "--takeover", "180000 ms", "lavish-axi reply {page} --agent-reply",
-                         "`browser_disconnected`", "reminder:", "`yolo:`", "(yolo recommendation, unconfirmed, <date>)"):
-                self.assertIn(want, flat)
-            self.assertNotIn("\u2014", brief)
+    def test_the_change_brief_carries_the_ask_rules(self):
+        brief = fc.fc_briefs.CHANGE_BRIEF
+        flat = " ".join(brief.split())
+        for want in ("visual cards open in Lavish: <url>", "`url:`", "--takeover", "180000 ms", "lavish-axi reply {page} --agent-reply",
+                     "`browser_disconnected`", "reminder:", "`yolo:`", "(yolo recommendation, unconfirmed, <date>)"):
+            self.assertIn(want, flat)
+        self.assertNotIn("\u2014", brief)
 
 
 class BriefsNameBothPostures(unittest.TestCase):
     AWAY, YOLO = "(away recommendation, unconfirmed, <date>)", "(yolo recommendation, unconfirmed, <date>)"
-    ARCHITECT = ("An answer that starts `away:` or `yolo:` is the engineering manager's recommendation taken while the product owner is away, never their answer: "
-                 f"`compose decide` ends its line `{AWAY}` or `{YOLO}`, the one its prefix names, and changes that tag to `(product owner, <date>; said: ...)` only when they confirm it.")
     PLANNER = f"A Decisions line ending `{AWAY}` or `{YOLO}` is a recommendation the product owner has not confirmed:"
     CHANGE = ("An answer that starts `away:` or `yolo:` is the engineering manager's recommendation, never the product owner's: "
               f"`compose decide` ends its line `{AWAY}` or `{YOLO}`, the one its prefix names.")
@@ -225,7 +223,7 @@ class BriefsNameBothPostures(unittest.TestCase):
         return " ".join(getattr(fc.fc_briefs, name).split())
 
     def test_each_brief_carries_its_sentence(self):
-        for name, want in (("ARCHITECT_BRIEF", self.ARCHITECT), ("PLANNER_BRIEF", self.PLANNER), ("CHANGE_BRIEF", self.CHANGE)):
+        for name, want in (("PLANNER_BRIEF", self.PLANNER), ("CHANGE_BRIEF", self.CHANGE)):
             self.assertIn(want, self.flat(name), name)
 
     def test_planner_sentence_still_leads_into_the_built_on_rule(self):
@@ -233,18 +231,17 @@ class BriefsNameBothPostures(unittest.TestCase):
         self.assertLess(flat.index(self.PLANNER), flat.index("Built on unconfirmed: <card ids>"))
 
     def test_no_brief_writes_decisions_by_hand(self):
-        for name in ("ARCHITECT_BRIEF", "PLANNER_BRIEF", "CHANGE_BRIEF"):
+        for name in ("PLANNER_BRIEF", "CHANGE_BRIEF"):
             flat = self.flat(name)
             self.assertNotIn('--section "## Decisions so far"', flat, name)
             self.assertIn("never write a Decisions so far line" if name == "PLANNER_BRIEF" else "You never write a Decisions so far line", flat, name)
             self.assertIn("compose decisions", flat, name)
         self.assertIn("`compose decide --change {cid}`", self.flat("CHANGE_BRIEF"))
         self.assertIn("`Supersedes: <the line as recorded>`", self.flat("CHANGE_BRIEF"))
-        for name in ("ARCHITECT_BRIEF", "PLANNER_BRIEF"):
-            self.assertIn("`compose report` refuses", self.flat(name), name)
+        self.assertIn("`compose report` refuses", self.flat("PLANNER_BRIEF"))
 
     def test_no_brief_keeps_a_yolo_only_rule_or_an_em_dash(self):
-        for name in ("ARCHITECT_BRIEF", "PLANNER_BRIEF", "CHANGE_BRIEF"):
+        for name in ("PLANNER_BRIEF", "CHANGE_BRIEF"):
             flat = self.flat(name)
             self.assertNotIn("\u2014", flat, name)
             self.assertNotIn("starts `yolo:` is", flat, name)

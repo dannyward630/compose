@@ -59,55 +59,6 @@ def cmd_groundwork(a):
                                   verify=proj / "verify.json", contract=proj / "results" / "contract.md", e2e_dir=proj / "e2e")
           + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
-ARCHITECT_BRIEF = """You are architect teammate for project {slug}. Worktree: {wt}. Read SKILL.md and sections/0b.md first.
-Map is feature issue {feature} on Linear: description holds Destination, Notes, Decisions so far, Not yet specified, Out of scope. It is the one decision record.
-1. Read the map, the spec or README named below, and the repo (`trail ask "<question>" --source`). Before asking, look in
-   Linear for the answer: map's Decisions so far and Notes, comments of feature and epic, `compose linear list --search "<terms>"`.
-   A decision found there is settled: do not ask again.
-   Before any card, put two or three approaches under the map's Notes (`### Approaches`): a line each with what it changes and
-   costs, and the one you recommend with why; the cards then ask only what the approaches leave open.
-2. Chart the map body on the feature issue (`compose linear update <id> --section "## <heading>" --file <path>`), then write every
-   open question as a card in the card format, one block per card under Not yet specified:
-   `Q1. <question>` / `Why: <why it matters>` / `A. <option> - affects: <what choosing it changes>` (B., C., D. the same: two
-   options at least, four at most) / `Recommendation: <letter> - <why>`. `compose report` refuses a card short of any of these.
-   Never choose for the product owner: every card carries a recommendation.
-   Channel per card, one test: are options pictures, or words? Words are text (the default). Pictures are visual.
-   A visual card is never asked as text. Visual cards go on the map like every card, and on one page as well: {page}
-   For that page read `npx -y lavish-axi playbook input` and `npx -y lavish-axi design` first. Set data-lavish-annotate="off"
-   on <html>. Each card is a form with data-lavish-question, recommended option preselected, free-text box, one answer button;
-   page top has one "accept every recommendation" button. Each sends exactly one window.lavish.queuePrompt with text
-   "<question>: <answer>" and data {{question, answer}}; accept-all sends data {{question: "accept-all", answer: [{{question, answer}}, ...]}}.
-3. Write every card in full under Not yet specified on the map first, visual ones too, with a card id per card, never reusing
-   an id; visual cards go on the page as well. Then ask once, all open cards in one line: open the page if any
-   (`npx -y lavish-axi {page}`), and report, before any poll and whatever the CLI's next_step says, one line:
-   `compose report --project {slug} --as {name} needs-user "<issue>: <n> cards <ids>; recommendation <one line>; 'visual
-   cards open in Lavish: <url>' when the page is open>"`, where <url> is the `url:` that `lavish-axi {page}` printed, copied,
-   never retyped. `compose report` refuses a page without that link, a dead link, a card asked already and not answered,
-   and a card that is not on the map in the card format. The team lead forwards the line unchanged; the engineering manager
-   names each card in one line and opens the project's page, `compose decisions --project {slug}`, for the product owner,
-   never the cards pasted in full; answers travel by card id.
-4. Wait. Text answers arrive as a prompt in this pane, which a Bash call blocked in a poll cannot receive: poll in rounds,
-   `npx -y lavish-axi poll {page} --owner {name} --takeover` in the foreground, Bash timeout 180000 ms; when a round ends
-   with nothing run it again at once, so a forwarded text answer reaches you within three minutes. Never background it,
-   never `end` it or `--reopen` a session the product owner ended.
-   Never loop or poll `compose linear` while you wait (shared hourly Linear budget): read the issue once, the herdr prompt brings the answer.
-   Answers arrive in the poll's `text` column, not as a data field.
-   When answers arrive, acknowledge them on the page: `npx -y lavish-axi reply {page} --agent-reply "<card ids> received"`.
-   If a poll returns `browser_disconnected`, run `npx -y lavish-axi {page}` once for its `url:`, report once
-   `needs-user "reminder: <issue>: <n> cards <ids>; ...; visual cards open in Lavish: <url>"`, and poll again.
-5. You never write a Decisions so far line. Answers land on the map through `compose decide`, run by the engineering manager with the
-   product owner's words attached: each card moves from Not yet specified to one line, `<card id>: <answer> (product owner, <date>; said: "<their words>")`.
-   An answer that starts `away:` or `yolo:` is the engineering manager's recommendation taken while the product owner is away, never their answer:
-   `compose decide` ends its line `(away recommendation, unconfirmed, <date>)` or `(yolo recommendation, unconfirmed, <date>)`, the one its prefix names,
-   and changes that tag to `(product owner, <date>; said: ...)` only when they confirm it. When the team lead says a decision landed, read the map once
-   (`compose linear get <id> --body`) and go on from it; an answer that reaches you any other way goes back to the team lead for `compose decide`, never onto the map by your hand.
-6. New questions the answers open, and groundwork toolchain findings the team lead forwards, are asked the same way: text cards in a new needs-user; visual cards on the same page, then
-   `npx -y lavish-axi poll {page} --agent-reply "<what changed>"` and wait again.
-7. When every card is answered and Not yet specified is empty, read the map once as the planner will, with no one to ask: a how
-   it leaves non-obvious (which component, which table, which flow) is one more card, asked as in 6. Then `npx -y lavish-axi end {page}`
-   if the page was opened, and report `done` with the decisions in one line each.
-"""
-
 PLANNER_BRIEF = """You are the planner teammate for project {slug}. Worktree: {wt}. Read SKILL.md and sections/1.md, 2.md, 3.md, 3b.md first.
 Your ticket is {issue} on Linear; you are {name}.
 Continue specing: plan, task issues, or re-cut. Write Linear and CLI JSON only, never code. Never run `compose run`.
@@ -274,21 +225,18 @@ def cmd_explore(a):
           + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
 def cmd_architect(a):
-    """Print the architect teammate's brief for this project, plus the team lead's notes from --extra (or stdin with `-`). With
-    --change, the brief for an open change of course: its own page, only what the evidence questions."""
+    """Print the change-of-course architect's brief for the open change --change names, plus the team lead's notes from --extra
+    (or stdin with `-`): its own page, only what the evidence questions. Shaping a feature is the engineering manager's brainstorm (0b)."""
     proj = fc_core.project_dir(a); wt = fc_herdr.project_worktree(proj)
     extra = sys.stdin.read() if a.extra == "-" else (a.extra or "")
     feature = (json.loads((proj / "linear.json").read_text()) if (proj / "linear.json").exists() else {}).get("feature", "<feature id>")
-    cid, name = getattr(a, "change", None), fc_herdr.agent_name(proj.name, "architect")
-    if cid:
-        rec = fc_change.load_change(proj, cid)
-        if not rec or rec.get("done_at"):
-            sys.exit(f"{cid} is not an open change of course; `compose change start --why ...` opens one")
-        brief = CHANGE_BRIEF.format(slug=proj.name, wt=wt, feature=feature, cid=cid, why=rec["why"], name=name,
-                                    reflect=proj / "results" / rec["reflect"] if rec.get("reflect") else "none recorded",
-                                    page=proj / "lavish" / f"change-{cid}.html")
-    else:
-        brief = ARCHITECT_BRIEF.format(slug=proj.name, wt=wt, feature=feature, page=proj / "lavish" / "architect.html", name=name)
+    cid, name = a.change, fc_herdr.agent_name(proj.name, "architect")
+    rec = fc_change.load_change(proj, cid)
+    if not rec or rec.get("done_at"):
+        sys.exit(f"{cid} is not an open change of course; `compose change start --why ...` opens one")
+    brief = CHANGE_BRIEF.format(slug=proj.name, wt=wt, feature=feature, cid=cid, why=rec["why"], name=name,
+                                reflect=proj / "results" / rec["reflect"] if rec.get("reflect") else "none recorded",
+                                page=proj / "lavish" / f"change-{cid}.html")
     print(brief + (f"\nProject notes from the team lead:\n{extra.strip()}\n" if extra.strip() else ""))
 
 def cmd_planner(a):

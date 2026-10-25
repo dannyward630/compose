@@ -110,7 +110,7 @@ def main():
                             ("groundwork", fc_briefs.cmd_groundwork, "print the groundwork teammate's brief; --extra adds the project's notes"),
                             ("explore", fc_briefs.cmd_explore, "print the explore teammate's brief (a fast trail-only map of an existing repo); --extra adds notes"),
                             ("trail", fc_init.cmd_trail, "set trail up in the project's worktree again: wire it for Claude Code and build the graph"),
-                            ("architect", fc_briefs.cmd_architect, "print the architect teammate's brief (questions on one Lavish page); --extra adds the project's notes"),
+                            ("architect", fc_briefs.cmd_architect, "print the change-of-course architect's brief for --change <id> (step 8); --extra adds the project's notes"),
                             ("planner", fc_briefs.cmd_planner, "print the planner teammate's brief; --issue is the ticket (default: the project's feature); --extra adds the project's notes"),
                             ("buildercheck", fc_buildercheck.cmd_buildercheck, "print the builder check's brief: a fresh builder reads --issue (default: the project's feature) cold and reports the ranked questions it would still need answered; --extra adds the project's notes"),
                             ("testcrews", fc_briefs.cmd_testcrews, "start one test-writing teammate per task in parallel from the groundwork contract"),
@@ -249,7 +249,8 @@ def main():
             s.add_argument("--redo", action="store_true", help="with --only: reopen tasks finished by hand or passed, even In Review, for a new builder; their old result is kept as <id>.json.before-redo")
             s.add_argument("--max", type=int, help="most builders to start at once (default: design_concurrency in verify.json, else parallel in ~/.compose/config.json, else 3)")
         if name == "architect":
-            s.add_argument("--change", help="an open change of course, e.g. C2: its own page, asking only what the evidence questions")
+            s.add_argument("--change", required=True, help="an open change of course, e.g. C2: its own page, asking only what the evidence questions; "
+                                                          "shaping a feature is the engineering manager's brainstorm (sections/0b.md), not an architect")
         if name == "testcrews":
             s.add_argument("--contract", help="default: .compose/<project>/results/contract.md")
             s.add_argument("--only", help="comma-separated task ids")
