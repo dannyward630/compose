@@ -3,11 +3,12 @@ from __future__ import annotations
 import json, os, re, time
 from pathlib import Path
 
-import fc_claude, fc_config, fc_core, fc_crew, fc_delivery, fc_factorystate, fc_factoryturn, fc_herdr, fc_models, fc_nightstate, fc_tasks, fc_yolo
+import fc_ask, fc_claude, fc_config, fc_core, fc_crew, fc_delivery, fc_factorystate, fc_factoryturn, fc_herdr, fc_models, fc_nightstate, fc_tasks, fc_yolo
 
 ANSWERERS = 2
 MORNING = ("shape ", "deep-dive ", "stories ")
 ISSUE_RE = re.compile(r"\b([A-Z][A-Z0-9]*-\d+)\b")
+NEVER_WORDS = re.compile(r"force[- ]push|push\s+--force|--force|--delete-unmerged|--abandon|delete the branch|drop the database|api[- ]key|secret|credential|payment|billing account|spend|purchase|provider", re.I)
 ASK = ("Answer this question the team lead raised while building an approved ticket, as the product owner would from what is written here; "
        "read the code you need. If answering needs anything in the never-set above, or needs the product owner to plan something new, "
        'set never_set and answer nothing. Reply with only JSON: {"never_set": bool, "why_wait": str, "answer": str, "reasoning": str, '
@@ -35,24 +36,44 @@ def _feature(proj) -> str:
     except (OSError, ValueError, AttributeError):
         return ""
 
+def _issue(message, proj) -> str:
+    """The issue a message names: only ids with the team prefix of the project's feature count (SHA-256 is not one); else the feature."""
+    feature = _feature(proj)
+    prefix = feature.rsplit("-", 1)[0] if "-" in feature else ""
+    m = re.search(rf"\b({re.escape(prefix)}-\d+)\b", message) if prefix else ISSUE_RE.search(message)
+    return m.group(1) if m else feature
+
+def _questions(slug, proj) -> list[dict]:
+    """Every needs-user report of the project's orchestrator; `nth` tells apart reports made in the same second."""
+    try:
+        reports = fc_crew.crew_reports(proj, fc_herdr.agent_name(slug, "orchestrator"))
+    except (ValueError, OSError):  # a torn or unreadable status file
+        return []
+    out, seen = [], {}
+    for r in reports:
+        if not isinstance(r, dict) or r.get("state") != "needs-user" or not isinstance(r.get("at"), str):
+            continue
+        n = seen[r["at"]] = seen.get(r["at"], -1) + 1
+        msg = str(r.get("message") or "")
+        out.append({"key": f"{slug}@{r['at']}" + (f"#{n}" if n else ""), "project": slug, "at": r["at"], "nth": n, "message": msg, "issue": _issue(msg, proj)})
+    return out
+
 def new_questions(repo, night) -> list[dict]:
     """The orchestrators' needs-user reports since the night began that nobody has been asked or told about yet."""
-    out = []
+    out, said = [], set(night.get("said") or [])
     for slug, (_wt, proj) in fc_core.all_projects(repo).items():
         if (fc_tasks.yolo_state(proj) or {}).get("mode") != "night":
             continue
-        for r in fc_crew.crew_reports(proj, fc_herdr.agent_name(slug, "orchestrator")):
-            key = f"{slug}@{r.get('at')}"
-            if r.get("state") != "needs-user" or key in night["asked"] or key in night["morning"]:
-                continue
+        for q in _questions(slug, proj):
             try:
-                if fc_core.report_time(r["at"]) < night["since"]:
-                    continue
-            except (KeyError, ValueError, TypeError):
+                late = fc_core.report_time(q["at"]) < night["since"]
+            except (ValueError, TypeError):
                 continue
-            msg = str(r.get("message") or "")
-            m = ISSUE_RE.search(msg)
-            out.append({"key": key, "project": slug, "at": r["at"], "message": msg, "issue": m.group(1) if m else _feature(proj)})
+            same = f"{slug}|{q['message']}"
+            if late or q["key"] in night["asked"] or q["key"] in night["morning"] or same in said:
+                continue
+            said.add(same)
+            out.append(q)
     return out
 
 def kind(message) -> str:
@@ -68,8 +89,15 @@ def comment_body(q, rec, model, date) -> str:
     return (f"Answered while you were away, by the night answerer ({model}, {date}).\n\nQuestion: {q['message']}\nAnswer: {rec['answer']}\n"
             f"Why: {rec['reasoning']}\n\nTo confirm: this is the answerer's call, not yours; overruling it in the morning is an ordinary plan change.")
 
-def _failed(slug, message) -> str:
-    return (f'event factory=answer-failed project={slug} question="{message}"  '
+def _q(text, n=None) -> str:
+    """A value for an event line: no double quotes, optionally cut to n characters."""
+    return str(text).replace('"', "'")[:n]
+
+def _failed(slug, message, why=None) -> str:
+    if why:
+        return (f'event factory=answer-failed project={slug} question="{_q(message)}" why="{_q(why, 120)}"  '
+                "(the answer was not fully recorded: it waits for the product owner)")
+    return (f'event factory=answer-failed project={slug} question="{_q(message)}"  '
             "(the answerer ended without an answer: it waits for the product owner)")
 
 def _chain(repo, issue) -> list[tuple[str, str]]:
@@ -86,49 +114,77 @@ def _chain(repo, issue) -> list[tuple[str, str]]:
         issue = (data.get("parent") or {}).get("identifier") if isinstance(data.get("parent"), dict) else None
     return chain
 
-def run_answer(repo, slug, at) -> dict:
+def parse_reply(reply) -> dict | None:
+    """The answerer's verdict: any object in the reply that says never_set wins; else the last object with both answer and never_set."""
+    objs, dec = [], json.JSONDecoder()
+    for m in re.finditer(r"\{", reply):
+        try:
+            v = dec.raw_decode(reply[m.start():])[0]
+        except ValueError:
+            continue
+        if isinstance(v, dict) and "never_set" in v:
+            objs.append(v)
+    stop = next((o for o in objs if o["never_set"]), None)
+    return stop or next((o for o in reversed(objs) if "answer" in o), None)
+
+def never_hits(*texts) -> list[str]:
+    return sorted({m.group(0).lower() for t in texts for m in NEVER_WORDS.finditer(t)})
+
+def run_answer(repo, slug, at, nth=0) -> dict:
     """The worker: answer one question, record it on the issue and in the lead, and return the record."""
     wt, proj = fc_core.all_projects(repo)[slug]
-    q = next(x for x in new_questions_for(repo, slug, proj, at))
-    try:
-        plan = fc_delivery.product_plan(repo)
-        doc = ((plan or {}).get("doc") or {}).get("content") or ""
-    except (RuntimeError, SystemExit):
-        doc = ""
+    q = next((x for x in _questions(slug, proj) if x["at"] == at and x["nth"] == nth), None)
+    if q is None:
+        raise RuntimeError(f"no report of {slug} at {at} (#{nth})")
     model, effort = fc_config.NIGHT_MODEL
     rec = {"key": q["key"], "project": slug, "issue": q["issue"], "question": q["message"], "answer": "", "reasoning": "", "cards": {},
-           "never_set": False, "why_wait": "", "model": model, "at": time.strftime("%Y-%m-%d %H:%M:%S"), "error": ""}
+           "never_set": False, "why_wait": "", "model": model, "at": time.strftime("%Y-%m-%d %H:%M:%S"), "error": "", "commented": False, "acted": False}
     try:
+        try:
+            plan = fc_delivery.product_plan(repo)
+            doc = ((plan or {}).get("doc") or {}).get("content") or ""
+        except (RuntimeError, SystemExit):
+            doc = ""
         prompt = answer_prompt(q, _chain(repo, q["issue"]), doc, fc_nightstate.notes_tail(repo))
         reply = fc_claude.claude_once(wt, prompt, timeout=1800, model=fc_claude.claude_id(model), tools="Read,Grep,Glob", effort=effort, keep=6000)[1]
-        got = fc_models.lenient_json(reply, key="answer")
-        if not isinstance(got, dict) or "answer" not in got:
-            raise ValueError("no answer in the reply")
-    except (RuntimeError, ValueError, TypeError) as e:
-        rec["error"] = str(e)[:300] or "unparsable reply"
-        _append(repo, rec)
-        fc_factorystate.add_event(repo, _failed(slug, q["message"]))
-        return rec
-    cards = got.get("cards") if isinstance(got.get("cards"), dict) else {}
-    rec.update(never_set=bool(got.get("never_set")), why_wait=str(got.get("why_wait") or ""), answer=str(got.get("answer") or ""),
-               reasoning=str(got.get("reasoning") or ""), cards={str(k): str(v) for k, v in cards.items()})
-    if rec["never_set"] or not rec["answer"].strip():
-        rec["never_set"] = True
-        _append(repo, rec)
-        fc_nightstate.add_note(repo, f"{slug} {q['issue']}: never-set, waits for the product owner ({rec['why_wait']})")
-        fc_factorystate.add_event(repo, f'event factory=waiting project={slug} question="{q["message"]}" why="{rec["why_wait"]}"  '
-                                        "(never-set: it waits for the product owner; send one PushNotification naming it and the recommendation)")
-        return rec
-    fc_factoryturn.compose_cli(["linear", "comment", q["issue"], "--repo", str(repo)], stdin=comment_body(q, rec, model, time.strftime("%Y-%m-%d")))
-    if rec["cards"]:
-        for card, option in rec["cards"].items():
-            fc_factoryturn.compose_cli(["decide", "--repo", str(repo), "--project", slug, f"{card}: {option}"])
-    else:
-        fc_factoryturn.prompt_lead(fc_herdr.agent_name(slug, "orchestrator"), f"night: {rec['answer']}")
+        got = parse_reply(reply)
+        if got is None:
+            raise ValueError("no verdict with answer and never_set in the reply")
+        rec.update(never_set=bool(got.get("never_set")), why_wait=str(got.get("why_wait") or ""), answer=str(got.get("answer") or ""),
+                   reasoning=str(got.get("reasoning") or ""))
+        cards = got.get("cards") if isinstance(got.get("cards"), dict) else {}
+        rec["cards"] = {str(k): str(v) for k, v in cards.items()
+                        if re.fullmatch(fc_ask.CARD_ID, str(k)) and re.search(rf"(?<![\w-]){re.escape(str(k))}(?![\w-])", q["message"])}
+        hits = never_hits(q["message"], rec["answer"])
+        if hits and not rec["never_set"]:
+            rec.update(never_set=True, why_wait=f"mentions {', '.join(hits)}")
+        if not rec["never_set"] and not rec["cards"] and not rec["answer"].strip():
+            raise ValueError("the reply has no answer and no card of this question")
+        if rec["never_set"]:
+            rec.update(answer="", cards={})
+        else:
+            fc_factoryturn.compose_cli(["linear", "comment", q["issue"], "--repo", str(repo)], stdin=comment_body(q, rec, model, time.strftime("%Y-%m-%d")))
+            rec["commented"] = True
+            if rec["cards"]:
+                fc_factoryturn.compose_cli(["decide", "--repo", str(repo), "--project", slug, *(f"{c}: {o}" for c, o in rec["cards"].items())])
+            elif not fc_factoryturn.prompt_lead(fc_herdr.agent_name(slug, "orchestrator"), f"night: {rec['answer']}"):
+                raise RuntimeError("the team lead did not take the answer")
+            rec["acted"] = True
+    except (RuntimeError, ValueError, TypeError, OSError) as e:
+        rec["error"] = str(e)[:300] or type(e).__name__
     _append(repo, rec)
-    fc_nightstate.add_note(repo, f"{slug} {q['issue']}: answered {rec['answer'][:200]}")
-    fc_factorystate.add_event(repo, f'event factory=answered project={slug} issue={q["issue"]} answer="{rec["answer"][:120]}"  '
-                                    "(the night answerer settled it; it is listed under To confirm in the morning)")
+    if rec["error"]:
+        if rec["commented"]:
+            fc_nightstate.add_note(repo, f"{slug} {q['issue']}: the answer is on the issue but was not fully acted on ({rec['error'][:120]})")
+        fc_factorystate.add_event(repo, _failed(slug, q["message"], rec["error"]))
+    elif rec["never_set"]:
+        fc_nightstate.add_note(repo, f"{slug} {q['issue']}: never-set, waits for the product owner ({rec['why_wait']})")
+        fc_factorystate.add_event(repo, f'event factory=waiting project={slug} question="{_q(q["message"])}" why="{_q(rec["why_wait"])}"  '
+                                        "(never-set: it waits for the product owner; send one PushNotification naming it and the recommendation)")
+    else:
+        fc_nightstate.add_note(repo, f"{slug} {q['issue']}: answered {rec['answer'][:200]}")
+        fc_factorystate.add_event(repo, f'event factory=answered project={slug} issue={q["issue"]} answer="{_q(rec["answer"], 120)}"  '
+                                        "(the night answerer settled it; it is listed under To confirm in the morning)")
     return rec
 
 def _append(repo, rec) -> None:
@@ -137,16 +193,12 @@ def _append(repo, rec) -> None:
     with open(path, "a") as out:
         out.write(json.dumps(rec) + "\n")
 
-def new_questions_for(repo, slug, proj, at) -> list[dict]:
-    """The report `at` of project `slug`, as new_questions shapes it, whether or not it was asked already."""
-    for r in fc_crew.crew_reports(proj, fc_herdr.agent_name(slug, "orchestrator")):
-        if r.get("at") == at:
-            msg = str(r.get("message") or "")
-            m = ISSUE_RE.search(msg)
-            return [{"key": f"{slug}@{at}", "project": slug, "at": at, "message": msg, "issue": m.group(1) if m else _feature(proj)}]
-    raise RuntimeError(f"no report of {slug} at {at}")
-
 def _alive(pid) -> bool:
+    try:
+        if os.waitpid(pid, os.WNOHANG)[0] == pid:  # our own finished child is a zombie until reaped
+            return False
+    except OSError:
+        pass
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -164,13 +216,17 @@ def answer_step(repo, state, now) -> list[str]:
             if key not in done:
                 lines.append(_failed(a["project"], a["message"]))
     running = sum(1 for a in night["asked"].values() if not a.get("done"))
+    said = night.setdefault("said", [])
     for q in new_questions(repo, night):
         if kind(q["message"]) == "morning":
             night["morning"].append(q["key"])
-            lines.append(f'event factory=for-morning project={q["project"]} question="{q["message"]}"  '
+            said.append(f"{q['project']}|{q['message']}")
+            lines.append(f'event factory=for-morning project={q["project"]} question="{_q(q["message"])}"  '
                          "(planning waits for the product owner: it is listed under Ready to plan)")
         elif running < ANSWERERS:
-            pid = fc_nightstate.spawn_once(repo, ["factory", "answer", "--repo", str(repo), "--project", q["project"], "--at", q["at"]], "night-answer.log")
+            args = ["factory", "answer", "--repo", str(repo), "--project", q["project"], "--at", q["at"], "--nth", str(q["nth"])]
+            pid = fc_nightstate.spawn_once(repo, args, "night-answer.log")
             night["asked"][q["key"]] = {"pid": pid, "at": now, "project": q["project"], "issue": q["issue"], "message": q["message"]}
+            said.append(f"{q['project']}|{q['message']}")
             running += 1
     return lines

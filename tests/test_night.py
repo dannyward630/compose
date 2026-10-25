@@ -296,7 +296,7 @@ class Answerer(unittest.TestCase):
         self.assertEqual(lines, ['event factory=for-morning project=sign-in question="shape NEB-12: no design yet"  '
                                  "(planning waits for the product owner: it is listed under Ready to plan)"])
         self.spawn.assert_called_once_with(self.repo, ["factory", "answer", "--repo", str(self.repo), "--project", "sign-in",
-                                                       "--at", "2026-10-27 01:05:00"], "night-answer.log")
+                                                       "--at", "2026-10-27 01:05:00", "--nth", "0"], "night-answer.log")
         self.assertEqual(fa.answer_step(self.repo, self.state, 160.0), [])  # neither is asked twice
 
     def test_at_most_two_answerers_run_and_a_dead_one_without_a_record_is_said_once(self):
@@ -338,6 +338,64 @@ class Answerer(unittest.TestCase):
         rec = fa.run_answer(self.repo, "sign-in", "2026-10-27 01:05:00")
         self.assertTrue(rec["error"]); self.assertTrue(self.events[-1].startswith("event factory=answer-failed project=sign-in"))
         self.prompt.assert_not_called()
+
+    def reply(self, **kw):
+        self.claude.return_value = (None, json.dumps({"never_set": False, "answer": "a", "reasoning": "r", "cards": {}, **kw}), 1, {})
+
+    def test_any_never_set_object_in_the_reply_wins_over_an_example(self):
+        self.report("needs-user", "NEB-10: q", "2026-10-27 01:05:00")
+        self.claude.return_value = (None, 'Example: {"answer": "yes", "never_set": false} but really {"never_set": true, "answer": "", "why_wait": "x"}', 1, {})
+        self.assertTrue(fa.run_answer(self.repo, "sign-in", "2026-10-27 01:05:00")["never_set"])
+        self.prompt.assert_not_called()
+        self.claude.return_value = (None, '{"answer": "yes"}', 1, {})
+        self.assertTrue(fa.run_answer(self.repo, "sign-in", "2026-10-27 01:05:00")["error"])
+
+    def test_a_failed_decide_after_the_comment_is_recorded_as_partial(self):
+        self.report("needs-user", "NEB-10: Q1 here", "2026-10-27 01:05:00")
+        self.reply(cards={"Q1": "A"})
+        self.cli.side_effect = lambda args, stdin=None, pane=None: (_ for _ in ()).throw(RuntimeError("boom")) if args[0] == "decide" else ""
+        rec = fa.run_answer(self.repo, "sign-in", "2026-10-27 01:05:00")
+        self.assertEqual((rec["commented"], rec["acted"]), (True, False))
+        self.assertIn("answer-failed", self.events[-1]); self.assertIn("boom", self.events[-1])
+        self.assertEqual(len(fa.answers_path(self.repo).read_text().splitlines()), 1)
+
+    def test_a_lead_that_did_not_take_the_prompt_is_not_answered(self):
+        self.report("needs-user", "NEB-10: q", "2026-10-27 01:05:00")
+        self.reply(); self.prompt.return_value = False
+        self.assertTrue(fa.run_answer(self.repo, "sign-in", "2026-10-27 01:05:00")["error"])
+        self.assertIn("answer-failed", self.events[-1])
+
+    def test_only_the_teams_issue_ids_count(self):
+        self.report("needs-user", "should we use SHA-256 for NEB-10 tokens?", "2026-10-27 01:00:00")
+        self.report("needs-user", "use UTF-8?", "2026-10-27 01:01:00")
+        self.assertEqual([q["issue"] for q in fa.new_questions(self.repo, self.state["night"])], ["NEB-10", "NEB-9"])
+
+    def test_two_reports_in_one_second_are_two_questions_and_a_repeat_is_not_asked_again(self):
+        self.report("needs-user", "NEB-10: one", "2026-10-27 01:00:00")
+        self.report("needs-user", "NEB-10: two", "2026-10-27 01:00:00")
+        self.report("needs-user", "NEB-10: one", "2026-10-27 01:02:00")
+        fa.answer_step(self.repo, self.state, 100.0)
+        self.assertEqual(sorted(self.state["night"]["asked"]), ["sign-in@2026-10-27 01:00:00", "sign-in@2026-10-27 01:00:00#1"])
+        self.assertEqual(self.spawn.call_args.args[1][-2:], ["--nth", "1"])
+        self.reply(); self.assertEqual(fa.run_answer(self.repo, "sign-in", "2026-10-27 01:00:00", 1)["question"], "NEB-10: two")
+
+    def test_never_words_in_the_question_or_the_answer_force_never_set(self):
+        self.report("needs-user", "NEB-10: ok to force-push?", "2026-10-27 01:05:00")
+        self.reply(answer="yes")
+        rec = fa.run_answer(self.repo, "sign-in", "2026-10-27 01:05:00")
+        self.assertTrue(rec["never_set"]); self.assertIn("force-push", rec["why_wait"]); self.prompt.assert_not_called()
+        self.assertFalse(any(c.args[0][:2] == ["linear", "comment"] for c in self.cli.call_args_list))
+
+    def test_card_ids_must_be_cards_of_the_question(self):
+        self.report("needs-user", "NEB-10: 1 card Q1", "2026-10-27 01:05:00")
+        self.reply(answer="", cards={"D2": "x", "Q9": "B"})
+        self.assertTrue(fa.run_answer(self.repo, "sign-in", "2026-10-27 01:05:00")["error"])
+        self.reply(cards={"D2": "x", "Q1": "A"})
+        self.assertEqual(fa.run_answer(self.repo, "sign-in", "2026-10-27 01:05:00")["cards"], {"Q1": "A"})
+
+    def test_a_torn_status_file_does_not_stop_the_step(self):
+        (self.proj / "results" / "crew" / "sign-in-orchestrator.status").write_text("{torn\n")
+        self.assertEqual(fa.new_questions(self.repo, self.state["night"]), [])
 
     def test_reports_before_the_night_are_not_questions(self):
         self.report("needs-user", "NEB-10: old", "2026-10-26 20:00:00")
