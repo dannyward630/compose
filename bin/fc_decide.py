@@ -147,7 +147,7 @@ def record_new(body, texts, tag):
     no card asked; <n> runs on from the highest D id the section holds, struck lines included. Returns (body, the lines written)."""
     dec = fc_change.map_section(body, DECIDED).splitlines()
     top = max((int(n) for n in re.findall(r"^\s*- (?:~~)?D(\d+)\b", "\n".join(dec), re.M)), default=0)
-    lines = [f"D{top + i}: {" ".join(t.split())} {tag}" for i, t in enumerate(texts, 1)]
+    lines = [f"D{top + i}: {' '.join(t.split())} {tag}" for i, t in enumerate(texts, 1)]
     dec = [l for l in dec if l.strip()] + [f"- {l}" for l in lines]
     return fc_plan.replace_section(body, heading_line(body, DECIDED), "\n".join(dec)), lines
 
