@@ -16,6 +16,11 @@ def story(ident, state="Todo", *blockers, labels=()):
     return {"id": ident, "title": "T " + ident, "url": "u/" + ident, "state": state, "labels": list(labels),
             "blockers": [{"id": b[0], "state": b[1], "labels": list(b[2]) if len(b) > 2 else []} for b in blockers]}
 
+def feat(ident, state="Todo", *blockers, labels=("Feature",), stories=(), parent=None, plan_url=None):
+    return {"id": ident, "title": "T " + ident, "url": "u/" + ident, "state": state, "labels": list(labels), "parent": parent,
+            "plan_url": plan_url, "stories": list(stories),
+            "blockers": [{"id": b[0], "state": b[1], "labels": list(b[2]) if len(b) > 2 else []} for b in blockers]}
+
 def lane(ident, *stories):
     return {"id": ident, "title": "L " + ident, "url": "u/" + ident, "stories": list(stories)}
 
@@ -227,3 +232,62 @@ class ProductTracks(unittest.TestCase):
 
     def test_a_verified_base_counts_as_built(self):
         self.assertEqual([fc_plan.base_built(s, l) for s, l in (("In Review", []), ("Done", []), ("In Progress", ["Design"]))], [True, True, False])
+
+
+class ProductSections(unittest.TestCase):
+    def setUp(self):
+        self.tracks = fc_plan.parse_tracks(TRACKS)
+        self.f = {f["id"]: f for f in (
+            feat("NEB-7", "Done"), feat("NEB-9", "Todo", ("NEB-7", "Done"), plan_url="u/d9",
+                                        stories=[story("NEB-11", "Todo", ("NEB-10", "Todo")), story("NEB-10"), story("NEB-13", "Done")]),
+            feat("NEB-12", "In Progress", ("NEB-7", "Done")), feat("NEB-15", "In Progress", ("NEB-9", "Todo"), ("NEB-12", "In Progress")),
+            feat("NEB-20", "Canceled"), feat("NEB-30", "Backlog"), feat("NEB-31", "Todo", labels=("Story",), parent="NEB-30"))}
+
+    def test_order_walks_waves_then_rank_then_track_then_lane(self):
+        order = fc_plan.order_entries(self.tracks, self.f)
+        self.assertEqual([(e["id"], e["kind"], e["feature"], e["track"], e["wave"], e["waits_on"]) for e in order], [
+            ("NEB-10", "story", "NEB-9", "Sign-in", 1, []), ("NEB-11", "story", "NEB-9", "Sign-in", 1, []),
+            ("NEB-12", "feature", "NEB-12", "Onboarding", 2, []), ("NEB-15", "feature", "NEB-15", "Billing", 3, ["NEB-9", "NEB-12"])])
+
+    def test_proposals_never_fix_destructively_and_say_why(self):
+        self.tracks[3]["items"] += ["NEB-31", "NEB-44"]
+        self.assertEqual(fc_plan.product_proposals(self.tracks, self.f), [
+            "NEB-15 T NEB-15 is In Progress but waits on NEB-9, NEB-12 in the plan: its started work goes on; hold it if it must wait.",
+            "NEB-20 T NEB-20 is Canceled but in track Search: drop it from the track, or reopen it.",
+            "NEB-31 T NEB-31 in track Search is not a feature: name its feature (NEB-30) instead, or label it Feature.",
+            "NEB-44 is in track Search but Linear has no issue NEB-44 in this project: drop it from the track.",
+            "NEB-30 T NEB-30 is an open feature the plan does not name: add it to a track, or cancel it."])
+
+    def test_data_sections_link_each_feature_and_its_own_plan(self):
+        s = fc_plan.product_sections(self.tracks, self.f, ["NEB-10"], ["x."])
+        self.assertEqual(list(s), list(fc_plan.PRODUCT_DATA))
+        self.assertIn("### Wave 1\n\n- Sign-in: [NEB-7](u/NEB-7) T NEB-7 (Done) -> [NEB-9](u/NEB-9) T NEB-9 (Todo, [its plan](u/d9))\n"
+                      "- Search: [NEB-20](u/NEB-20) T NEB-20 (Canceled)", s["## Waves"])
+        self.assertIn("### Wave 3\n\n- Billing (after Sign-in, Onboarding): [NEB-15](u/NEB-15) T NEB-15 (In Progress)", s["## Waves"])
+        self.assertEqual((s["## Start today"], s["## Proposed fixes"]), ("1. NEB-10 T NEB-10 (feature NEB-9, track Sign-in)", "1. x."))
+        e = fc_plan.product_sections([], {}, [], [])
+        self.assertEqual((e["## Waves"], e["## Start today"], e["## Proposed fixes"]), ("No tracks yet.", "Nothing can start now.", "None."))
+
+    def test_skeleton_and_history(self):
+        sk = fc_plan.product_skeleton()
+        self.assertEqual(sk, "\n\n".join(f"{h}\n\n{fc_plan.PRODUCT_NEXT}" for h in fc_plan.PRODUCT_SECTIONS) + "\n")
+        body = fc_plan.with_history(fc_plan.with_history(sk, '- 2026-10-26: tracks set; the product owner said: "auth first"'), "- 2026-10-27: b")
+        self.assertTrue(body.rstrip().endswith('## History\n\n- 2026-10-26: tracks set; the product owner said: "auth first"\n- 2026-10-27: b'))
+
+class ProductSeed(unittest.TestCase):
+    def setUp(self):
+        self.f = {f["id"]: f for f in (feat("NEB-7"), feat("NEB-9", "Todo", ("NEB-7", "Todo")), feat("NEB-12", "Todo", ("NEB-7", "Todo")),
+                                       feat("NEB-15", "Todo", ("NEB-9", "Todo"), ("NEB-12", "Todo"), ("NEB-3", "Done")), feat("NEB-20"), feat("NEB-2", "Done"))}
+        self.f["NEB-7"]["title"] = "Sign-in: email"
+
+    def test_chains_become_tracks_and_a_branch_names_the_feature_it_waits_on(self):
+        self.assertEqual(fc_plan.seed_tracks(self.f).splitlines(), [
+            "1. Sign-in - email: NEB-7, NEB-9", "2. T NEB-12: NEB-12 (after NEB-7)",
+            "3. T NEB-15: NEB-15 (after Sign-in - email, T NEB-12)", "4. T NEB-20: NEB-20"])
+
+    def test_the_seed_parses_and_keeps_every_open_relation(self):
+        self.assertEqual(fc_plan.derived_blocks(fc_plan.parse_tracks(fc_plan.seed_tracks(self.f))),
+                         {("NEB-7", "NEB-9"), ("NEB-7", "NEB-12"), ("NEB-9", "NEB-15"), ("NEB-12", "NEB-15")})
+
+    def test_no_open_feature_seeds_nothing(self):
+        self.assertEqual(fc_plan.seed_tracks({"NEB-2": feat("NEB-2", "Done")}), "")

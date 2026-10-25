@@ -84,24 +84,29 @@ def start_today(lanes):
         return "Nothing can start now."
     return "\n".join(f"{n}. [{s['id']}]({s['url']}) {s['title']}" for n, s in enumerate(starts, 1))
 
+def lane_order(stories):
+    """The lane's non-canceled stories, in-lane blockers first and ties by number: what lanes_text numbers."""
+    stories = [s for s in stories if s["state"].lower() != "canceled"]
+    mine = {s["id"] for s in stories}
+    num = lambda s: int(s["id"].rsplit("-", 1)[1])
+    done, order = set(), []
+    while True:
+        ready = [s for s in stories if s["id"] not in done
+                 and all(b["id"] in done or b["id"] not in mine for b in s["blockers"])]
+        if not ready:
+            break
+        s = min(ready, key=num)
+        done.add(s["id"])
+        order.append(s)
+    return order + sorted((s for s in stories if s["id"] not in done), key=num)
+
 def lanes_text(lanes):
     ids = {s["id"] for l in lanes for s in l["stories"] if s["state"].lower() != "canceled"}
     blocks = []
     for l in lanes:
-        stories = [s for s in l["stories"] if s["state"].lower() != "canceled"]
-        mine = {s["id"] for s in stories}
-        num = lambda s: int(s["id"].rsplit("-", 1)[1])
-        done, order = set(), []
-        while True:
-            ready = [s for s in stories if s["id"] not in done
-                     and all(b["id"] in done or b["id"] not in mine for b in s["blockers"])]
-            if not ready:
-                break
-            s = min(ready, key=num)
-            done.add(s["id"])
-            order.append(s)
+        mine = {s["id"] for s in l["stories"] if s["state"].lower() != "canceled"}
         lines = []
-        for n, s in enumerate(order + sorted((s for s in stories if s["id"] not in done), key=num), 1):
+        for n, s in enumerate(lane_order(l["stories"]), 1):
             lines.append(f"{n}. [{s['id']}]({s['url']}) {s['title']} ({s['state']})")
             needs = [b["id"] for b in s["blockers"] if b["id"] in ids and b["id"] not in mine]
             if needs:
@@ -254,3 +259,124 @@ def blocks_diff(derived, current, plan_ids):
 def base_built(state, labels):
     """A base feature is built once it is finished, or In Review (verified)."""
     return fc_tasks.blocker_finished(state, labels) or state.lower() == "in review"
+
+PRODUCT_SECTIONS = ("## Tracks", "## Why this order", "## Waves", "## Start today", "## Proposed fixes", "## History")
+PRODUCT_DATA = ("## Waves", "## Start today", "## Proposed fixes")
+
+def _num(ident):
+    return int(ident.rsplit("-", 1)[1])
+
+def _is_feature(f):
+    return any(l.lower() == "feature" for l in f["labels"])
+
+def _canceled(f):
+    return f["state"].lower() in fc_tasks.CANCELED
+
+def _waits_on(item, blocks, features):
+    """The feature's derived blockers that are not built yet, by number."""
+    return sorted((b for b, k in blocks if k == item and not (b in features and base_built(features[b]["state"], features[b]["labels"]))),
+                  key=_num)
+
+def _ranked(tracks):
+    waves = track_waves(tracks)
+    return [(n, t) for n, w in enumerate(waves, 1) for t in sorted(w, key=lambda t: t["rank"])]
+
+def order_entries(tracks, features):
+    """What to build, in order: wave, then the track's rank, then its items, then a feature's stories in lane order."""
+    blocks, out = derived_blocks(tracks), []
+    for wave, t in _ranked(tracks):
+        for item in t["items"]:
+            f = features.get(item)
+            if not f or not _is_feature(f) or _canceled(f) or fc_tasks.blocker_finished(f["state"], f["labels"]):
+                continue
+            waits = _waits_on(item, blocks, features)
+            open_stories = [s for s in f.get("stories") or [] if not fc_tasks.blocker_finished(s["state"], s["labels"])]
+            rows = [(s, "story") for s in lane_order(open_stories)] or [(f, "feature")]
+            out += [{"id": s["id"], "title": s["title"], "state": s["state"], "kind": kind, "feature": item, "track": t["name"],
+                     "wave": wave, "waits_on": list(waits)} for s, kind in rows]
+    return out
+
+def product_proposals(tracks, features):
+    """Fixes to offer, never to apply: each says what is off and why."""
+    blocks, started, rest = derived_blocks(tracks), [], []
+    named = {i for t in tracks for i in t["items"]}
+    for _, t in _ranked(tracks):
+        for item in t["items"]:
+            f = features.get(item)
+            if f is None:
+                rest.append(f"{item} is in track {t['name']} but Linear has no issue {item} in this project: drop it from the track.")
+            elif _canceled(f):
+                rest.append(f"{item} {f['title']} is Canceled but in track {t['name']}: drop it from the track, or reopen it.")
+            elif not _is_feature(f):
+                parent = f" ({f['parent']})" if f.get("parent") else ""
+                rest.append(f"{item} {f['title']} in track {t['name']} is not a feature: name its feature{parent} instead, or label it Feature.")
+            elif f["state"].lower() == "in progress" and (waits := _waits_on(item, blocks, features)):
+                started.append(f"{item} {f['title']} is In Progress but waits on {', '.join(waits)} in the plan: "
+                               "its started work goes on; hold it if it must wait.")
+    unnamed = sorted((i for i, f in features.items() if i not in named and _is_feature(f) and not _canceled(f)
+                      and not fc_tasks.blocker_finished(f["state"], f["labels"])), key=_num)
+    return started + rest + [f"{i} {features[i]['title']} is an open feature the plan does not name: add it to a track, or cancel it."
+                             for i in unnamed]
+
+def product_skeleton():
+    return "\n\n".join(f"{h}\n\n{PRODUCT_NEXT}" for h in PRODUCT_SECTIONS) + "\n"
+
+def _wave_item(item, features):
+    f = features.get(item)
+    if f is None:
+        return f"{item} (not in Linear)"
+    extra = f", [its plan]({f['plan_url']})" if f.get("plan_url") else ""
+    return f"[{item}]({f['url']}) {f['title']} ({f['state']}{extra})"
+
+def product_sections(tracks, features, ready, proposals):
+    """The computed sections: Waves, Start today, Proposed fixes."""
+    waves = []
+    for n, group in enumerate(track_waves(tracks), 1):
+        rows = []
+        for t in sorted(group, key=lambda t: t["rank"]):
+            after = f" (after {', '.join(t['after'])})" if t["after"] else ""
+            rows.append(f"- {t['name']}{after}: " + " -> ".join(_wave_item(i, features) for i in t["items"]))
+        waves.append(f"### Wave {n}\n\n" + "\n".join(rows))
+    by_id = {e["id"]: e for e in order_entries(tracks, features)}
+    starts = [by_id[i] for i in ready if i in by_id]
+    return {"## Waves": "\n\n".join(waves) or "No tracks yet.",
+            "## Start today": "\n".join(f"{n}. {e['id']} {e['title']} (feature {e['feature']}, track {e['track']})"
+                                         for n, e in enumerate(starts, 1)) or "Nothing can start now.",
+            "## Proposed fixes": "\n".join(f"{n}. {p}" for n, p in enumerate(proposals, 1)) or "None."}
+
+def with_history(content, line):
+    """Add a line to History: the first one replaces the placeholder, the rest follow."""
+    lines = content.split("\n")
+    span = section_span(lines, "## History")
+    old = [l for l in lines[span[0] + 1:span[1]] if l.strip()] if span else []
+    kept = [] if old == [PRODUCT_NEXT] else old
+    return replace_section(content, "## History", "\n".join(["## History", ""] + kept + [line]))
+
+def seed_tracks(features):
+    """A `## Tracks` body guessed from the open features' feature-to-feature blocks."""
+    openf = {i: f for i, f in features.items() if _is_feature(f) and not fc_tasks.blocker_finished(f["state"], f["labels"])}
+    deps = {i: sorted({b["id"] for b in f["blockers"] if b["id"] in openf and b["id"] != i}, key=_num) for i, f in openf.items()}
+    placed, tracks, home = set(), [], {}
+    while len(placed) < len(openf):
+        ready = [i for i in openf if i not in placed and all(d in placed for d in deps[i])]
+        i = min(ready or [i for i in openf if i not in placed], key=_num)
+        placed.add(i)
+        host = home.get(deps[i][0]) if len(deps[i]) == 1 else None
+        if host is not None and host["items"][-1] == deps[i][0]:
+            host["items"].append(i)
+        else:
+            host = {"name": openf[i]["title"].replace(":", " -"), "items": [i]}
+            used = {t["name"].lower() for t in tracks}
+            if host["name"].lower() in used:
+                host["name"] += " " + i
+            tracks.append(host)
+        home[i] = host
+    lines = []
+    for n, t in enumerate(tracks, 1):
+        after = []
+        for d in sorted({d for i in t["items"][:1] for d in deps[i]}, key=_num):
+            ref = home[d]["name"] if home[d]["items"][-1] == d else d
+            if ref not in after and ref != t["name"]:
+                after.append(ref)
+        lines.append(f"{n}. {t['name']}: {', '.join(t['items'])}" + (f" (after {', '.join(after)})" if after else ""))
+    return "\n".join(lines)

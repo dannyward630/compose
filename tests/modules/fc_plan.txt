@@ -9,6 +9,7 @@ PLAN_NEXT
 plan_skeleton
 with_plan_link
 start_today
+lane_order
 lanes_text
 waves_text
 critical_path_text
@@ -23,3 +24,17 @@ track_waves
 derived_blocks
 blocks_diff
 base_built
+PRODUCT_SECTIONS
+PRODUCT_DATA
+_num
+_is_feature
+_canceled
+_waits_on
+_ranked
+order_entries
+product_proposals
+product_skeleton
+_wave_item
+product_sections
+with_history
+seed_tracks
