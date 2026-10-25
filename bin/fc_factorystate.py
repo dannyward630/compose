@@ -4,7 +4,7 @@ import copy, fcntl, json, time
 import fc_core, fc_config
 
 EMPTY = {"pid": None, "started": None, "stopped": None, "mode": "day", "day_tickets": None, "dispatched": {}, "prints": {}, "offer": None,
-         "declined_until": None, "planning": None, "out_of_order": [], "said": {}}
+         "declined_until": None, "planning": None, "out_of_order": [], "said": {}, "turns": 0, "backoff": {}, "manager_pane": None}
 
 def state_path(repo):
     return fc_core.repo_link(repo).with_name("factory.json")
@@ -67,6 +67,10 @@ def say_once(state, key, line, out):
     if state["said"].get(key) != line:
         state["said"][key] = line
         out.append(line)
+
+def turn_failed(why, story=None, then="the next turn tries again"):
+    """The one turn-failed event line: a turn, or one story's dispatch, that did not go through."""
+    return f'event factory=turn-failed{f" story={story}" if story else ""} why="{why}"  ({then})'
 
 def day_cap(state):
     return state["day_tickets"] or fc_config.FACTORY["day_tickets"]

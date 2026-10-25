@@ -60,7 +60,7 @@ def edit(repo):
         yield state
         fc_factorystate.save_state(repo, state)
 
-HUMAN_KEYS = ("stopped", "day_tickets", "planning", "declined_until")  # set by verbs while a turn runs: the disk's value wins
+HUMAN_KEYS = ("stopped", "day_tickets", "planning", "declined_until", "manager_pane")  # set by verbs while a turn runs: the disk's value wins
 
 def _merge(repo, state, before):
     """Save the turn's state, keeping what a verb changed on disk while the turn ran. Returns the merged state."""
@@ -73,6 +73,18 @@ def _merge(repo, state, before):
             state["said"].pop("offer")  # declined meanwhile
         disk.clear(); disk.update(state)
     return state
+
+def _saved(repo, story, record):
+    """Put one dispatch on disk as it happens: a crash later in the turn must not lose it (and start the story again)."""
+    with edit(repo) as disk:
+        disk["dispatched"][story] = record
+
+def _pane(repo):
+    """Record the engineering manager's current herdr pane: the loop starts team leads from it, not from the pane that started the loop."""
+    pane = os.environ.get("HERDR_PANE_ID")
+    if pane and fc_factorystate.load_state(repo)["manager_pane"] != pane:
+        with edit(repo) as state:
+            state["manager_pane"] = pane
 
 def run_loop(repo, turns=None):
     """One turn after another until SIGTERM or a stop (after the turn it is in) or `turns` are done. Only the loop writes pid and started."""
@@ -97,10 +109,10 @@ def run_loop(repo, turns=None):
                 state = fc_factorystate.load_state(repo)
                 before = copy.deepcopy(state)
                 try:
-                    lines = fc_factoryturn.turn(repo, state, time.time())
-                except Exception as e:
+                    lines = fc_factoryturn.turn(repo, state, time.time(), stopping=lambda: bool(stop), saved=lambda story, record: _saved(repo, story, record))
+                except Exception as e:  # turn keeps its own lines on a failure; this is the last guard
                     traceback.print_exc()
-                    lines = [f'event factory=turn-failed why="{type(e).__name__}: {e}"  (the next turn tries again)']
+                    lines = [fc_factorystate.turn_failed(f"{type(e).__name__}: {e}")]
                 for line in lines:
                     fc_factorystate.add_event(repo, line)
                 if _merge(repo, state, before)["stopped"]:
@@ -108,7 +120,7 @@ def run_loop(repo, turns=None):
             except Exception as e:  # the state or the log could not be read or written
                 traceback.print_exc()
                 try:
-                    fc_factorystate.add_event(repo, f'event factory=turn-failed why="{type(e).__name__}: {e}"  (the next turn tries again)')
+                    fc_factorystate.add_event(repo, fc_factorystate.turn_failed(f"{type(e).__name__}: {e}"))
                 except Exception:
                     traceback.print_exc()
             done += 1
@@ -150,7 +162,8 @@ def verb_start(a, repo):
     if running(repo):
         sys.exit(f'factory: already running (pid {state["pid"]}); compose factory status shows it')
     with edit(repo) as state:
-        state["stopped"] = None
+        state["stopped"], state["pid"] = None, None  # the old pid would read as a lost loop until the new one takes the lock
+        state["manager_pane"] = os.environ.get("HERDR_PANE_ID") or state["manager_pane"]
     pid = spawn_loop(repo)
     for _ in range(30):  # the loop takes its lock a moment after it starts
         if running(repo):
@@ -197,10 +210,17 @@ def _seen_path(repo):
 
 def verb_watch(a, repo):
     path = _seen_path(repo)
+    _pane(repo)
     try:
         mem = json.loads(path.read_text())
     except (OSError, ValueError):
-        mem = {}
+        mem = None
+    if not isinstance(mem, dict):  # a new watcher starts at the log's end: replaying old events would have it act on each again
+        seen = max([e["n"] for e in fc_factorystate.events_since(repo, 0)], default=0)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fc_core.atomic_write(path, json.dumps({"seen": seen, "lost": None}))
+        print(f"[{fc_core.now()}] event factory=watching from={seen}  (earlier events: compose factory status)")
+        return
     seen, lost = mem.get("seen", 0), mem.get("lost")
     deadline = None if a.timeout is None else time.monotonic() + float(a.timeout)
     while True:

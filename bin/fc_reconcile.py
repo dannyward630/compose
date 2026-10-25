@@ -432,7 +432,11 @@ def touched(features, chains, changes):
 
 def live_leads(repo):
     """Project slug to its team lead's name, for each project whose crew record matches a live herdr agent by name and workspace."""
-    agents, out = fc_herdr.live_agents(), {}
+    return leads_among(repo, fc_herdr.live_agents())
+
+def leads_among(repo, agents):
+    """live_leads over a given herdr agent list."""
+    out = {}
     for slug, (_, proj) in sorted(fc_core.all_projects(Path(repo).resolve()).items()):
         c = fc_crew.crew_record(proj, fc_herdr.agent_name(slug, "orchestrator"))
         if c and any(ag.get("name") == c.get("agent", c["name"]) and ag.get("workspace_id") == c.get("space") for ag in agents):

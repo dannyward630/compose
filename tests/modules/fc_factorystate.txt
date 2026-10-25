@@ -7,6 +7,7 @@ _read_events
 add_event
 events_since
 say_once
+turn_failed
 day_cap
 PACE
 pace

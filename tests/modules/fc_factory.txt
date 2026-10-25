@@ -8,6 +8,8 @@ running
 edit
 HUMAN_KEYS
 _merge
+_saved
+_pane
 run_loop
 status_lines
 _exited

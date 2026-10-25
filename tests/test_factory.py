@@ -154,8 +154,8 @@ class Dispatch(unittest.TestCase):
         self.plan = plan_of(NEB_9=[story("NEB-10"), story("NEB-11"), story("NEB-12")])
         self.plan["features"]["NEB-9"].update(title="Sign in", blockers=[])
         self.proj = self.wt / ".compose" / "sign-in"
-        for name, new in (("all_projects", lambda repo: dict(self.projects)), ("live_leads", lambda repo: dict(self.leads))):
-            mod = ft.fc_core if name == "all_projects" else ft.fc_reconcile
+        for name, new in (("all_projects", lambda repo: dict(self.projects)), ("leads_or_none", lambda repo: None if self.leads is None else dict(self.leads))):
+            mod = ft.fc_core if name == "all_projects" else ft
             pa = unittest.mock.patch.object(mod, name, new); pa.start(); self.addCleanup(pa.stop)
         self.cli = unittest.mock.Mock(side_effect=self.fake_cli); self.prompt = unittest.mock.Mock(return_value=True)
         for name, m in (("compose_cli", self.cli), ("prompt_lead", self.prompt)):
@@ -165,7 +165,7 @@ class Dispatch(unittest.TestCase):
         self.proj = self.wt / ".compose" / slug; self.proj.mkdir(parents=True, exist_ok=True)
         (self.proj / "linear.json").write_text(json.dumps(linear)); self.projects[slug] = (self.wt, self.proj)
 
-    def fake_cli(self, args, stdin=None):
+    def fake_cli(self, args, stdin=None, pane=None):
         if args[0] == "init":
             self.make_project(args[args.index("--project") + 1], {})
             (self.proj / "linear.json").unlink()
@@ -204,10 +204,10 @@ class Dispatch(unittest.TestCase):
         self.assertEqual(self.cli.call_args_list[0].args[0][-2:], ["--after", "profile"])
 
     def test_a_failed_start_records_nothing(self):
-        def boom(args, stdin=None):
+        def boom(args, stdin=None, pane=None):
             if args[0] == "crew":
                 raise RuntimeError("herdr is not running")
-            return self.fake_cli(args, stdin)
+            return self.fake_cli(args, stdin, pane)
         self.cli.side_effect = boom
         with self.assertRaises(RuntimeError):
             ft.dispatch(self.repo, self.plan, entry("NEB-10", "NEB-9"), "build", self.state, 100.0)
@@ -220,12 +220,25 @@ class Dispatch(unittest.TestCase):
             ft.dispatch(self.repo, self.plan, entry("NEB-11", "NEB-9"), "build", self.state, 100.0)
         self.assertEqual((self.state["dispatched"], json.loads((self.proj / "linear.json").read_text())["stories"]), ({}, ["NEB-10"]))
 
+    def test_herdr_not_answering_starts_and_prompts_nothing(self):
+        self.make_project("sign-in", {"feature": "NEB-9", "stories": ["NEB-10"]}); self.leads = None
+        with self.assertRaises(RuntimeError) as e:
+            ft.dispatch(self.repo, self.plan, entry("NEB-11", "NEB-9"), "build", self.state, 100.0)
+        self.assertEqual(str(e.exception), "herdr did not answer; the next turn tries again")
+        self.cli.assert_not_called(); self.prompt.assert_not_called()
+        self.assertEqual((self.state["dispatched"], json.loads((self.proj / "linear.json").read_text())["stories"]), ({}, ["NEB-10"]))
+
+    def test_the_stored_manager_pane_makes_the_project_and_starts_the_lead(self):
+        self.state["manager_pane"] = "p9"
+        ft.dispatch(self.repo, self.plan, entry("NEB-10", "NEB-9"), "build", self.state, 100.0)
+        self.assertEqual([c.kwargs.get("pane") for c in self.cli.call_args_list], ["p9", "p9"])
+
     def test_the_turn_after_a_failed_start_retries_with_only_crew_start(self):
         real = self.cli.side_effect
-        def boom(args, stdin=None):
+        def boom(args, stdin=None, pane=None):
             if args[0] == "crew":
                 raise RuntimeError("herdr is not running")
-            return real(args, stdin)
+            return real(args, stdin, pane)
         self.cli.side_effect = boom
         with self.assertRaises(RuntimeError):
             ft.dispatch(self.repo, self.plan, entry("NEB-10", "NEB-9"), "build", self.state, 100.0)
@@ -260,6 +273,27 @@ class Dispatch(unittest.TestCase):
         self.assertEqual(ft.slug_for("Sign in", {"sign-in"}), "sign-in-2")
 
 
+class ComposeCli(unittest.TestCase):
+    def test_leads_or_none_tells_a_failed_agent_list_from_no_leads(self):
+        repo = Path("/repo")
+        with unittest.mock.patch.object(ft.fc_herdr, "herdr", return_value=None):
+            self.assertIsNone(ft.leads_or_none(repo))
+        with unittest.mock.patch.object(ft.fc_herdr, "herdr", return_value={"agents": []}), \
+             unittest.mock.patch.object(ft.fc_reconcile, "leads_among", return_value={"sign-in": "sign-in-orchestrator"}) as among:
+            self.assertEqual(ft.leads_or_none(repo), {"sign-in": "sign-in-orchestrator"})
+        among.assert_called_once_with(repo, [])
+
+    def test_the_stored_pane_is_the_childs_herdr_pane_and_the_role_is_dropped(self):
+        done = subprocess.CompletedProcess([], 0, "ok", "")
+        with unittest.mock.patch.dict(os.environ, {"HERDR_PANE_ID": "old", "COMPOSE_ROLE": "orchestrator"}), \
+             unittest.mock.patch.object(ft.subprocess, "run", return_value=done) as run:
+            self.assertEqual(ft.compose_cli(["status"], pane="p9"), "ok")
+            ft.compose_cli(["status"])
+        envs = [c.kwargs["env"] for c in run.call_args_list]
+        self.assertEqual([e["HERDR_PANE_ID"] for e in envs], ["p9", "old"])
+        self.assertFalse(any("COMPOSE_ROLE" in e for e in envs))
+
+
 FEATURE = "## Decisions so far\n\n- D1: Google only (product owner)\n- D2: 30 day sessions\n"
 
 
@@ -279,9 +313,18 @@ class PlanChange(unittest.TestCase):
     def test_a_changed_decision_passes_its_ids_and_one_without_an_id_passes_the_story(self):
         a = ft.fingerprint("## Decisions so far\n\n- D1: Google only (product owner)\n- D2: 30 day sessions\n", "s")
         b = ft.fingerprint("## Decisions so far\n\n- ~~D1: Google only~~ (C1)\n- D2: 30 day sessions\n- D3: Google and Apple\n", "s")
-        self.assertEqual(ft.changed_refs(a, b, "NEB-10"), ["D1", "D3"])
+        self.assertEqual(ft.changed_refs(a, b, "NEB-10"), ["D1"])  # struck; the added D3 changes no course
+        reworded = ft.fingerprint("## Decisions so far\n\n- D1: Google only (product owner)\n- D2: 7 day sessions\n", "s")
+        self.assertEqual(ft.changed_refs(a, reworded, "NEB-10"), ["D2"])
+        self.assertEqual(ft.changed_refs(a, ft.fingerprint("## Decisions so far\n\n- D2: 30 day sessions\n", "s"), "NEB-10"), ["D1"])
         c, d = ft.fingerprint("## Decisions so far\n\n- one store\n", "s"), ft.fingerprint("## Decisions so far\n\n- two stores\n", "s")
         self.assertEqual(ft.changed_refs(c, d, "NEB-10"), ["NEB-10"])
+        self.assertEqual(ft.changed_refs(c, ft.fingerprint("## Decisions so far\n\n- one store\n- a cache\n", "s"), "NEB-10"), [])
+
+    def test_confirming_an_away_decision_changes_nothing(self):
+        a = ft.fingerprint("## Decisions so far\n\n- D1: Google only (away, 2026-10-26)\n- keep one store (away, 2026-10-26)\n", "s")
+        b = ft.fingerprint("## Decisions so far\n\n- D1: Google only (product owner)\n- keep one store (product owner)\n", "s")
+        self.assertEqual(ft.changed_refs(a, b, "NEB-10"), [])
 
     def test_hold_changed_holds_what_rests_on_the_refs_or_says_nothing_does(self):
         self.rests_on.return_value = {"002": "cites D1", "003": "under NEB-10"}
@@ -327,7 +370,7 @@ class Turn(unittest.TestCase):
                              (ft.fc_plan, "order_entries", lambda tracks, features: [dict(e) for e in self.entries]),
                              (ft.fc_readiness, "story_readiness", lambda repo, s, **kw: self.results[s]),
                              (ft.fc_load, "held", self.held), (ft.fc_linear, "linear_issue", issue),
-                             (ft.fc_reconcile, "live_leads", lambda repo: dict(self.leads)),
+                             (ft, "leads_or_none", lambda repo: None if self.leads is None else dict(self.leads)),
                              (ft, "dispatch", self.dispatch), (ft, "hold_changed", self.hold_changed),
                              (ft, "project_for", lambda repo, feature: ("sign-in", self.wt, self.wt / "sign-in"))):
             pa = unittest.mock.patch.object(mod, name, m); pa.start(); self.addCleanup(pa.stop)
@@ -457,6 +500,108 @@ class Turn(unittest.TestCase):
         self.dispatch.assert_called()
 
 
+    def dispatched(self):
+        return [c.args[2]["id"] for c in self.dispatch.call_args_list]
+
+    def fail_dispatch(self, failing):
+        real = self.dispatch.side_effect
+        def dispatch(repo, plan, e, kind, state, now):
+            if e["id"] in failing:
+                raise failing[e["id"]]
+            return real(repo, plan, e, kind, state, now)
+        self.dispatch.side_effect = dispatch
+
+    def test_herdr_not_answering_loses_no_lead_and_starts_nothing_twice(self):
+        self.state["dispatched"] = {"NEB-11": {"feature": "NEB-9", "project": "sign-in", "kind": "build", "at": 1.0}}
+        self.leads = None
+        lines = ft.turn(self.repo, self.state, 100.0)
+        self.assertFalse([l for l in lines if "lead-lost" in l])
+        self.assertIn("NEB-11", self.state["dispatched"]); self.assertNotIn("NEB-11", self.dispatched())
+
+    def test_a_dispatch_that_herdr_fails_ends_the_turns_dispatch_without_a_backoff(self):
+        self.fail_dispatch({"NEB-10": ft.HerdrDown("herdr did not answer; the next turn tries again")})
+        lines = ft.turn(self.repo, self.state, 100.0)
+        self.assertEqual((self.dispatched(), self.state["backoff"]), (["NEB-10"], {}))
+        self.assertIn('event factory=turn-failed why="herdr did not answer"  (the next turn tries again)', lines)
+
+    def test_a_crash_after_a_dispatch_keeps_the_lines_already_made(self):
+        self.fail_dispatch({"NEB-11": TypeError("bad record")})
+        with unittest.mock.patch("traceback.print_exc"):
+            lines = ft.turn(self.repo, self.state, 100.0)
+        self.assertEqual(lines, ["event factory=dispatched story=NEB-10",
+                                 'event factory=turn-failed why="TypeError: bad record"  (the next turn tries again)'])
+
+    def test_a_failing_dispatch_backs_off_and_the_rest_still_start(self):
+        self.leads["sign-in"] = "sign-in-orchestrator"
+        self.fail_dispatch({"NEB-10": RuntimeError("crew start: no space")})
+        lines = ft.turn(self.repo, self.state, 100.0)
+        self.assertEqual(self.dispatched(), ["NEB-10", "NEB-11"])
+        self.assertEqual(lines[0], 'event factory=turn-failed story=NEB-10 why="crew start: no space"  (it waits 3 turns; the rest go on)')
+        self.assertEqual(self.state["backoff"], {"NEB-10": {"why": "crew start: no space", "until_turn": 4}})
+        for now in (200.0, 300.0, 400.0):
+            self.dispatch.reset_mock(); self.assertEqual(ft.turn(self.repo, self.state, now), [])
+            self.dispatch.assert_not_called()
+        self.dispatch.reset_mock(); self.assertEqual(ft.turn(self.repo, self.state, 500.0), [])  # the same why is not said again
+        self.assertEqual(self.dispatched(), ["NEB-10"])
+        self.fail_dispatch({}); self.dispatch.side_effect = None; self.dispatch.return_value = "event factory=dispatched story=NEB-10"
+        for now in (600.0, 700.0, 800.0, 900.0):
+            ft.turn(self.repo, self.state, now)
+        self.assertEqual(self.dispatched()[-1], "NEB-10")
+        self.assertEqual((self.state["backoff"], [k for k in self.state["said"] if k.startswith("backoff:")]), ({}, []))
+
+    def test_a_stop_on_disk_during_the_turn_stops_the_next_dispatch(self):
+        d = tempfile.TemporaryDirectory(); self.addCleanup(d.cleanup); self.repo = Path(d.name).resolve()
+        real = self.dispatch.side_effect
+        def dispatch(repo, plan, e, kind, state, now):
+            s = st.load_state(repo); s["stopped"] = 5.0; st.save_state(repo, s)
+            return real(repo, plan, e, kind, state, now)
+        self.dispatch.side_effect = dispatch
+        ft.turn(self.repo, self.state, 100.0)
+        self.assertEqual(self.dispatched(), ["NEB-10"])
+
+    def test_a_sigterm_during_the_turn_stops_dispatch_and_turn_still_takes_three_arguments(self):
+        ft.turn(self.repo, self.state, 100.0, stopping=lambda: True)
+        self.dispatch.assert_not_called()
+        self.state["dispatched"] = {}; ft.turn(self.repo, self.state, 200.0)
+        self.assertEqual(self.dispatched(), ["NEB-10", "NEB-11"])
+
+    def test_saved_gets_each_dispatch_as_it_happens(self):
+        saved = unittest.mock.Mock()
+        ft.turn(self.repo, self.state, 100.0, saved=saved)
+        rec = lambda s: {"feature": "NEB-9", "project": "sign-in", "kind": "build", "at": 100.0}
+        self.assertEqual(saved.call_args_list, [unittest.mock.call("NEB-10", rec("NEB-10")), unittest.mock.call("NEB-11", rec("NEB-11"))])
+
+    def test_an_in_progress_story_without_its_lead_is_said_once_and_dropped(self):
+        self.state["dispatched"] = {"NEB-10": {"feature": "NEB-9", "project": "sign-in", "kind": "build", "at": 1.0}}
+        self.set_states(**{"NEB-10": "In Progress"})
+        lines = ft.turn(self.repo, self.state, 100.0) + ft.turn(self.repo, self.state, 200.0)
+        self.assertEqual([l for l in lines if "lead-lost story=NEB-10" in l], ["event factory=lead-lost story=NEB-10 project=sign-in state=In-Progress  "
+                         "(its team lead is gone and the story is not in Todo: start its lead again or move the story back to Todo)"])
+        self.assertNotIn("NEB-10", self.state["dispatched"]); self.assertNotIn("NEB-10", self.dispatched())
+
+    def test_a_dispatched_story_that_left_the_plan_is_dropped(self):
+        self.state["dispatched"] = {"NEB-50": {"feature": "NEB-49", "project": "gone", "kind": "build", "at": 1.0}}
+        self.assertIn("event factory=dropped story=NEB-50  (it left the product delivery plan)", ft.turn(self.repo, self.state, 100.0))
+        self.assertNotIn("NEB-50", self.state["dispatched"])
+
+    def test_planning_older_than_a_day_no_longer_holds_offers(self):
+        self.make_nothing_ready(missing="scope: What is out?")
+        self.state["planning"] = {"id": "NEB-30", "at": 1.0}
+        self.assertEqual(ft.turn(self.repo, self.state, 1.0 + 23 * 3600), [])
+        self.assertEqual(len(ft.turn(self.repo, self.state, 1.0 + 25 * 3600)), 1)
+
+    def test_move_up_judges_at_most_two_stories_a_turn(self):
+        self.state["out_of_order"] = ["NEB-30"]
+        for n in range(31, 36):
+            self.add_entry(f"NEB-{n}", "NEB-30", waits_on=("NEB-9",)); self.results[f"NEB-{n}"] = rd(f"NEB-{n}", ready=False, specced=False)
+        seen = []
+        def readiness(repo, s, **kw):
+            seen.append((s, kw.get("write"))); return self.results[s]
+        with unittest.mock.patch.object(ft.fc_readiness, "story_readiness", readiness):
+            ft.turn(self.repo, self.state, 100.0)
+        self.assertEqual(len([s for s, write in seen if write is False]), ft.MOVE_UP_JUDGES)
+
+
 class Verbs(unittest.TestCase):
     def setUp(self):
         import argparse, fcntl, time
@@ -509,13 +654,16 @@ class Verbs(unittest.TestCase):
 
     def test_start_spawns_the_loop_and_says_so(self):
         mock = self.mock
-        self.save(stopped=5.0)
+        self.save(stopped=5.0, pid=999999, manager_pane="old")  # the last loop's pid: no loop-lost before the new one takes the lock
         def spawn(repo):
+            self.assertEqual((st.load_state(repo)["pid"], st.load_state(repo)["stopped"]), (None, None))
             self.hold_lock(); return 4242  # the loop is up and holds its lock
-        with mock.patch.object(fc.fc_factory.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_factory, "spawn_loop", spawn):
+        with mock.patch.object(fc.fc_factory.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_factory, "spawn_loop", spawn), \
+             mock.patch.dict(os.environ, {"HERDR_PANE_ID": "p9"}):
             out = self.verb("start")
         self.assertEqual(out, "factory: started (pid 4242), day pace 2 tickets at once; compose factory watch wakes you on its events\n")
-        self.assertEqual((st.load_state(self.repo)["pid"], st.load_state(self.repo)["stopped"]), (None, None))
+        s = st.load_state(self.repo)
+        self.assertEqual((s["pid"], s["stopped"], s["manager_pane"]), (None, None, "p9"))
 
     def test_start_says_so_when_the_loop_dies_at_once(self):
         mock = self.mock
@@ -530,7 +678,7 @@ class Verbs(unittest.TestCase):
     def test_a_stop_during_a_turn_survives_it_and_ends_the_loop(self):
         mock = self.mock
         turns = []
-        def turn(repo, state, now):
+        def turn(repo, state, now, **kw):
             turns.append(now); self.verb("stop"); self.verb("pace", "3"); return ["event factory=x"]
         with mock.patch.object(fc.fc_factoryturn, "turn", turn):
             fc.fc_factory.run_loop(self.repo, turns=3)
@@ -541,7 +689,7 @@ class Verbs(unittest.TestCase):
     def test_a_decline_and_a_plan_during_a_turn_survive_it(self):
         mock = self.mock
         self.save(said={"offer": "x"}, out_of_order=["NEB-30", "NEB-31"])
-        def turn(repo, state, now):
+        def turn(repo, state, now, **kw):
             state["out_of_order"].remove("NEB-31")
             self.verb("decline"); self.verb("plan", "NEB-40"); return []
         with mock.patch.object(fc.fc_factoryturn, "turn", turn):
@@ -554,11 +702,21 @@ class Verbs(unittest.TestCase):
         import signal
         mock = self.mock
         turns = []
-        def turn(repo, state, now):
-            turns.append(now); os.kill(os.getpid(), signal.SIGTERM); return ["event factory=x"]
+        def turn(repo, state, now, **kw):
+            turns.append(kw["stopping"]()); os.kill(os.getpid(), signal.SIGTERM); turns.append(kw["stopping"]()); return ["event factory=x"]
         with mock.patch.object(fc.fc_factoryturn, "turn", turn):
             fc.fc_factory.run_loop(self.repo)
-        self.assertEqual((len(turns), len(st.events_since(self.repo, 0))), (1, 1))
+        self.assertEqual((turns, len(st.events_since(self.repo, 0))), ([False, True], 1))
+
+    def test_each_dispatch_reaches_disk_during_the_turn(self):
+        mock = self.mock
+        rec, on_disk = {"feature": "NEB-9", "project": "sign-in", "kind": "build", "at": 1.0}, []
+        def turn(repo, state, now, **kw):
+            state["dispatched"]["NEB-10"] = rec; kw["saved"]("NEB-10", rec)
+            on_disk.append(st.load_state(repo)["dispatched"]); return []
+        with mock.patch.object(fc.fc_factoryturn, "turn", turn):
+            fc.fc_factory.run_loop(self.repo, turns=1)
+        self.assertEqual((on_disk, st.load_state(self.repo)["dispatched"]), ([{"NEB-10": rec}], {"NEB-10": rec}))
 
     def test_a_state_write_that_fails_is_a_turn_failed_event_and_the_loop_goes_on(self):
         mock = self.mock
@@ -626,11 +784,22 @@ class Verbs(unittest.TestCase):
 
     def test_watch_prints_new_events_and_says_when_the_loop_is_gone(self):
         self.save(pid=999999)  # no such process, never stopped
+        fc.fc_factory._seen_path(self.repo).write_text(json.dumps({"seen": 0}))
         st.add_event(self.repo, "event factory=offer ticket=NEB-10")
         out = self.verb("watch", timeout=5).splitlines()
         self.assertTrue(out[0].endswith("event factory=offer ticket=NEB-10"))
         self.assertTrue(out[1].endswith("event factory=loop-lost  (the loop is not running: compose factory start runs it again; its state is on disk)"))
         self.assertTrue(self.verb("watch", timeout=1, expect_exit=2).strip().endswith("event timeout"))
+
+    def test_a_new_watcher_starts_at_the_logs_end_and_records_its_pane(self):
+        for i in range(3):
+            st.add_event(self.repo, f"event factory=x n={i}")
+        with self.mock.patch.dict(os.environ, {"HERDR_PANE_ID": "p9"}):
+            out = self.verb("watch", timeout=5)
+        self.assertRegex(out, r"^\[[\d:]+\] event factory=watching from=3  \(earlier events: compose factory status\)\n$")
+        self.assertEqual(st.load_state(self.repo)["manager_pane"], "p9")
+        st.add_event(self.repo, "event factory=y")
+        self.assertTrue(self.verb("watch", timeout=5).strip().endswith("event factory=y"))
 
     def test_pace_sets_the_cap_and_decline_snoozes_offers(self):
         self.assertEqual(self.verb("pace", "3"), "factory: day pace 3 tickets at once (was 2); nothing running is stopped\n")
