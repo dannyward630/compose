@@ -125,6 +125,10 @@ class FcConfig(ModuleChecks, unittest.TestCase):
         self.assertEqual(set(expressions(parse("compose.py"))) & set(SETDEFAULTS), set())
 
 
+class FcFactorystate(ModuleChecks, unittest.TestCase):
+    module = "fc_factorystate"
+
+
 class FcInit(ModuleChecks, unittest.TestCase):
     module = "fc_init"
 

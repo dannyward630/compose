@@ -100,4 +100,5 @@ fc_sleep
 fc_stall
 fc_watch
 fc_yolo
+fc_factorystate
 fc_bench
