@@ -561,7 +561,7 @@ class PlannerRules(unittest.TestCase):
 
     def test_the_seven_spec_checks_come_in_numbered_order(self):
         at = -1
-        for n, kw in enumerate(("Not yet specified", "### Codebase brief", "traceable", "trail ask", "protected:", "open how", "contract"), 1):
+        for n, kw in enumerate(("Settled design: Intent", "### Codebase brief", "traceable", "trail ask", "protected:", "open how", "contract"), 1):
             i = self.brief.find(kw, at + 1)
             self.assertGreater(i, at, f"spec check {n} ({kw}) missing or out of order")
             at = i
@@ -616,7 +616,7 @@ class LeanPlannerBrief(unittest.TestCase):
     def test_the_step_keeps_its_anchors_in_order(self):
         flat = " ".join(self.brief.split())
         at = -1
-        for kw in ("Stories missing", "draft the proposal on the issue", "in ship order",
+        for kw in ("Stories missing", "draft the proposal under `## Proposed stories` on the issue", "in ship order",
                    'report needs-user "stories <issue>: <n> drafted on the issue"', "`compose linear create` the stories", "Then check and cut each story"):
             i = flat.find(kw, at + 1)
             self.assertGreater(i, at, f"{kw} missing or out of order")
@@ -644,16 +644,17 @@ class LeanPlannerBrief(unittest.TestCase):
 class TersePlannerBrief(unittest.TestCase):
     """The planner brief is terse: it fits its caps, and its Feature bullet carries the exact terse lines."""
     FEATURE = (
-        '     No plan: write `## Plan` in the feature description with `compose linear update <id> --section "## Plan" --file <path>`:',
-        '     a header (Goal, Architecture, Global constraints, Review focus: the five inputs most likely to bite a user, each',
-        '     pinned by a test), a file map, then numbered steps, each with files touched, the exact signature it adds, the test',
-        '     that proves it, and dependencies; settled decisions are not reopened. Code only where the implementer cannot derive',
-        "     it; an unknown the plan cannot settle is a spike task whose answer goes on the issue's Notes. Stories missing:",
-        '     draft the proposal on the issue, in ship order. Each story is the thinnest slice that works end to end and unblocks',
-        '     the next, at most 5 criteria. Split cues: "all", "every", several When/Then pairs, several outside systems. No',
-        '     split fits: a time-boxed probe answers the unknown first, then the split. Then `report needs-user "stories <issue>:',
-        '     <n> drafted on the issue"`; the engineering manager plays it back; on its go, `compose linear create` the stories.',
-        '     Then check and cut each story.',
+        '     No plan: write it with `compose linear update <id> --section "## Plan" --file <path>`: a header (Goal,',
+        '     Architecture, Global constraints, Review focus: the five inputs most likely to bite a user, each pinned by',
+        '     a test), a file map, then numbered steps, each with files touched, the exact signature it adds, the test',
+        '     that proves it, and dependencies; settled decisions are not reopened. Code only where the implementer',
+        "     cannot derive it; an unknown the plan cannot settle is a spike task whose answer goes on the issue's",
+        '     Notes. Stories missing: draft the proposal under `## Proposed stories` on the issue, in ship order. Each',
+        '     story is the thinnest slice that works end to end and unblocks the next, at most 5 criteria. Split cues:',
+        '     "all", "every", several When/Then pairs, several outside systems. No split fits: a time-boxed probe',
+        '     answers the unknown first, then the split. Then `report needs-user "stories <issue>: <n> drafted on the',
+        '     issue"`; the engineering manager plays it back; on its go, `compose linear create` the stories, labeled',
+        '     `deep-dive` where the go says, then remove `## Proposed stories`. Then check and cut each story.',
     )
 
     def test_the_brief_and_the_module_fit_their_caps(self):
@@ -666,6 +667,28 @@ class TersePlannerBrief(unittest.TestCase):
         first = next(n for n, l in enumerate(lines) if l.lstrip().startswith("- Feature: "))
         self.assertTrue(lines[first].endswith("and it has a `## Plan`."), lines[first])
         self.assertEqual(tuple(lines[first + 1:first + 1 + len(self.FEATURE)]), self.FEATURE)
+
+
+class PlannerBriefReadsTheBrainstorm(unittest.TestCase):
+    """The planner checks the brainstormed design, routes a deep-dive story with no tech doc back, and drafts stories in one section."""
+    def flat(self):
+        return " ".join(fc_planner_brief.PLANNER_BRIEF.split())
+
+    def test_the_design_is_approved_by_its_decision_line_and_empty_open_questions(self):
+        flat = self.flat()
+        self.assertIn("- Feature: check the design is approved (Decisions so far has `the design on <id> is approved`, `## Open questions` empty),", flat)
+        self.assertIn("1. Settled design: Intent, Decisions so far, Open questions empty.", flat)
+        for gone in ("Destination", "Not yet specified empty", "design is settled"):
+            self.assertNotIn(gone, flat)
+
+    def test_a_deep_dive_story_with_no_tech_doc_is_skipped_and_the_rest_are_cut(self):
+        self.assertIn('report `needs-user "deep-dive <story>: no tech doc"`, skip that story and cut the others.', self.flat())
+        self.assertNotIn("None yet: needs-user, stop.", self.flat())
+
+    def test_the_story_proposal_has_its_own_section_removed_once_the_stories_exist(self):
+        flat = self.flat()
+        self.assertIn("draft the proposal under `## Proposed stories` on the issue, in ship order.", flat)
+        self.assertIn("`compose linear create` the stories, labeled `deep-dive` where the go says, then remove `## Proposed stories`.", flat)
 
 
 class PlanJudgmentBrief(unittest.TestCase):
