@@ -125,6 +125,8 @@ def record(body, answers, tag, change=None):
     for cid, answer in answers:
         old = decided_line(body, cid)
         if cid not in cards or answer is None:
+            if not old and cid in cards:
+                sys.exit(f"not recorded: {cid} is an open card with no answer recorded; give one, e.g. \"{cid}: A\"")
             if not old:
                 sys.exit(f"not recorded: no card {cid} under Not yet specified; the open cards are {', '.join(cards) or 'none'}")
             if "unconfirmed" not in old:
@@ -187,8 +189,18 @@ def cmd_decide(a):
         sys.exit('decide needs answers ("Q1: A" ...), --new, or --accept-all')
     issue = map_issue(proj, a)
     lid, ident, body = read_map(issue)
-    if replaces and not decided_line(body, replaces):
-        sys.exit(f"not recorded: {replaces} is not a live decision on {ident}; --replaces names a D line that is not struck through")
+    if replaces:
+        old = decided_line(body, replaces)
+        if not old:
+            sys.exit(f"not recorded: {replaces} is not a live decision on {ident}; --replaces names a D line that is not struck through")
+        if getattr(a, "change", None):
+            sys.exit("not recorded: --replaces does not go with --change; a change of course strikes through the card's Supersedes: line")
+        if fc_linear.linear_children(ident):
+            sys.exit(f"not recorded: {ident} already has stories or tasks, so {replaces} changes through a change of course: compose change start")
+        if not quote and "unconfirmed" not in old:
+            sys.exit(f'not recorded: {replaces} is confirmed; replacing it needs the product owner\'s words: add --quote "<their message, verbatim>"')
+    if not quote and any(ans is None for _, ans in parse_answers(a.answers or [])):
+        sys.exit('not recorded: confirming a recorded decision needs the product owner\'s words: add --quote "<their message, verbatim>"')
     cards = fc_ask.cards_in(fc_change.map_section(body, OPEN))
     answers = parse_answers(a.answers or [])
     if a.accept_all:

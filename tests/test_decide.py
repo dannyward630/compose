@@ -45,12 +45,15 @@ class FakeLinear:
     def __init__(self, body):
         self.body = body
         self.writes = []
+        self.children = []
 
     def gql(self, query, variables):
         if "issueUpdate" in query:
             self.writes.append(variables["in"]["description"])
             self.body = variables["in"]["description"]
             return {"issueUpdate": {"success": True}}
+        if "children" in query:
+            return {"issue": {"children": {"nodes": self.children, "pageInfo": {"hasNextPage": False, "endCursor": None}}}}
         return {"issue": {"id": "uuid-1", "identifier": "NEB-1", "description": self.body}}
 
 
@@ -233,6 +236,38 @@ class Decide(unittest.TestCase):
         self.assertIn(f'- D3: two stores (product owner, {TODAY}; said: "two")', body)
         self.assertIn("- D2: dark", body)
 
+    def yolo(self):
+        (self.proj / "results" / "yolo.json").write_text(json.dumps({"mode": "yolo", "since": "2026-10-24 08:00:00", "decisions": [], "words": "", "push": False}))
+
+    def refuses(self, want, *a, **kw):
+        before = self.linear.body
+        with self.assertRaises(SystemExit) as e:
+            self.decide(*a, **kw)
+        self.assertIn(want, str(e.exception.code))
+        self.assertEqual((self.linear.writes, self.linear.body), ([], before))
+
+    def test_replaces_refuses_once_the_feature_has_children(self):
+        self.recorded('- D1: one store (product owner, 2026-10-20; said: "ok")')
+        self.linear.children = [{"id": "c1"}]
+        self.refuses("NEB-1 already has stories or tasks, so D1 changes through a change of course: compose change start", new=["x"], replaces="D1", quote="q")
+
+    def test_replacing_a_confirmed_line_needs_a_quote_under_yolo(self):
+        self.recorded('- D1: one store (product owner, 2026-10-20; said: "ok")')
+        self.yolo()
+        self.refuses("--quote", new=["x"], replaces="D1")
+
+    def test_a_bare_id_without_a_quote_refuses_under_yolo(self):
+        self.recorded("- D1: one store (yolo recommendation, unconfirmed, 2026-10-21)")
+        self.yolo()
+        self.refuses("--quote", "D1")
+
+    def test_a_bare_id_naming_an_open_card_says_to_give_an_answer(self):
+        self.refuses("give one", "Q1", quote="yes")
+
+    def test_replaces_does_not_go_with_change(self):
+        self.recorded('- D1: one store (product owner, 2026-10-20; said: "ok")')
+        self.refuses("--change", new=["x"], replaces="D1", quote="q", change="C1")
+
     def test_a_replaced_id_is_not_reused(self):
         self.recorded('- D1: one store (product owner, 2026-10-20; said: "ok")')
         self.decide(new=["two stores"], replaces="D1", quote="two")
@@ -250,7 +285,7 @@ class Decide(unittest.TestCase):
         self.assertEqual((self.linear.writes, self.linear.body), ([], before))
 
     def test_replaces_under_yolo_without_a_quote_is_unconfirmed_and_logged(self):
-        self.recorded('- D1: one store (product owner, 2026-10-20; said: "ok")')
+        self.recorded("- D1: one store (yolo recommendation, unconfirmed, 2026-10-21)")
         (self.proj / "results" / "yolo.json").write_text(json.dumps({"mode": "yolo", "decisions": []}))
         self.decide(new=["two stores"], replaces="D1")
         self.assertIn("- D2: two stores (yolo recommendation, unconfirmed,", self.linear.body)
