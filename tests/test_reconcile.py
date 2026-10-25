@@ -1,9 +1,10 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, io, json, os, sys, tempfile, unittest
+import datetime, importlib.machinery, importlib.util, io, json, os, re, sys, tempfile, unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+from unittest.mock import ANY
 os.environ["HERDR_ENV"] = ""
 
 _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoader("fc", str(Path(__file__).resolve().parents[1] / "bin" / "compose.py")))
@@ -12,6 +13,7 @@ for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost"
 _spec.loader.exec_module(fc)
 
 URL = "https://linear.app/acme/project/my-shop-abc123"
+TODAY = datetime.date.today().isoformat()
 
 
 def issue(ident, state="Todo", labels=("Story",), parent=None):
@@ -30,17 +32,56 @@ def sheet(keep=(), verify=(), cancel_subtree=None, tickets=(), reasons=None, new
 class FakeLinear:
     def __init__(self):
         self.pages, self.queries, self.mutations = [], [], []
+        self.issues, self.canceled, self.created, self.comments, self.labels_made, self.fail_on = {}, [], [], {}, [], None
+        self.labels = [{"id": f"l-{n}", "name": n} for n in ("Epic", "Feature", "Story", "Ready", "needs-shaping", "deep-dive")]
+
+    def seed(self, issues):
+        self.issues = {i["id"]: {"id": i["id"], "identifier": i["id"], "title": i["title"], "state": {"name": i["state"], "type": "started" if i["state"] == "In Progress" else "unstarted"}} for i in issues}
+
+    def comment(self, ident):
+        return self.comments[ident][0]
+
+    def comments_on(self, ident):
+        return len(self.comments.get(ident, []))
 
     def gql(self, query, variables):
         self.queries.append(query)
         if "projects(" in query:
             return {"projects": {"nodes": [{"id": "p1", "name": "Shop", "url": URL, "teams": {"nodes": [{"id": "t1", "name": "Engineering", "key": "NEB"}]}}]}}
         if "mutation" in query:
-            self.mutations.append(query)
-            return {}
+            return self.mutate(re.search(r"\{\s*(\w+)\(", query).group(1), variables)
+        if "team(id" in query:
+            return {"team": {"name": "Engineering", "states": {"nodes": [{"id": "s-backlog", "name": "Backlog"}]}, "labels": {"nodes": list(self.labels)}}}
+        if "issue(id" in query:
+            i = self.issues[variables["id"]]
+            return {"issue": {**i, "team": {"states": {"nodes": [{"id": "s-canceled", "name": "Canceled", "type": "canceled"}]}}}}
         n = int(variables["after"][1:]) + 1 if variables["after"] else 1
         page = self.pages[n - 1]
         return {"issues": {"pageInfo": {"hasNextPage": n < len(self.pages), "endCursor": f"c{n}"}, "nodes": [node(i) for i in page]}}
+
+    def mutate(self, name, v):
+        ident = v.get("id")
+        if self.fail_on == (name, ident):
+            raise RuntimeError(f"{name} failed")
+        self.mutations.append((name, ident, v))
+        change = v.get("in") or {"stateId": v.get("s")}  # issueUpdate sends its input whole, or just the state
+        if name == "commentCreate":
+            self.comments.setdefault(ident, []).append(v["b"])
+        elif name == "issueUpdate" and change.get("stateId") == "s-canceled":
+            self.canceled.append(ident)
+            self.issues[ident]["state"] = {"name": "Canceled", "type": "canceled"}
+        elif name == "issueUpdate" and "title" in change:
+            self.issues[ident]["title"] = change["title"]
+        elif name == "issueLabelCreate":
+            self.labels_made.append(v["name"])
+            self.labels.append({"id": f"l-{v['name']}", "name": v["name"]})
+            return {"issueLabelCreate": {"issueLabel": {"id": f"l-{v['name']}", "name": v["name"]}}}
+        elif name == "issueCreate":
+            self.created.append(v["in"])
+            ident = f"NEB-{100 + len(self.created)}"
+            self.issues[ident] = {"id": ident, "identifier": ident, "title": v["in"]["title"], "state": {"name": "Backlog", "type": "backlog"}}
+            return {"issueCreate": {"issue": {"id": ident, "identifier": ident}}}
+        return {}
 
     def list_query(self):
         return next(q for q in self.queries if "issues(" in q)
@@ -62,7 +103,7 @@ class Reconcile(unittest.TestCase):
         p = mock.patch.object(Path, "home", return_value=self.tmp); p.start(); self.addCleanup(p.stop)
 
     def args(self, action, **kw):
-        return SimpleNamespace(repo=str(self.repo), action=action, file=kw.get("file"), go=None)
+        return SimpleNamespace(repo=str(self.repo), action=action, file=kw.get("file"), go=kw.get("go"), project=None)
 
     def out(self, action, **kw):
         out = io.StringIO()
@@ -76,6 +117,31 @@ class Reconcile(unittest.TestCase):
             fc.fc_reconcile.cmd_reconcile(self.args(action, **kw))
         code = e.exception.code
         return (1 if isinstance(code, str) else code), ((code if isinstance(code, str) else "") + err.getvalue()).strip()
+
+    def project_dir(self, name):
+        d = self.repo / ".compose" / name
+        (d / "results").mkdir(parents=True, exist_ok=True)
+        (d / "verify.json").write_text("{}")
+        return d
+
+    def attempt(self, action, go=None):
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            try:
+                fc.fc_reconcile.cmd_reconcile(SimpleNamespace(repo=str(self.repo), action=action, file=None, go=go, project=None))
+            except SystemExit:
+                pass
+        return out.getvalue().splitlines()
+
+    def checked(self):
+        """A sheet that renames and relabels NEB-3, merges NEB-4 into it, cancels NEB-2 with its subtree, files one new ticket: 9 actions."""
+        self.linear.seed(self.issues)
+        raw = {"keep": ["NEB-1"], "verify": [], "reasons": {"appux": self.write("appux.md", "App UI and UX was a mistake."), "dup": self.write("dup.md", "Same slice.")},
+               "tickets": [{"id": "NEB-3", "sort": "keep", "title": "RS1. Chat with the Guide", "drop_ready": True, "deep_dive": True, "reason": "dup"},
+                           {"id": "NEB-4", "sort": "merge", "into": "NEB-3", "reason": "dup"}, {"id": "NEB-2", "sort": "cancel", "reason": "appux", "subtree": True}],
+               "new": [{"key": "N1", "title": "So far: the draft report", "parent": "NEB-1", "label": "Feature", "body": self.write("b.md", "Body.")}]}
+        self.linear.issues["NEB-5"]["title"] = "NEB-5 title"
+        self.out("check", file=self.sheet(raw))
 
     def write(self, name, text):
         p = self.tmp / name
@@ -190,6 +256,62 @@ class Reconcile(unittest.TestCase):
         self.assertIn('- NEB-3: "NEB-3 title" becomes "RS1. Chat with the Guide"', text)
         self.assertIn("- N1 So far: the draft report and its evidence (Feature under NEB-1, needs shaping)", text)
         self.assertNotIn(chr(0x2014), text)
+
+    def test_apply_needs_the_go_in_their_words_and_refuses_under_away_or_yolo(self):
+        self.checked()
+        self.assertEqual(self.fails("apply"), (1, 'apply needs the product owner\'s go, verbatim: --go "<their words>"'))
+        (self.project_dir("shop") / "results" / "yolo.json").write_text('{"mode": "away"}')
+        self.assertEqual(self.fails("apply", go="yes, do it"),
+                         (1, "shop is under away: a reconcile changes Linear only on the product owner's own go; apply it once away is off"))
+        self.assertEqual(self.linear.mutations, [])
+
+    def test_apply_writes_each_change_in_order_with_its_comment(self):
+        self.checked()
+        out = self.attempt("apply", go="yes, do it")
+        self.assertEqual([m[0] for m in self.linear.mutations if m[0] != "issueLabelCreate"][:3], ["issueUpdate", "commentCreate", "issueUpdate"])  # rename, its comment, labels
+        self.assertEqual(self.linear.comment("NEB-5"), f"Canceled in the Shop reconcile ({TODAY}), on the product owner's go.\nApp UI and UX was a mistake.")
+        self.assertEqual(self.linear.comment("NEB-4"), f"Canceled in the Shop reconcile ({TODAY}), on the product owner's go: merged into NEB-3 (RS1. Chat with the Guide).\nSame slice.")
+        self.assertEqual(self.linear.comments["NEB-3"], [f'Renamed in the Shop reconcile ({TODAY}) from "NEB-3 title".',
+                                                         f"Ready label removed in the Shop reconcile ({TODAY}): it needs shaping before it can be ready.\nSame slice."])
+        self.assertLess(self.linear.canceled.index("NEB-5"), self.linear.canceled.index("NEB-2"))  # children before their parent
+        self.assertEqual((self.linear.created[0]["labelIds"], self.linear.created[0]["stateId"], self.linear.created[0]["parentId"]), (["l-Feature", "l-needs-shaping"], "s-backlog", "NEB-1"))
+        self.assertEqual(out[-1], "applied 7 of 7: 0 skipped, 0 failed; compose reconcile notices lists what each team lead must hear")
+        self.assertEqual(json.loads(fc.fc_reconcile.sheet_path("p1").read_text())["go"], [{"quote": "yes, do it", "at": ANY}])
+
+    def test_a_second_apply_after_a_failure_continues_and_comments_nothing_twice(self):
+        self.checked()
+        self.linear.fail_on = ("commentCreate", "NEB-2")
+        self.assertIn("NEB-2:cancel FAILED: commentCreate failed", "\n".join(self.attempt("apply", go="yes")))
+        self.linear.fail_on = None
+        self.attempt("apply", go="yes")
+        self.assertEqual((self.linear.comments_on("NEB-5"), self.linear.comments_on("NEB-2")), (1, 1))
+        self.assertEqual(self.attempt("apply", go="yes"), ["nothing left to apply"])
+
+    def test_a_ticket_that_changed_since_the_check_is_skipped_never_forced(self):
+        self.checked()
+        self.linear.issues["NEB-5"]["state"] = {"name": "Done", "type": "completed"}
+        self.linear.issues["NEB-3"]["state"] = {"name": "In Progress", "type": "started"}  # a kept ticket: its rename still applies
+        out = self.attempt("apply", go="yes")
+        self.assertIn("NEB-5:cancel skipped: it is Done now, not Todo as at the check; sort it again", out)
+        self.assertIn("NEB-3:title done", out)
+        self.assertNotIn("NEB-5", self.linear.canceled)
+
+    def test_a_missing_label_is_made_once_and_an_already_canceled_ticket_is_skipped(self):
+        self.checked()
+        self.linear.labels = [l for l in self.linear.labels if l["name"] not in ("needs-shaping", "deep-dive")]
+        self.linear.issues["NEB-4"]["state"] = {"name": "Canceled", "type": "canceled"}
+        out = self.attempt("apply", go="yes")
+        self.assertIn("NEB-4:merge skipped: already Canceled", out)
+        self.assertEqual(sorted(self.linear.labels_made), ["deep-dive", "needs-shaping"])
+
+    def test_a_new_ticket_under_a_new_ticket_gets_the_identifier_the_first_was_given(self):
+        self.checked()
+        path = fc.fc_reconcile.sheet_path("p1")
+        stored = json.loads(path.read_text())
+        stored["new"].append({"key": "N2", "title": "Child", "parent": "N1", "label": "Story", "body": "", "deep_dive": True})
+        path.write_text(json.dumps(stored))
+        self.attempt("apply", go="yes")
+        self.assertEqual((self.linear.created[1]["parentId"], self.linear.created[1]["labelIds"]), ("NEB-101", ["l-Story", "l-needs-shaping", "l-deep-dive"]))
 
     def test_show_prints_the_stored_proposal(self):
         self.out("check", file=self.sheet())

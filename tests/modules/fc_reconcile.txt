@@ -1,6 +1,11 @@
 SORTS
 LABELS
 RUNNING
+HEADS
+TEAM_QUERY
+CREATE_ISSUE
+UPDATE_ISSUE
+CREATE_LABEL
 INVENTORY_QUERY
 sheet_path
 inventory
@@ -19,4 +24,15 @@ read_stored
 verb_list
 verb_check
 verb_show
+depth
+actions
+comment_for
+Team
+stale
+do_action
+create_ticket
+apply_sheet
+save
+under_posture
+verb_apply
 cmd_reconcile

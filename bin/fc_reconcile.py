@@ -1,12 +1,21 @@
-"""`compose reconcile list | check | show`: sort every open ticket of a messy Linear project once, check the sheet, and render it as one proposal."""
-import json, sys
+"""`compose reconcile list | check | show | apply`: sort every open ticket of a messy Linear project once, check the sheet, render it as one proposal, and write it on the product owner's go."""
+import datetime, json, sys
 from pathlib import Path
+from types import SimpleNamespace
 
-import fc_core, fc_config, fc_linear, fc_linear_cmd
+import fc_core, fc_config, fc_linear, fc_linear_cmd, fc_tasks
 
 SORTS = ("keep", "cancel", "merge", "verify")
 LABELS = ("Epic", "Feature", "Story")
 RUNNING = ("In Progress", "In Review")
+HEADS = {"cancel": "Canceled in the {project} reconcile ({date}), on the product owner's go.",
+         "merge": "Canceled in the {project} reconcile ({date}), on the product owner's go: merged into {id} ({title}).",
+         "drop-ready": "Ready label removed in the {project} reconcile ({date}): it needs shaping before it can be ready.",
+         "title": 'Renamed in the {project} reconcile ({date}) from "{old}".'}
+TEAM_QUERY = "query($id: String!) { team(id: $id) { name states { nodes { id name } } labels(first: 250) { nodes { id name } } } }"
+CREATE_ISSUE = "mutation($in: IssueCreateInput!) { issueCreate(input: $in) { issue { id identifier } } }"
+UPDATE_ISSUE = "mutation($id: String!, $in: IssueUpdateInput!) { issueUpdate(id: $id, input: $in) { success } }"
+CREATE_LABEL = "mutation($name: String!, $team: String!) { issueLabelCreate(input: {name: $name, teamId: $team}) { issueLabel { id name } } }"
 INVENTORY_QUERY = ('query($after: String, $project: ID) { issues(first: 100, after: $after, filter: {project: {id: {eq: $project}}, '
                    'state: {type: {nin: ["completed", "canceled"]}}}) { pageInfo { hasNextPage endCursor } nodes { identifier title state { name } labels { nodes { name } } parent { identifier } } } }')
 
@@ -218,7 +227,7 @@ def verb_check(a):
         sys.exit("\n".join(problems))
     path = sheet_path(project["id"])
     path.parent.mkdir(parents=True, exist_ok=True)
-    fc_core.atomic_write(path, json.dumps({**sheet, "project": {"id": project["id"], "name": project["name"]}, "checked_at": fc_core.now(),
+    fc_core.atomic_write(path, json.dumps({**sheet, "project": {"id": project["id"], "name": project["name"], "team": project["team"]["id"]}, "checked_at": fc_core.now(),
                                            "issues": issues, "go": [], "applied": {}, "created": {}}, indent=1))
     print(f"checked: {summary(expand(sheet, issues), sheet)}; compose reconcile show prints the proposal")
 
@@ -228,6 +237,142 @@ def verb_show(a):
     if not stored:
         sys.exit(f"no checked reconcile for {project['name']}: compose reconcile check --file <sheet> first")
     print(render_proposal(stored), end="")
+
+def depth(i, by_id):
+    n = 0
+    while by_id.get(i, {}).get("parent") in by_id:
+        i, n = by_id[i]["parent"], n + 1
+    return n
+
+def actions(stored):
+    """Every change the sheet makes, in the order they are written: renames, label changes, cancels and merges deepest first, new tickets parents first."""
+    by_id = {i["id"]: i for i in stored["issues"]}
+    got = expand(stored, stored["issues"])
+    keeps = [e for e in got.values() if e["sort"] == "keep"]
+    out = [{"key": f"{e['id']}:title", "do": "title", "id": e["id"], "title": e["title"]} for e in keeps if e.get("title")]
+    out += [{"key": f"{e['id']}:drop-ready", "do": "drop-ready", "id": e["id"], "reason": e.get("reason")} for e in keeps if e.get("drop_ready")]
+    out += [{"key": f"{e['id']}:deep-dive", "do": "deep-dive", "id": e["id"]} for e in keeps if e.get("deep_dive")]
+    ends = sorted((e for e in got.values() if e["sort"] in ("cancel", "merge")), key=lambda e: -depth(e["id"], by_id))
+    out += [{"key": f"{e['id']}:{e['sort']}", "do": e["sort"], "id": e["id"], "reason": e.get("reason"), "into": e.get("into")} for e in ends]
+    out += [{"key": f"{n['key']}:create", "do": "create", "new": n} for n in stored["new"]]
+    return out
+
+def comment_for(stored, act, today):
+    """The comment an action leaves on its ticket: the head, then the reason text on the next line."""
+    by_id = {i["id"]: i for i in stored["issues"]}
+    into = act.get("into")
+    renamed = {e["id"]: e["title"] for e in explicit(stored) if e.get("title")}
+    head = HEADS[act["do"]].format(project=stored["project"]["name"], date=today, old=by_id.get(act["id"], {}).get("title"), id=into,
+                                   title=renamed.get(into) or by_id.get(into, {}).get("title"))
+    reason = stored["reasons"].get(act.get("reason"), "").strip()
+    return head + ("\n" + reason if reason else "")
+
+class Team:
+    """The project's team labels and states, read once; a label the cleanup needs is created the first time it is asked for."""
+    def __init__(self, team_id):
+        self.id, self.team = team_id, fc_linear.linear_gql(TEAM_QUERY, {"id": team_id})["team"]
+
+    def label(self, name):
+        found = next((l for l in self.team["labels"]["nodes"] if l["name"].lower() == name.lower()), None)
+        if not found:
+            found = fc_linear.linear_gql(CREATE_LABEL, {"name": name, "team": self.id})["issueLabelCreate"]["issueLabel"]
+            self.team["labels"]["nodes"].append({"id": found["id"], "name": name})
+        return found["id"]
+
+def stale(issue, was):
+    """Why a cancel or merge is not written, or None: the ticket is already canceled, or moved since the check."""
+    if issue["state"]["type"] == "canceled":
+        return f"already {issue['state']['name']}"
+    if issue["state"]["name"] != was:
+        return f"it is {issue['state']['name']} now, not {was} as at the check; sort it again"
+
+def do_action(stored, act, team, today):
+    """Write one action to Linear; returns why it was skipped, or None when done."""
+    if act["do"] == "create":
+        return create_ticket(stored, act["new"], team)
+    by_id = {i["id"]: i for i in stored["issues"]}
+    issue = fc_linear.linear_issue(act["id"])
+    if act["do"] in ("cancel", "merge"):
+        why = stale(issue, by_id[act["id"]]["state"])
+        if why:
+            return why
+        fc_linear.linear_cancel(act["id"], comment_for(stored, act, today), act.get("into"))
+        return None
+    if act["do"] == "title":
+        fc_linear.linear_gql(UPDATE_ISSUE, {"id": issue["id"], "in": {"title": act["title"]}})
+    elif act["do"] == "drop-ready":
+        fc_linear.linear_gql(UPDATE_ISSUE, {"id": issue["id"], "in": {"removedLabelIds": [team.label("Ready")], "addedLabelIds": [team.label(fc_linear.NEEDS_SHAPING)]}})
+    else:
+        fc_linear.linear_gql(UPDATE_ISSUE, {"id": issue["id"], "in": {"addedLabelIds": [team.label("deep-dive")]}})
+    if act["do"] != "deep-dive":
+        fc_linear.linear_comment(issue, comment_for(stored, act, today))
+
+def create_ticket(stored, n, team):
+    """A new ticket in Backlog under its parent, labeled and marked needs-shaping, the way `compose linear create` makes one."""
+    names = [n["label"], fc_linear.NEEDS_SHAPING] + (["deep-dive"] if n.get("deep_dive") else [])
+    for name in names:
+        team.label(name)
+    p = SimpleNamespace(state="Backlog", label=names)
+    inp = {"teamId": team.id, "projectId": stored["project"]["id"], "title": n["title"], "description": n.get("body") or ""}
+    inp.update(fc_linear_cmd.state_and_labels(team.team, p))
+    parent = stored["created"].get(n["parent"], n["parent"])
+    if n["parent"] in {x["key"] for x in stored["new"]} and n["parent"] not in stored["created"]:
+        raise RuntimeError(f"its parent {n['parent']} was not created")
+    inp["parentId"] = fc_linear.linear_issue(parent)["id"]
+    stored["created"][n["key"]] = fc_linear.linear_gql(CREATE_ISSUE, {"in": inp})["issueCreate"]["issue"]["identifier"]
+
+def apply_sheet(stored, path, quote):
+    """Write every action not yet applied, saving the sheet after each success; one line per action."""
+    acts = [a for a in actions(stored) if a["key"] not in stored["applied"]]
+    if not acts:
+        return []
+    stored["go"].append({"quote": quote, "at": datetime.datetime.now().isoformat(timespec="seconds")})
+    save(path, stored)
+    team, today, lines = Team(stored["project"]["team"]), datetime.date.today().isoformat(), []
+    for act in acts:
+        try:
+            why = do_action(stored, act, team, today)
+        except (RuntimeError, OSError) as e:
+            lines.append(f"{act['key']} FAILED: {e}")
+            continue
+        if why:
+            lines.append(f"{act['key']} skipped: {why}")
+            continue
+        stored["applied"][act["key"]] = datetime.datetime.now().isoformat(timespec="seconds")
+        save(path, stored)
+        lines.append(f"{act['key']} done")
+    return lines
+
+def save(path, stored):
+    fc_core.atomic_write(path, json.dumps(stored, indent=1))
+
+def under_posture(a):
+    """The name and mode of a project under away or yolo, or None."""
+    projects = fc_core.all_projects(Path(a.repo).resolve())
+    for name, (_, proj) in sorted(projects.items()):
+        if getattr(a, "project", None) in (None, name) and (y := fc_tasks.yolo_state(proj)):
+            return name, y["mode"]
+
+def verb_apply(a):
+    go = (a.go or "").strip()
+    if not go:
+        sys.exit('apply needs the product owner\'s go, verbatim: --go "<their words>"')
+    if posture := under_posture(a):
+        sys.exit(f"{posture[0]} is under {posture[1]}: a reconcile changes Linear only on the product owner's own go; apply it once {posture[1]} is off")
+    project = fc_linear_cmd.linear_project(a.repo)
+    stored = read_stored(project)
+    if not stored:
+        sys.exit(f"no checked reconcile for {project['name']}: compose reconcile check --file <sheet> first")
+    lines = apply_sheet(stored, sheet_path(project["id"]), go)
+    if not lines and all(x["key"] in stored["applied"] for x in actions(stored)):
+        print("nothing left to apply")
+        return
+    print("\n".join(lines))
+    total, failed = len(actions(stored)), sum(1 for l in lines if " FAILED: " in l)
+    skipped = sum(1 for l in lines if " skipped: " in l)
+    print(f"applied {len(stored['applied'])} of {total}: {skipped} skipped, {failed} failed; compose reconcile notices lists what each team lead must hear")
+    if failed:
+        sys.exit(1)
 
 def cmd_reconcile(a):
     if not fc_config.LINEAR_KEY:
