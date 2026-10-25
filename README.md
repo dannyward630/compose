@@ -86,6 +86,7 @@ Hand the engineering manager a ticket that already exists, and it starts the rig
 
 - `/compose:planner <issue or Linear project link>` plans that feature, story, or task from where it stands.
 - `/compose:designer <ticket> [--figma <file url or key>]` continues the ticket's design work in Figma; without a stored file, it asks you for one.
+- `/compose:delivery [seed | reconcile]` writes or changes the product delivery plan with you: the order across every feature, in parallel tracks.
 
 The engineering manager relays their questions to you, and you can answer there or in the teammate's own tab.
 

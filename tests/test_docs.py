@@ -2277,6 +2277,7 @@ ZERO_P = [
     "Never edit the Waves, Start today, Proposed fixes, or History sections by hand: the CLI writes them.",
 ]
 DELIVERY_ROW = "| `delivery` |"
+README_DELIVERY = "- `/compose:delivery [seed | reconcile]` writes or changes the product delivery plan with you: the order across every feature, in parallel tracks."
 HOW_LINE = "One product delivery plan in Linear sets the order across features, in parallel tracks; `compose delivery reconcile` makes Linear follow it and proposes anything destructive."
 
 
@@ -2306,7 +2307,7 @@ class ProductDeliveryPlan(unittest.TestCase):
         head = text.split("---\n", 2)[1].splitlines()
         self.assertEqual(head, ["description: Write or change the product delivery plan with the product owner - the order across every feature, in parallel tracks",
                                 'argument-hint: "[seed | reconcile]"',
-                                "allowed-tools: Bash(compose delivery:*), Bash(compose linear:*)"])
+                                "allowed-tools: Bash(compose delivery:*), Bash(compose linear:*), Write"])  # Write: the --file for tracks and Why this order
         body = self.body("commands/delivery.md")
         for line in ("Follow sections/0p.md.", "In this session, never plan stories or cut tasks."):
             self.assertEqual(body.count(line), 1, line)
@@ -2319,6 +2320,13 @@ class ProductDeliveryPlan(unittest.TestCase):
         for word in ("`seed`", "`order`", "`reconcile`", "`tracks`", "`--quote`", "`--dry-run`"):
             self.assertIn(word, rows[0])
         self.assertEqual(read("docs/how-it-works.md").splitlines().count(HOW_LINE), 1)
+        ready = [l for l in read("docs/cli.md").splitlines() if l.startswith("| `ready` |")][0]
+        self.assertIn("a story is not Ready while its feature waits on a feature that is not built", ready)
+
+    def test_readme_lists_the_slash_command(self):
+        lines = read("README.md").splitlines()
+        self.assertEqual(lines.count(README_DELIVERY), 1)
+        self.assertEqual(lines[lines.index(README_DELIVERY) - 1][:17], "- `/compose:desig")
 
     def test_house_rules(self):
         for rel in ("sections/0p.md", "commands/delivery.md", "sections/8.md", "docs/cli.md", "docs/how-it-works.md"):
