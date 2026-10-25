@@ -71,7 +71,7 @@ def rd(id, ready=True, has_tasks=True, specced=True, missing=(), error=None):
     return {"id": id, "ready": ready, "has_tasks": has_tasks, "specced": specced, "missing": list(missing), "error": error}
 
 def judge(results):
-    return lambda repo, s, **kw: results[s]
+    return lambda s, **kw: results[s]
 
 
 class Pick(unittest.TestCase):
@@ -103,13 +103,20 @@ class Pick(unittest.TestCase):
         out = ft.pick([entry("NEB-12", "NEB-12", kind="feature")], plan_of(), {"dispatched": {}}, 2, judge({}))
         self.assertEqual(out["offer"], {"id": "NEB-12", "layer": "stories", "why": "no stories yet"})
 
+    def test_pick_calls_the_judge_with_the_id_alone_so_the_caller_binds_the_repo(self):
+        seen = []
+        def j(s, **kw):
+            seen.append((s, kw)); return rd(s)
+        out = ft.pick([entry("NEB-10", "NEB-9")], plan_of(NEB_9=[story("NEB-10", "Todo", "Ready")]), {"dispatched": {}}, 1, j)
+        self.assertEqual((seen, len(out["picks"])), ([("NEB-10", {"write": True})], 1))
+
     def test_a_failed_judge_is_reported_never_offered_and_judging_stops_at_the_limit(self):
         out = ft.pick([entry("NEB-10", "NEB-9")], plan_of(NEB_9=[story("NEB-10", "Todo", "Ready")]), {"dispatched": {}}, 2,
                       judge({"NEB-10": rd("NEB-10", ready=False, specced=None, error="no TypeSafe key")}))
         self.assertEqual((out["picks"], out["offer"], out["failed"]), ([], None, [("NEB-10", "no TypeSafe key")]))
         calls, entries = [], [entry(f"NEB-{n}", "NEB-9") for n in range(30, 40)]
         ft.pick(entries, plan_of(NEB_9=[story(e["id"]) for e in entries]), {"dispatched": {}}, 2,
-                lambda repo, s, **kw: calls.append(s) or rd(s, ready=False, specced=False))
+                lambda s, **kw: calls.append(s) or rd(s, ready=False, specced=False))
         self.assertLessEqual(len(calls), ft.JUDGE_LIMIT)
 
 

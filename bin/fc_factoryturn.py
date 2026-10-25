@@ -37,7 +37,7 @@ def _why(missing, labels):
     return ("labeled " + SHAPING) if SHAPING in labels else "not specced"
 
 def pick(entries, plan, state, free, judge):
-    """Walk the entries in order and start up to free ready stories. judge(repo, id, write=True) is the caller's readiness check."""
+    """Walk the entries in order and start up to free ready stories. judge(id, write=True) is the caller's readiness check; the caller binds the repo."""
     flying = set(in_flight(plan, state))
     out = {"picks": [], "ready_waiting": False, "offer": None, "failed": [], "specced": set()}
     candidate, judged = None, 0
@@ -52,7 +52,7 @@ def pick(entries, plan, state, free, judge):
         labels = (story_of(plan, e["id"]) or {}).get("labels", [])
         judged += 1
         try:
-            r = judge(None, e["id"], write=True)
+            r = judge(e["id"], write=True)
         except fc_readiness.NotAStory as ex:
             out["failed"].append((e["id"], str(ex)))
             continue
