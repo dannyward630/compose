@@ -80,6 +80,7 @@ class FakeLinear:
             self.created.append(v["in"])
             ident = f"NEB-{100 + len(self.created)}"
             self.issues[ident] = {"id": ident, "identifier": ident, "title": v["in"]["title"], "state": {"name": "Backlog", "type": "backlog"}}
+            self.pages[0].append(issue(ident, "Backlog", ("Feature",), v["in"]["parentId"]))  # a ticket filed is an open ticket of the project
             return {"issueCreate": {"issue": {"id": ident, "identifier": ident}}}
         return {}
 
@@ -328,16 +329,40 @@ class Reconcile(unittest.TestCase):
         self.checked()
         self.linear.issues["NEB-5"]["state"] = {"name": "Done", "type": "completed"}
         self.attempt("apply", go="yes")
-        self.out("check", file=self.sheet(self.raw))
+        self.out("check", file=self.sheet({**self.raw, "keep": self.raw["keep"] + ["NEB-101"]}))
         self.attempt("apply", go="yes")
         self.assertEqual(len(self.linear.created), 1)
         self.assertEqual(self.linear.comments_on("NEB-3"), 2)  # the rename and the Ready drop, once each
+
+    def test_a_ticket_filed_is_never_filed_again_after_its_title_is_edited_in_the_sheet(self):
+        self.checked()
+        self.linear.issues["NEB-5"]["state"] = {"name": "Done", "type": "completed"}
+        self.attempt("apply", go="yes")
+        edited = {**self.raw, "keep": self.raw["keep"] + ["NEB-101"], "new": [{**self.raw["new"][0], "title": "A better title"}]}
+        self.out("check", file=self.sheet(edited))
+        out = self.attempt("apply", go="yes")
+        self.assertEqual(len(self.linear.created), 1)
+        self.assertIn("N1 already filed as NEB-101; edit it in Linear", out)
+
+    def test_a_merge_retargeted_after_a_partial_failure_gets_its_own_relation_and_comment(self):
+        self.linear.seed(self.issues)
+        raw = {"keep": ["NEB-1", "NEB-2", "NEB-3", "NEB-5"], "tickets": [{"id": "NEB-4", "sort": "merge", "into": "NEB-3", "reason": "dup"}],
+               "reasons": {"dup": self.write("dup.md", "Same slice.")}}
+        self.out("check", file=self.sheet(raw))
+        self.linear.fail_on = ("issueUpdate", "NEB-4")
+        self.attempt("apply", go="yes")
+        self.linear.fail_on = None
+        raw["tickets"][0]["into"] = "NEB-5"
+        self.out("check", file=self.sheet(raw))
+        self.attempt("apply", go="yes")
+        self.assertEqual([m[2]["o"] for m in self.linear.mutations if m[0] == "issueRelationCreate"], ["NEB-3", "NEB-5"])
+        self.assertIn("merged into NEB-5", self.linear.comments["NEB-4"][-1])
 
     def test_a_recheck_is_allowed_when_only_skipped_actions_are_left_however_many_tickets_are_kept(self):
         self.checked(extra=10)
         self.linear.issues["NEB-5"]["state"] = {"name": "Done", "type": "completed"}
         self.attempt("apply", go="yes")
-        self.assertTrue(self.out("check", file=self.sheet(self.raw))[-1].startswith("checked: "))
+        self.assertTrue(self.out("check", file=self.sheet({**self.raw, "keep": self.raw["keep"] + ["NEB-101"]}))[-1].startswith("checked: "))
 
     def test_a_recheck_is_refused_while_a_failed_action_is_pending(self):
         self.checked()

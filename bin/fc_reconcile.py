@@ -237,11 +237,18 @@ def verb_check(a):
 def carry_done(old, fresh):
     """A re-check keeps what the last apply already wrote: each applied action the new sheet still holds unchanged, its finished steps, and the tickets it filed."""
     was = {a["key"]: a for a in actions(old)}
+    fresh["changed_after_filing"] = []
     for a in actions(fresh):
-        if a["key"] in old["applied"] and was.get(a["key"]) == a:
+        same = was.get(a["key"]) == a
+        if a["key"] in old["applied"] and same:
             fresh["applied"][a["key"]] = old["applied"][a["key"]]
-    fresh["steps"] = {k: v for k, v in old.get("steps", {}).items() if k.rsplit(":", 1)[0] in {a["key"] for a in actions(fresh)} - set(fresh["applied"])}
-    fresh["created"] = {k: v for k, v in old["created"].items() if k in {n["key"] for n in fresh["new"]}}
+        if same:
+            fresh["steps"].update({k: v for k, v in old.get("steps", {}).items() if k.rsplit(":", 1)[0] == a["key"] and a["key"] not in fresh["applied"]})
+        if a["do"] == "create" and a["new"]["key"] in old["created"]:  # a key filed stays filed, whatever the sheet now says of it
+            fresh["created"][a["new"]["key"]] = old["created"][a["new"]["key"]]
+            fresh["applied"][a["key"]] = old["applied"].get(a["key"]) or old["created"][a["new"]["key"]]
+            if not same:
+                fresh["changed_after_filing"].append(a["new"]["key"])
 
 def verb_show(a):
     project = fc_linear_cmd.linear_project(a.repo)
@@ -337,12 +344,14 @@ def create_ticket(stored, n, team):
 def apply_sheet(stored, path, quote):
     """Write every action not yet applied, saving the sheet after each success; one line per action."""
     acts = [a for a in actions(stored) if a["key"] not in stored["applied"]]
+    notes = [f"{k} already filed as {stored['created'][k]}; edit it in Linear" for k in stored.pop("changed_after_filing", [])]
     if not acts:
-        return []
+        save(path, stored)
+        return notes
     stored["go"].append({"quote": quote, "at": datetime.datetime.now().isoformat(timespec="seconds")})
     save(path, stored)
     stored["skipped"], stored["steps"] = {}, stored.get("steps", {})
-    team, today, lines = Team(stored["project"]["team"]), datetime.date.today().isoformat(), []
+    team, today, lines = Team(stored["project"]["team"]), datetime.date.today().isoformat(), notes
     for act in acts:
         try:
             why = do_action(stored, act, team, today, path)
