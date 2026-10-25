@@ -187,17 +187,22 @@ def with_questions(description, missing, today):
     """The description with its readiness-check lines under ## Open questions replaced by one tagged line per item of `missing`;
     the product owner's own lines stay first. The section goes when nothing is left in it and appears when it was missing."""
     body = description or ""
-    m = re.search(r"^#+[ \t]*Open questions[^\n]*$(.*?)(?=^#|\Z)", body, re.M | re.S)
-    kept = [l for l in (m.group(1) if m else "").splitlines() if l.strip() and not TAG_RE.search(l)]
+    rows = body.split("\n")
+    start = next((n for n, l in enumerate(rows) if re.match(r"##[ \t]+Open questions\b", l)), None)
+    end = len(rows) if start is None else next((n for n in range(start + 1, len(rows)) if re.match(r"#{1,2}[ \t]", rows[n])), len(rows))
+    inside = [] if start is None else rows[start + 1:end]
+    cut = next((n for n, l in enumerate(inside) if re.match(r"###", l)), len(inside))
+    kept = [l for l in inside[:cut] if l.strip() and not TAG_RE.search(l)]
+    tail = "\n".join(inside[cut:]).strip("\n")
     if len(kept) == 1 and kept[0].strip().rstrip(".").lower() == "none":
         kept = []
     one = lambda q: re.sub(r"^#+\s*", "", " ".join(str(q).split())).rstrip(".")
     lines = kept + [f"- {one(x['question'])} (readiness check, {today})" for x in missing]
-    if not lines and not m:
-        return body
-    if m:
-        body = body[:m.start()] + "## Open questions" + body[m.start() + len(body[m.start():].split("\n")[0]):]
-    return fc_plan.replace_section(body, "## Open questions", "\n".join(lines))
+    if start is None:
+        return body.rstrip("\n") + "\n\n## Open questions\n\n" + "\n".join(lines) + "\n" if lines else body
+    section = "\n\n".join(p for p in (rows[start] if lines or tail else "", "\n".join(lines), tail) if p)
+    parts = [p for p in ("\n".join(rows[:start]).rstrip("\n"), section, "\n".join(rows[end:]).strip("\n")) if p]
+    return "\n\n".join(parts) + "\n" if parts else ""
 
 
 def _asked(description):

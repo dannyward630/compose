@@ -275,6 +275,22 @@ class StoryReadiness(unittest.TestCase):
         self.assertIn(f"- Where? (readiness check, {TODAY})", body)
         self.assertIn("## Other", body)
 
+    def test_an_h3_open_questions_is_never_the_section_and_nothing_else_changes(self):
+        body = STORY + "\n## Notes\n\n### Open questions\n\n- mine\n\n### Links\n\n- a\n"
+        out = fc_readiness.with_questions(body, [{"item": "x", "issue": "ENG-7", "question": "Where?"}], TODAY)
+        self.assertEqual(out, body + f"\n## Open questions\n\n- Where? (readiness check, {TODAY})\n")
+
+    def test_an_h3_child_under_the_section_is_kept(self):
+        body = STORY + "\n## Open questions\n\n- mine\n- old (readiness check, 2026-10-01)\n\n### Detail\n\ntext\n\n## After\n\nz\n"
+        out = fc_readiness.with_questions(body, [{"item": "x", "issue": "ENG-7", "question": "Where?"}], TODAY)
+        self.assertIn(f"## Open questions\n\n- mine\n- Where? (readiness check, {TODAY})\n\n### Detail\n\ntext\n\n## After\n\nz", out)
+        self.assertNotIn("old", out)
+
+    def test_a_heading_with_a_colon_keeps_its_colon(self):
+        out = fc_readiness.with_questions(STORY + "\n## Open questions:\n\n- mine\n", [{"item": "x", "issue": "ENG-7", "question": "Where?"}], TODAY)
+        self.assertIn(f"## Open questions:\n\n- mine\n- Where? (readiness check, {TODAY})", out)
+        self.assertEqual(out.count("Open questions"), 1)
+
     def test_the_cache_is_keyed_by_the_identifier_not_the_id_as_typed(self):
         fc_readiness.story_readiness(self.repo, "eng-7")
         again = fc_readiness.story_readiness(self.repo, "ENG-7")
