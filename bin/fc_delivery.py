@@ -1,7 +1,7 @@
 """`compose delivery`: the product delivery plan across features, read from Linear (seed, order); the plan is a document in the Linear project."""
 import json, sys
 
-import fc_core, fc_config, fc_linear, fc_linear_cmd, fc_plan, fc_tasks
+import fc_config, fc_linear, fc_linear_cmd, fc_plan, fc_tasks
 
 PRODUCT_TITLE = "Product delivery plan"
 NO_PLAN = "no product delivery plan yet: compose delivery seed starts one"
@@ -68,13 +68,18 @@ def entry_line(n, e):
     return f"{n}. {e['id']} {e['title']} ({e['state']}; {'feature ' + e['feature'] if e['kind'] == 'story' else 'feature'}, track {e['track']}, wave {e['wave']}{waits})"
 
 def verb_order(a):
-    entries = delivery_order(a.repo)
+    plan = product_plan(a.repo)
+    if not plan:
+        sys.exit(NO_PLAN)
+    entries = fc_plan.order_entries(plan["tracks"], plan["features"])
+    for ident in dict.fromkeys(i for t in plan["tracks"] for i in t["items"] if i not in plan["features"]):
+        print(f"{ident} is in a track but was not found in Linear: fix the id or drop it from the track", file=sys.stderr)
     print(json.dumps(entries, indent=2) if a.json else "\n".join(entry_line(n, e) for n, e in enumerate(entries, 1)))
 
 def verb_seed(a):
     product = read_product(a.repo)
     print("No product delivery plan yet." if not product["doc"] else f"The product delivery plan has no tracks yet: {product['doc']['url']}")
-    open_ = [f for f in sorted(product["features"].values(), key=lambda f: fc_plan._num(f["id"]))
+    open_ = [f for f in sorted(product["features"].values(), key=lambda f: fc_plan.issue_num(f["id"]))
              if not fc_tasks.blocker_finished(f["state"], f["labels"])]
     for f in open_:
         blocked = f", blocked by {', '.join(b['id'] for b in f['blockers'])}" if f["blockers"] else ""

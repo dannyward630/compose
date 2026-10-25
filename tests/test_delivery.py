@@ -1,6 +1,6 @@
 import hermetic  # first: no test sees the real home
 import io, json, os, tempfile, time, unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -104,3 +104,9 @@ class Product(unittest.TestCase):
         self.content = "## Tracks\n\n1. A: NEB-12, NEB-30, NEB-31\n"
         got = fc.fc_delivery.read_product(str(self.repo))["features"]
         self.assertEqual(sorted(got), ["NEB-12", "NEB-31"])
+
+    def test_order_reports_a_track_id_linear_does_not_know(self):
+        self.content = "## Tracks\n\n1. A: NEB-7, NEB-311, NEB-9\n"
+        with redirect_stderr(io.StringIO()) as err:
+            self.run_verb("order")
+        self.assertEqual(err.getvalue(), "NEB-311 is in a track but was not found in Linear: fix the id or drop it from the track\n")

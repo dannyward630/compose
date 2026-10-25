@@ -263,7 +263,8 @@ def base_built(state, labels):
 PRODUCT_SECTIONS = ("## Tracks", "## Why this order", "## Waves", "## Start today", "## Proposed fixes", "## History")
 PRODUCT_DATA = ("## Waves", "## Start today", "## Proposed fixes")
 
-def _num(ident):
+def issue_num(ident):
+    """The number in an issue identifier: NEB-12 is 12."""
     return int(ident.rsplit("-", 1)[1])
 
 def _is_feature(f):
@@ -275,7 +276,7 @@ def _canceled(f):
 def _waits_on(item, blocks, features):
     """The feature's derived blockers that are not built yet, by number."""
     return sorted((b for b, k in blocks if k == item and not (b in features and base_built(features[b]["state"], features[b]["labels"]))),
-                  key=_num)
+                  key=issue_num)
 
 def _ranked(tracks):
     waves = track_waves(tracks)
@@ -314,7 +315,7 @@ def product_proposals(tracks, features):
                 started.append(f"{item} {f['title']} is In Progress but waits on {', '.join(waits)} in the plan: "
                                "its started work goes on; hold it if it must wait.")
     unnamed = sorted((i for i, f in features.items() if i not in named and _is_feature(f) and not _canceled(f)
-                      and not fc_tasks.blocker_finished(f["state"], f["labels"])), key=_num)
+                      and not fc_tasks.blocker_finished(f["state"], f["labels"])), key=issue_num)
     return started + rest + [f"{i} {features[i]['title']} is an open feature the plan does not name: add it to a track, or cancel it."
                              for i in unnamed]
 
@@ -355,11 +356,11 @@ def with_history(content, line):
 def seed_tracks(features):
     """A `## Tracks` body guessed from the open features' feature-to-feature blocks."""
     openf = {i: f for i, f in features.items() if _is_feature(f) and not fc_tasks.blocker_finished(f["state"], f["labels"])}
-    deps = {i: sorted({b["id"] for b in f["blockers"] if b["id"] in openf and b["id"] != i}, key=_num) for i, f in openf.items()}
+    deps = {i: sorted({b["id"] for b in f["blockers"] if b["id"] in openf and b["id"] != i}, key=issue_num) for i, f in openf.items()}
     placed, tracks, home = set(), [], {}
     while len(placed) < len(openf):
         ready = [i for i in openf if i not in placed and all(d in placed for d in deps[i])]
-        i = min(ready or [i for i in openf if i not in placed], key=_num)
+        i = min(ready or [i for i in openf if i not in placed], key=issue_num)
         placed.add(i)
         host = home.get(deps[i][0]) if len(deps[i]) == 1 else None
         if host is not None and host["items"][-1] == deps[i][0]:
@@ -374,7 +375,7 @@ def seed_tracks(features):
     lines = []
     for n, t in enumerate(tracks, 1):
         after = []
-        for d in sorted({d for i in t["items"][:1] for d in deps[i]}, key=_num):
+        for d in sorted({d for i in t["items"][:1] for d in deps[i]}, key=issue_num):
             ref = home[d]["name"] if home[d]["items"][-1] == d else d
             if ref not in after and ref != t["name"]:
                 after.append(ref)
