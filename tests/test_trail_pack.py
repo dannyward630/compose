@@ -25,8 +25,8 @@ class TrailPack(FakeTrail):
         self.assertEqual(pack, f'trail ask — "{query}"  (lexical)\n\n1. main · function  [symbol]\n   server/main.go:L1-L1')
 
     def test_a_graph_in_trail_cache_or_old_graft_gives_a_pack_without_banners(self):
-        self.assert_pack(fc.fc_implement.trail_pack(self.repo_on(".trail/cache"), "main"), "main")
-        self.assert_pack(fc.fc_implement.trail_pack(self.repo_on("graft"), "entry point"), "entry point")
+        self.assert_pack(fc.fc_implement.fc_trailpack.trail_pack(self.repo_on(".trail/cache"), "main"), "main")
+        self.assert_pack(fc.fc_implement.fc_trailpack.trail_pack(self.repo_on("graft"), "entry point"), "entry point")
         self.assertTrue(self.calls()[-1].startswith("ask entry point --source -n 6 --no-refresh "))
 
     def test_a_task_clone_gets_the_graph_rebuilt_in_trail_cache_and_keeps_it_out_of_git(self):
@@ -35,7 +35,7 @@ class TrailPack(FakeTrail):
             clone = Path(tempfile.mkdtemp()) / "clone"
             subprocess.run(["git", "clone", "-q", str(repo), str(clone)], check=True)
             fc.fc_worktree.ready_checkout(repo, clone)
-            self.assert_pack(fc.fc_implement.trail_pack(clone, "entry point", repo=repo, limit=3), "entry point")
+            self.assert_pack(fc.fc_implement.fc_trailpack.trail_pack(clone, "entry point", repo=repo, limit=3), "entry point")
             self.assertTrue((clone / ".trail" / "cache" / "INDEX.md").exists())  # .trail/cache/ made before the build
             self.assertEqual((clone / "graft").exists(), graph == "graft")
             self.assertEqual(self.calls()[-2:], [f"build --no-gitignore --no-ignore {clone}", f"ask entry point --source -n 3 --no-refresh {clone}"])
@@ -43,10 +43,10 @@ class TrailPack(FakeTrail):
 
     def test_no_graph_or_a_failing_ask_gives_no_pack(self):
         repo, _ = repo_with({"a.txt": "x\n"})
-        self.assertEqual((fc.fc_implement.trail_pack(repo, "main", repo=repo), self.calls()), ("", []))
+        self.assertEqual((fc.fc_implement.fc_trailpack.trail_pack(repo, "main", repo=repo), self.calls()), ("", []))
         failed = SimpleNamespace(returncode=1, stdout='trail ask — "main"  (lexical)\n')
         with mock.patch.object(fc.fc_core, "sh", return_value=failed):
-            self.assertEqual(fc.fc_implement.trail_pack(self.repo_on("graft"), "main"), "")
+            self.assertEqual(fc.fc_implement.fc_trailpack.trail_pack(self.repo_on("graft"), "main"), "")
 
     def test_the_implementer_prompt_names_trail_never_graft(self):
         repo, _ = repo_with({"a.txt": "no\n"})
@@ -55,7 +55,7 @@ class TrailPack(FakeTrail):
         def impl(cwd, model, prompt, session=None, task=None, timeout=None):
             prompts.append(prompt); (Path(cwd) / "a.txt").write_text("yes\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
-        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value="PACK"), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement.fc_trailpack, "trail_pack", return_value="PACK"), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
             fc.fc_implement.run_task(repo, Path(tempfile.mkdtemp()), task, 3)
         self.assertIn('CONTEXT PACK from the repo\'s trail graph (exact file:line, with source). Use it instead of exploring. '
@@ -71,5 +71,5 @@ class PackCap(FakeTrail):
         out = "".join(f"{i:05d} code line\n" for i in range(2000))  # 32,000 characters
         with mock.patch.object(fc.fc_core, "sh", return_value=SimpleNamespace(returncode=0, stdout=out)):
             for cap, want in [(500, 500), (15000, 15000), (None, 12000)]:
-                pack = fc.fc_implement.trail_pack(repo, "q") if cap is None else fc.fc_implement.trail_pack(repo, "q", cap=cap)
+                pack = fc.fc_implement.fc_trailpack.trail_pack(repo, "q") if cap is None else fc.fc_implement.fc_trailpack.trail_pack(repo, "q", cap=cap)
                 self.assertEqual(pack, out[:want])

@@ -1,8 +1,5 @@
 implementer
 herdr_pi
-LEARNING_RE
-BANNERS
-trail_pack
 task_base
 READER_TIMEOUT
 read_failure

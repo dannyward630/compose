@@ -664,7 +664,7 @@ class FixScope(unittest.TestCase):
         def fixer(cwd, model, prompt): (wt / "src").mkdir(exist_ok=True); (wt / "src/b.py").write_text(f"fix {len(ran)}"); return None, "Tidy b", 1, {"cost": 0.0}
         patches = [mock.patch.object(fc_reroute, "reassess", re), mock.patch.object(fc_reroute, "fired", lambda issue: set(done)), mock.patch.object(fc.fc_config, "LINEAR_KEY", key), mock.patch.object(fc_reroute, "after_round", return_value=([], {})),
                    mock.patch.object(fc_ledger, "run_id", side_effect=lambda proj, t: f"run-{t}"), mock.patch.object(fc.fc_verify, "run_stages", stage),
-                   mock.patch.object(fc.fc_implement, "implementer", fixer), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), mock.patch.object(fc.fc_worktree, "ready_checkout"), mock.patch.object(fc.fc_proc, "run", return_value=mock.Mock(returncode=0)),
+                   mock.patch.object(fc.fc_implement, "implementer", fixer), mock.patch.object(fc.fc_implement.fc_trailpack, "trail_pack", return_value=""), mock.patch.object(fc.fc_worktree, "ready_checkout"), mock.patch.object(fc.fc_proc, "run", return_value=mock.Mock(returncode=0)),
                    mock.patch.object(fc.fc_verify, "verify_failed"), mock.patch.object(fc_ledger, "verify_record"), mock.patch.object(fc.fc_core, "say", said.append), mock.patch.dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")]
         with contextlib.ExitStack() as stack:
             for p in patches: stack.enter_context(p)

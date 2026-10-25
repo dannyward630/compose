@@ -1,7 +1,7 @@
 import itertools, json, os, re, shutil, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_routecost, fc_implement, fc_green, fc_gate, fc_init, fc_jev, fc_accept, fc_reroute, fc_costevent, fc_review, fc_history, fc_load
+import fc_core, fc_proc, fc_config, fc_tasks, fc_ledger, fc_linear, fc_models, fc_herdr, fc_worktree, fc_layers, fc_change, fc_routecost, fc_implement, fc_green, fc_gate, fc_init, fc_jev, fc_accept, fc_reroute, fc_costevent, fc_review, fc_history, fc_load, fc_trailpack
 
 CHECK_TIMEOUT = 900  # seconds a check may run; past it the check fails, named as a timeout
 
@@ -477,7 +477,7 @@ def verify_rounds(repo, proj, cfg, a, rounds, t0, left_out=()):
         if rnd and fc_models.fallback_for(model):  # the first fix did not clear the findings; the fallback takes later rounds
             model = fc_models.fallback_for(model)
         fc_core.say(f"fix    start round {rnd + 1}  model={model}")
-        pack = fc_implement.trail_pack(repo, findings[:400])
+        pack = fc_trailpack.trail_pack(repo, findings[:400])
         prompt = (f"REPOSITORY ROOT: {repo}\nEvery edit must be under that root.\n\n" +
                   (f"CONTEXT PACK from trail (exact file:line). Use it instead of exploring.\n{pack}\n\n" if pack else "") +
                   "Verification of this repository failed. Fix ONLY the findings below with the smallest change. "

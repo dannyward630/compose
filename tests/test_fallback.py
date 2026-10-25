@@ -41,7 +41,7 @@ class Fallback(unittest.TestCase):
                 raise fc.fc_models.RateLimited({"cost": 0.0})
             (Path(cwd) / "a.txt").write_text("yes\n" if model == BACKUP else "nope\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
-        with mock.patch.object(fc.fc_implement, "implementer", impl or run_impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl or run_impl), mock.patch.object(fc.fc_implement.fc_trailpack, "trail_pack", return_value=""), \
                 mock.patch.object(fc.fc_config, "DEFAULT_MODEL", PRIMARY), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", BACKUP), \
                 mock.patch.object(fc.fc_config, "FALLBACK_AFTER", after), mock.patch.object(fc.fc_config, "TEST_READER", None), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
@@ -62,7 +62,7 @@ class Fallback(unittest.TestCase):
             limits.append(timeout)
             (Path(cwd) / "a.txt").write_text("yes\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
-        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement.fc_trailpack, "trail_pack", return_value=""), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
             fc.fc_implement.run_task(repo, proj, task, 3)
         self.assertEqual(limits[0], fc.fc_models.TURN_TIMEOUT)  # compose runs the test after the turn, never inside it
@@ -111,7 +111,7 @@ class Fallback(unittest.TestCase):
                 "model": PRIMARY, "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}
         me, real_sleep = threading.get_ident(), time.sleep
         record = lambda s: slept.append(s) if threading.get_ident() == me and s >= 1 else real_sleep(s)  # time is global: another thread's sleep is not the wait, nor is the 1 ms poll subprocess makes for a child it has not yet reaped
-        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement.fc_trailpack, "trail_pack", return_value=""), \
                 mock.patch.object(fc.fc_config, "FALLBACK_MODEL", None), mock.patch.object(fc.fc_config, "TEST_READER", None), \
                 mock.patch.object(fc.fc_core, "say", said.append), mock.patch.object(fc.fc_implement.time, "sleep", record), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
@@ -358,7 +358,7 @@ class FixScope(unittest.TestCase):
                 (repo / artifact).write_text("out\n")
             self.scopes.append(tests)
             return next(stages)
-        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=pack), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement.fc_trailpack, "trail_pack", return_value=pack), \
                 mock.patch.object(fc.fc_verify, "run_stages", run_stages), mock.patch.object(fc.fc_verify, "review_inputs", return_value=(0, 0, 0, [])), \
                 mock.patch.object(fc.fc_tasks, "load_tasks", return_value=list(tasks)), \
                 mock.patch.object(fc.fc_change, "reflect", return_value=(Path("/p/reflect.json"), {})), \
@@ -1252,7 +1252,7 @@ class RetryMessage(unittest.TestCase):
             (Path(cwd) / "a.txt").write_text(["a", "b", "yes"][len(prompts) - 1] + "\n")
             return session, "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
         self.said = []
-        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement.fc_trailpack, "trail_pack", return_value=""), \
                 mock.patch.object(fc.fc_implement, "read_failure", return_value=(summary, {"cost": reader_cost, "reference_cost": 0.5} if summary else None)), \
                 mock.patch.object(fc.fc_core, "say", self.said.append), \
                 mock.patch.object(fc.fc_config, "DEFAULT_MODEL", PRIMARY), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", backup), \
@@ -1373,7 +1373,7 @@ class ReadGuardWiring(unittest.TestCase):
         git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
         task = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt",
                 "model": "pi:p/primary", "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes.", **(task_extra or {})}
-        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=pack), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement.fc_trailpack, "trail_pack", return_value=pack), \
                 mock.patch.object(fc.fc_config, "TEST_READER", None), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
             return fc.fc_implement.run_task(repo, proj, task, attempts), repo, proj
@@ -1465,7 +1465,7 @@ class LibrarySection(unittest.TestCase):
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
         def trail_pack(wt, query, repo=None, limit=6, cap=12000):
             caps.append(cap); return "P" * cap if pack else ""
-        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", trail_pack), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement.fc_trailpack, "trail_pack", trail_pack), \
                 mock.patch.object(fc.fc_libapi, "section", return_value=section) as sec, mock.patch.object(fc.fc_config, "TEST_READER", None), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
             self.assertEqual(fc.fc_implement.run_task(repo, proj, task, 3)["status"], "passed")
@@ -1505,7 +1505,7 @@ class DeleteTasks(unittest.TestCase):
         git("add", "-A"); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
         task = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt",
                 "model": "pi:p/primary", "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes.", **(task_extra or {})}
-        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement.fc_trailpack, "trail_pack", return_value=""), \
                 mock.patch.object(fc.fc_config, "TEST_READER", None), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
             return fc.fc_implement.run_task(repo, proj, task, attempts), repo, proj
@@ -1586,7 +1586,7 @@ class SiblingStubs(unittest.TestCase):
         def impl(cwd, model, prompt, session=None, task=None, timeout=None):
             prompts.append(prompt); (Path(cwd) / "m.py").write_text(next(turn))
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
-        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement.fc_trailpack, "trail_pack", return_value=""), \
                 mock.patch.object(fc.fc_config, "TEST_READER", None), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}), \
                 redirect_stdout(io.StringIO()) as said:
@@ -1711,7 +1711,7 @@ class TestReferenceCost(unittest.TestCase):
             usage = {"tokens_in": 1, "tokens_out": 1, **usages.pop(0)}
             (Path(cwd) / "a.txt").write_text("yes\n" if not usages else "nope\n")
             return "s", "", 1, usage
-        with mock.patch.object(fc.fc_implement, "implementer", run_impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
+        with mock.patch.object(fc.fc_implement, "implementer", run_impl), mock.patch.object(fc.fc_implement.fc_trailpack, "trail_pack", return_value=""), \
                 mock.patch.object(fc.fc_config, "DEFAULT_MODEL", PRIMARY), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", BACKUP), \
                 mock.patch.object(fc.fc_config, "FALLBACK_AFTER", 2), mock.patch.object(fc.fc_config, "TEST_READER", None), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):

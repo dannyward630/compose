@@ -70,7 +70,7 @@ class FastAttempts(unittest.TestCase):
             self.calls.append(prompt); (Path(cwd) / "a.txt").write_text(write)
             return ends, "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
         with mock.patch.object(fc_fast, "workflow", return_value=workflow), mock.patch.object(fc.fc_implement, "implementer", impl), \
-             mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), mock.patch.object(fc.fc_config, "TEST_READER", None), \
+             mock.patch.object(fc.fc_implement.fc_trailpack, "trail_pack", return_value=""), mock.patch.object(fc.fc_config, "TEST_READER", None), \
              mock.patch.object(fc.fc_linear, "linear_event") as self.events, mock.patch.object(fc.fc_core, "say") as self.say, mock.patch.object(fc.fc_herdr, "herdr_label"), \
              mock.patch.object(fc.fc_herdr, "herdr", side_effect=lambda *a, **k: (self.closed.append(a), (answers or {}).get(a[:2]))[1]), mock.patch.dict(os.environ, {"COMPOSE_NO_TREEHOUSE": "1"}):
             r = fc.fc_implement.run_task(self.repo, proj, meta, 1)

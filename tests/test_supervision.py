@@ -830,7 +830,7 @@ class RunStop(unittest.TestCase):
             calls.append(model); fc.fc_proc.STOP.set()
             if effect: raise effect
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
-        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement.fc_trailpack, "trail_pack", return_value=""), \
                 mock.patch.object(fc.fc_config, "DEFAULT_MODEL", "pi:p/primary"), mock.patch.object(fc.fc_config, "FALLBACK_MODEL", "pi:p/backup"), \
                 mock.patch.object(fc.fc_config, "FALLBACK_AFTER", 1), mock.patch.object(fc.fc_config, "TEST_READER", None), contextlib.redirect_stdout(io.StringIO()), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}), \

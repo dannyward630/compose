@@ -137,7 +137,7 @@ class PassGate(unittest.TestCase):
             (Path(cwd) / "a.txt").write_text("yes\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
         said = io.StringIO()
-        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement.fc_trailpack, "trail_pack", return_value=""), \
                 mock.patch.object(fc.fc_config, "TEST_READER", None), mock.patch.dict(os.environ, {**GIT, **({"COMPOSE_REDO": "1"} if redo else {})}), redirect_stdout(said):
             result = fc.fc_implement.run_task(repo, proj, task, 2)
         return result, said.getvalue()

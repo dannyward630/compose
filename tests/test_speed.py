@@ -51,7 +51,7 @@ class TaskBranches(unittest.TestCase):
         def impl(cwd, model, prompt, session=None, task=None, timeout=None):
             (Path(cwd) / f"{tid}.py").write_text("F\n")
             return "s", "", 1, {"tokens_in": 1, "tokens_out": 1, "cost": 0.0}
-        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement, "trail_pack", return_value=""), \
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement.fc_trailpack, "trail_pack", return_value=""), \
                 mock.patch.object(fc.fc_config, "FALLBACK_MODEL", None), \
                 mock.patch.dict(os.environ, {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}):
             r = fc.fc_implement.run_task(self.repo, self.proj, task, 1, tag=tag)

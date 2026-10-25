@@ -72,6 +72,7 @@ fc_libapi
 fc_green
 fc_gate
 fc_format
+fc_trailpack
 fc_implement
 fc_shrink
 fc_jev
