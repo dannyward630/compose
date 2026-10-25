@@ -379,8 +379,8 @@ class PlanWritingRules(unittest.TestCase):
 
 class Frame0OptIn(unittest.TestCase):
     FIRST = "The engineering manager shapes the feature with the product owner in conversation, one question at a time, and nothing is planned until the product owner approves the written design."
-    OPT_IN = "Nothing of Frame0 runs until a prototype question needs a wireframe: no session has `frame0` tools, and the app starts only when `compose frame0 up --project <slug>` is run, right before the first drawing, never at the start of a session on the chance that a visual card comes."
-    ONLY = "The first `compose frame0` command after `up` makes Frame0 ask the product owner to allow \"Frame0 MCP Server\" (the name compose asks with): report `needs-user` saying so and retry once they click Allow; if the command still fails, say so and wait."
+    OPT_IN = "Nothing of Frame0 runs until a prototype question needs a wireframe: no session has `frame0` tools, and the app starts only when `compose frame0 up --project <slug>` is run, right before the first drawing, never at the start of a session on the chance that a wireframe will be needed."
+    ONLY = "The first `compose frame0` command after `up` makes Frame0 ask the product owner to allow \"Frame0 MCP Server\" (the name compose asks with): tell the product owner to click Allow, and retry once they say they did; if the command still fails, say so and wait."
 
     def setUp(self):
         self.text = read("sections/0b.md")
@@ -574,9 +574,11 @@ class BrainstormShape(unittest.TestCase):
         "Bring the theirs pile in one message, most important first; that is the only round of questions the check produces.",
         "Under away, a brainstorm waits for the product owner and is listed in the digest; under yolo, the engineering manager takes its own recommendation per question, tagged unconfirmed.",
         "The approved design is the map: the planner (step 1) starts only after the product owner approves it.",
+        "Before the product owner approves the design, a changed decision is recorded with `compose decide --project <slug> --new \"<decision>\" --replaces D<n> --quote \"<their words>\"`, which strikes the old line and adds the new D id.",
+        "After approval, a decision changes only through a change of course (step 8).",
     ]
     LOOKUP = [
-        "1. the map's Decisions so far and Notes, and the description and comments of the feature, its epic, and the story at hand",
+        "1. the feature issue's Decisions so far and Notes, and the description and comments of the feature, its epic, and the story at hand",
         "2. a `compose linear list --search \"<terms>\"` search, scoped to the project in `.compose/linear.json`, for the question's key terms, since another epic or feature may have decided it",
     ]
     GONE = ("card set", "fog", "Destination", "lavish-axi poll", "accept every recommendation")
