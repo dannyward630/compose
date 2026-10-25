@@ -305,6 +305,7 @@ class ProductSeed(unittest.TestCase):
         self.assertEqual(fc_plan.derived_blocks(fc_plan.parse_tracks(text)),
                          {("NEB-7", "NEB-9"), ("NEB-7", "NEB-12"), ("NEB-9", "NEB-15"), ("NEB-12", "NEB-15")})
         self.assertEqual([t["items"] for t in fc_plan.parse_tracks(text)][-1], ["NEB-20"])
+        self.assertEqual([t["name"] for t in fc_plan.parse_tracks(text)], ["Sign-in - after - email", "T NEB-12", "T NEB-15", "Export - then after hours mail"])
 
     def test_no_open_feature_seeds_nothing(self):
         self.assertEqual(fc_plan.seed_tracks({"NEB-2": feat("NEB-2", "Done")}), "")
