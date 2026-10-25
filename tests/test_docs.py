@@ -491,6 +491,9 @@ class LinearCommands(unittest.TestCase):
         for word in ("get <id>", "--section", "labels [--create <name>]", "doc create", "--any-project",
                      "cancel <id> --file <reason> [--into <id>]", "--add-label", "--drop-label"):
             self.assertIn(word, cli[0])
+        self.assertIn("`get`, `update`, `comment`, `cancel`, and `doc update` refuse an issue or document in another project unless `--any-project`", cli[0])
+        self.assertIn("`create`, `update`, `comment`, and `cancel` drop the cached reads", cli[0])
+        self.assertIn("`cancel` refuses while any compose project of the repo is under away or yolo", cli[0])
 
 
 class NoLinearMcpToolName(unittest.TestCase):
@@ -1135,6 +1138,7 @@ class ReadinessDocs(unittest.TestCase):
     def test_readiness_row_config_row_and_0b_paragraph(self):
         rows = [l for l in read("docs/cli.md").splitlines() if l.startswith("| `readiness`")]
         self.assertEqual(len(rows), 1)
+        self.assertIn("A story labeled `needs-shaping` prints `not ready: needs shaping`, with no judge call and no open questions written.", rows[0])
         for word in ("Jev", "deep-dive", "models.readiness", "## Open questions", "(readiness check, <date>)", "--refresh", "--dry-run", "--json", ".compose/readiness.json"):
             self.assertIn(word, rows[0])
         cfg = [l for l in read("docs/config.md").splitlines() if l.startswith("| `models.readiness`")]
@@ -2325,6 +2329,11 @@ class ReconcileFlow(unittest.TestCase):
         self.assertIn('File that document with `compose linear doc create --title "<project name>: reconcile research <date>"`.', text.splitlines())
         self.assertIn("A kept ticket can also carry a new `title`, which renames it.", text.splitlines())
         self.assertIn("A `new` entry takes `deep_dive` too.", text.splitlines())
+
+    def test_the_figma_key_is_read_from_each_projects_linear_json(self):
+        lines = read("sections/0k.md").splitlines()
+        self.assertIn("The designs come from the Figma file in the `figma` key of each project's `.compose/<slug>/linear.json`, or the one the product owner names.", lines)
+        self.assertNotIn("`.compose/linear.json`'s `figma`", read("sections/0k.md"))
 
     def test_plain_dashes_and_one_sentence_per_line(self):
         for rel in ("sections/0k.md", "commands/reconcile.md"):
