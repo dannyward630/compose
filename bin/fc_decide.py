@@ -142,6 +142,15 @@ def record(body, answers, tag, change=None):
     body = fc_plan.replace_section(body, heading_line(body, DECIDED), "\n".join(dec))
     return body, out
 
+def record_new(body, texts, tag):
+    """The map with one `- D<n>: <text> <tag>` line appended under Decisions so far per text, for decisions reached in conversation that
+    no card asked; <n> runs on from the highest D id the section holds, struck lines included. Returns (body, the lines written)."""
+    dec = fc_change.map_section(body, DECIDED).splitlines()
+    top = max((int(n) for n in re.findall(r"\bD(\d+)\b", "\n".join(dec))), default=0)
+    lines = [f"D{top + i}: {t.strip()} {tag}" for i, t in enumerate(texts, 1)]
+    dec = [l for l in dec if l.strip()] + [f"- {l}" for l in lines]
+    return fc_plan.replace_section(body, heading_line(body, DECIDED), "\n".join(dec)), lines
+
 def cmd_decide(a):
     """Record the product owner's answers on the map, their words attached (`--quote`), and tell the team lead. Without --quote it
     refuses, unless away or yolo is on: then the recommendation lands tagged unconfirmed and is logged for the digest. With
@@ -152,8 +161,9 @@ def cmd_decide(a):
     if not quote and not posture:
         sys.exit('not recorded: a decision is recorded only with the product owner\'s words: add --quote "<their message, verbatim>". '
                  "While away or yolo is on, `compose decide` without --quote records the recommendation as unconfirmed.")
-    if not a.answers and not a.accept_all:
-        sys.exit('decide needs answers ("Q1: A" ...) or --accept-all')
+    news = [t for t in (getattr(a, "new", None) or []) if t.strip()]
+    if not a.answers and not a.accept_all and not news:
+        sys.exit('decide needs answers ("Q1: A" ...), --new, or --accept-all')
     issue = map_issue(proj, a)
     lid, ident, body = read_map(issue)
     cards = fc_ask.cards_in(fc_change.map_section(body, OPEN))
@@ -164,14 +174,17 @@ def cmd_decide(a):
         if missing:
             sys.exit(f"not recorded: --accept-all needs a recommendation on every open card; {', '.join(missing)} carry none")
         answers += [(cid, c["recommendation"]) for cid, c in cards.items() if cid not in given]
-    if not answers:
+    if not answers and not news:
         sys.exit(f"nothing to record: Not yet specified on {ident} is empty")
     date = time.strftime("%Y-%m-%d")
     tag = CONFIRMED.format(date=date, quote=quote.replace('"', "'")) if quote else UNCONFIRMED.format(mode=posture["mode"], date=date)
     change = getattr(a, "change", None)
     if change:
         tag = f"({change}; " + tag[1:]
-    new_body, lines = record(body, answers, tag, change)
+    new_body, lines = record(body, answers, tag, change) if answers else (body, [])
+    if news:
+        new_body, added = record_new(new_body, news, tag)
+        lines += added
     fc_linear.linear_gql("mutation($id: String!, $in: IssueUpdateInput!) { issueUpdate(id: $id, input: $in) { success } }", {"id": lid, "in": {"description": new_body}})
     fc_linear_cmd.await_write(lambda: fc_linear.linear_gql("query($id: String!) { issue(id: $id) { description } }", {"id": lid})["issue"]["description"], body, new_body)
     if posture and not quote:
@@ -182,7 +195,7 @@ def cmd_decide(a):
     left = len(cards) - len(answers)
     print(f"{left} card(s) still open on {ident}" if left else f"Not yet specified on {ident} is empty")
     lead = fc_herdr.agent_name(proj.name, "orchestrator")
-    note = f"decided on {ident}: {', '.join(cid for cid, _ in answers)}; read the map's Decisions so far and continue (tell the architect, if one is live)"
+    note = f"decided on {ident}: {', '.join([cid for cid, _ in answers] + [l.split(':')[0] for l in lines[len(answers):]])}; read the map's Decisions so far and continue (tell the architect, if one is live)"
     if fc_herdr.herdr_env() and fc_herdr.herdr("agent", "prompt", lead, note) is not None:
         print(f"told {lead}")
     else:

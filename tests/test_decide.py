@@ -61,9 +61,9 @@ class Decide(unittest.TestCase):
         (self.proj / "linear.json").write_text(json.dumps({"feature": "NEB-1"}))
         self.linear = FakeLinear(MAP)
 
-    def run_cmd(self, fn, *answers, quote=None, accept_all=False, issue=None, change=None):
+    def run_cmd(self, fn, *answers, quote=None, accept_all=False, issue=None, change=None, new=None):
         out = io.StringIO()
-        a = SimpleNamespace(repo=".", project="shop", answers=list(answers), quote=quote, accept_all=accept_all, issue=issue, change=change)
+        a = SimpleNamespace(repo=".", project="shop", answers=list(answers), quote=quote, accept_all=accept_all, issue=issue, change=change, new=new or [])
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_linear, "linear_gql", self.linear.gql), \
                 mock.patch.object(fc.fc_linear_cmd, "SETTLE_SECONDS", 0), contextlib.redirect_stdout(out):
             fn(a)
@@ -153,6 +153,35 @@ class Decide(unittest.TestCase):
         logged = json.loads((self.proj / "results" / "yolo.json").read_text())["decisions"]
         self.assertEqual([d["text"].split(" (")[0] for d in logged], ["Q1: A. Clerk", "Q2: B. SQLite"])
         self.assertIn("recorded on NEB-1: Q1: A. Clerk (away recommendation", out)
+        (self.proj / "results" / "yolo.json").write_text(json.dumps({**y, "mode": "yolo", "decisions": []}))
+        self.decide(new=["x"])
+        self.assertIn(f"- D1: x (yolo recommendation, unconfirmed, {TODAY})", self.linear.body)
+
+    def test_a_decision_from_conversation_lands_with_the_next_free_d_id(self):
+        self.linear.body = MAP.replace("- Q0: Stripe", "- D1: one plan\n- ~~D2: old~~ (C1)\n- Q0: Stripe")
+        out = self.decide(new=["billing waits for auth", "day pace is capped"], quote="auth first, and cap the day")
+        self.assertIn(f'- D3: billing waits for auth (product owner, {TODAY}; said: "auth first, and cap the day")', self.linear.body)
+        self.assertIn("- D4: day pace is capped (product owner,", self.linear.body)
+        self.assertIn("Q1. Which auth?", self.linear.body)  # open cards untouched
+        self.assertIn("recorded on NEB-1: D3: billing waits for auth", out)
+
+    def test_new_decisions_need_the_quote_unless_away_or_yolo(self):
+        with self.assertRaises(SystemExit) as e:
+            self.decide(new=["x"])
+        self.assertIn("--quote", str(e.exception.code))
+        self.assertEqual(self.linear.writes, [])
+
+    def test_new_and_card_answers_land_together_under_one_tag(self):
+        self.decide("Q1: A", new=["keep sessions 30 days"], quote="A, and 30 days")
+        body = self.linear.body
+        self.assertIn("- Q1: A. Clerk (product owner,", body)
+        self.assertIn("- D1: keep sessions 30 days (product owner,", body)
+        self.assertLess(body.index("- Q1: A. Clerk"), body.index("- D1: keep"))
+
+    def test_new_on_a_map_without_decisions_so_far_creates_the_section(self):
+        self.linear.body = "## Destination\n\nA shop.\n"
+        self.decide(new=["one store"], quote="one store")
+        self.assertIn("## Decisions so far\n\n- D1: one store (product owner,", self.linear.body)
 
     def test_a_quote_confirms_an_unconfirmed_line_and_a_confirmed_one_refuses(self):
         self.linear.body = MAP.replace("## Not yet specified\n", "## Not yet specified\n\nQ3. Theme?\nA. dark - affects: tokens\nB. light - affects: tokens\nRecommendation: A\n", 1)

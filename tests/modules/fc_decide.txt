@@ -16,4 +16,5 @@ parse_answers
 answer_text
 superseded
 record
+record_new
 cmd_decide
