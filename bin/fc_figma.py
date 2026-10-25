@@ -182,6 +182,9 @@ def cmd_designcrews(a):
         aside = old.with_name(old.name + ".before-redo")
         if redo and old.exists():  # the old result is set aside while the builder starts, and comes back if it does not
             old.rename(aside)
+        reopens = redo and (aside.exists() or m.get("linear_state") == "In Review")
+        # the stored tasks say In Progress from here on: status reads a design task In Review there as passed, until the next sync
+        was = fc_tasks.set_cached_state(proj, m["id"], "In Progress") if reopens else None
         try:
             fc_crew.cmd_crew(argparse.Namespace(repo=a.repo, project=proj.name, action="start", role=f"design-{m['id']}", title=f"design {m['id']}",
                                         brief=design_brief(m, figma, proj / "results"), force=False, cwd=None, model=None))
@@ -190,8 +193,10 @@ def cmd_designcrews(a):
             print(f"design-{m['id']} not started: {e}")
             if aside.exists() and not old.exists():
                 aside.rename(old)
+            if was:
+                fc_tasks.set_cached_state(proj, m["id"], was)
             return
-        if redo and (aside.exists() or m.get("linear_state") == "In Review"):
+        if reopens:
             print(f"{m['id']} reopened: its issue moves back to In Progress" + (f", its old result is {aside.name}" if aside.exists() else ""))
             fc_linear.linear_event(proj, m, "dispatched")
     failed = []
