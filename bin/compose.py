@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fc_cost, fc_mcp  # noqa: E402
-import fc_core, fc_proc, fc_readguard, fc_libapi, fc_green, fc_gate, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_delivery, fc_claude, fc_models, fc_route, fc_quick, fc_herdr, fc_worktree, fc_layers, fc_blockers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_decide, fc_hooks, fc_pin, fc_reports, fc_crew, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_buildercheck, fc_reconcile, fc_format, fc_implement, fc_shrink, fc_jev, fc_accept, fc_verify, fc_taskreview, fc_ship, fc_prove, fc_run, fc_status, fc_tiers, fc_tierpin, fc_budget, fc_spec, fc_watch, fc_history, fc_yolo, fc_bench, fc_setup, fc_update, fc_readiness  # noqa: E402
+import fc_core, fc_proc, fc_readguard, fc_libapi, fc_green, fc_gate, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_delivery, fc_factorystate, fc_factoryturn, fc_factory, fc_claude, fc_models, fc_route, fc_quick, fc_herdr, fc_worktree, fc_layers, fc_blockers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_decide, fc_hooks, fc_pin, fc_reports, fc_crew, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_buildercheck, fc_reconcile, fc_format, fc_implement, fc_shrink, fc_jev, fc_accept, fc_verify, fc_taskreview, fc_ship, fc_prove, fc_run, fc_status, fc_tiers, fc_tierpin, fc_budget, fc_spec, fc_watch, fc_history, fc_yolo, fc_bench, fc_setup, fc_update, fc_readiness  # noqa: E402
 
 DETACHED = ("run", "verify", "resume")  # the long commands: a closed tab or a crashed session must not end them
 
@@ -99,6 +99,7 @@ def main():
                             ("spec-check", fc_spec.cmd_spec_check, "check the synced feature, its stories, and its tasks against the spec; --stdin reads the sync JSON"),
                             ("ready", fc_linear.cmd_ready, "mark the stories and features that can start now with the Ready label in Linear, and print them"),
                             ("delivery", fc_delivery.cmd_delivery, "the product delivery plan across features: seed | order | reconcile | tracks; reconcile makes Linear follow it"),
+                            ("factory", fc_factory.cmd_factory, "the build loop over the repo's Linear project: start | stop | status | watch | pace | plan | decline; it builds ready stories in roadmap order at a day pace and offers what to shape next"),
                             ("readiness", fc_readiness.cmd_readiness, "judge whether stories are specced well enough to build (Jev, a stronger model for technical ones) and unblocked; what is missing is asked under each story's ## Open questions"),
                             ("projects", fc_status.cmd_projects, "list every project (feature) with its task progress"),
                             ("cost", fc_status.cmd_cost, "tokens per teammate session and per run provider; --json"),
@@ -171,6 +172,13 @@ def main():
             s.add_argument("--quote")
             for flag in ("--dry-run", "--json"):
                 s.add_argument(flag, action="store_true")
+        if name == "factory":
+            s.add_argument("action", choices=("start", "stop", "status", "watch", "pace", "plan", "decline", "loop"))
+            s.add_argument("target", nargs="?")
+            s.add_argument("--hold")
+            s.add_argument("--done", action="store_true")
+            s.add_argument("--timeout", type=float)
+            s.add_argument("--json", action="store_true")
         if name == "cost":
             s.add_argument("--json", action="store_true", help="print the rows and their total as JSON")
         if name == "tier":

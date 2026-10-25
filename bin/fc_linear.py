@@ -62,7 +62,7 @@ def linear_sync_payload(proj):
 # The key is the active workspace's `linear_api_key`; it goes in a header,
 # never argv or a results file. Every call is best effort: a Linear outage prints one line and the run goes on.
 LINEAR_URL = "https://api.linear.app/graphql"
-LINEAR_ISSUE = """query($id: String!) { issue(id: $id) { id identifier state { name type }
+LINEAR_ISSUE = """query($id: String!) { issue(id: $id) { id identifier description state { name type }
   team { states { nodes { id name type } } } parent { identifier } children { nodes { identifier state { name type } } } } }"""
 _linear_warned = []
 

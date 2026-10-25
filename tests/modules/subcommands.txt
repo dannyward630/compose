@@ -16,6 +16,7 @@ quick
 spec-check
 ready
 delivery
+factory
 readiness
 projects
 cost

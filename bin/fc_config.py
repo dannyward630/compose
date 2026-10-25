@@ -57,6 +57,8 @@ CREW_MODELS = {}  # models.crew from the config: role (or default, small) -> cla
 PARALLEL = None  # `parallel` from the config; None keeps each command's own default
 CLAUDE_PARALLEL = 3  # `claude_parallel` from the config: how many Claude Code writers (run's tasks, testcrews' test writers) run at once
 LOAD = {}  # `load` from the config: the keys that move limits() off its defaults
+FACTORY_DEFAULTS = {"day_tickets": 2, "turn_seconds": 120, "offer_snooze_minutes": 60}
+FACTORY = dict(FACTORY_DEFAULTS)  # `factory` from the config over FACTORY_DEFAULTS: the build loop's pace, turn length and offer snooze
 LINEAR_KEY = None  # the active workspace's Linear API key, set by apply_config; never printed or passed in argv
 WORKSPACE = "default"
 CREW_EFFORT = {}  # the same keys -> Claude Code --effort, for entries written as {"model": ..., "effort": ...}
@@ -147,7 +149,7 @@ def settings(cfg, harness=None):
 def apply_config(move=True, harness=None):
     """Point models, keys, and env at the active workspace. Its key wins over the shell and the jev .env, and every
     OpenRouter caller (pi, OpenCode, the fast-model review, jev's e2e text helper) bills to it."""
-    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, REVIEW_MODEL, READINESS_MODEL, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL, CLAUDE_PARALLEL, LOAD, PROVIDERS, TIERS, PRICES, HARNESS
+    global DEFAULT_MODEL, FALLBACK_MODEL, FALLBACK_AFTER, TEST_READER, REVIEW_MODEL, READINESS_MODEL, OPENROUTER_KEY, CREW_MODELS, CREW_EFFORT, CREW_FALLBACK, LINEAR_KEY, WORKSPACE, PARALLEL, CLAUDE_PARALLEL, LOAD, FACTORY, PROVIDERS, TIERS, PRICES, HARNESS
     if move:
         for line in fc_auth.move_keys(CONFIG_PATH, ENV_FILE, AUTH_PATH):  # old keys leave config.json and .env first, stdout stays clean
             print(line, file=sys.stderr)
@@ -179,6 +181,10 @@ def apply_config(move=True, harness=None):
             sys.exit(f"{CONFIG_PATH}: load.{k} must be a number above 0, not {LOAD[k]!r}")
     if "high" in LOAD and "low" in LOAD and LOAD["low"] >= LOAD["high"]:
         sys.exit(f"{CONFIG_PATH}: load.low must be below load.high")
+    FACTORY = {**FACTORY_DEFAULTS, **st.get("factory", {})}
+    for k, least in (("day_tickets", 1), ("turn_seconds", 10), ("offer_snooze_minutes", 1)):
+        if type(FACTORY[k]) is not int or FACTORY[k] < least:
+            sys.exit(f"{CONFIG_PATH}: factory.{k} must be a whole number of {least} or more, not {FACTORY[k]!r}")
     WORKSPACE = name
     HARNESS = harness
     auth = fc_auth.read_auth(AUTH_PATH)

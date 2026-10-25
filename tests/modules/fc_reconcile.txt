@@ -41,6 +41,7 @@ verb_apply
 ancestors
 touched
 live_leads
+leads_among
 change_lines
 verb_notices
 cmd_reconcile
