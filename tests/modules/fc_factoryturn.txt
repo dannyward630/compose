@@ -22,3 +22,17 @@ prompt_lead
 _add_story
 _new_project
 dispatch
+DECISION_ID
+OPEN_QUESTIONS
+fingerprint
+_decision_id
+changed_refs
+hold_changed
+offer_day
+IDLE
+_lines
+_settle
+_watch
+_failed
+_move_up
+turn

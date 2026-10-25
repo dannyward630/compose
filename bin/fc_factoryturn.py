@@ -1,7 +1,8 @@
 """The build loop's decision step: what is in flight, and which ready stories to start next."""
-import json, os, re, subprocess, sys
+import hashlib, json, os, re, subprocess, sys
 from pathlib import Path
-import fc_config, fc_core, fc_herdr, fc_plan, fc_readiness, fc_reconcile, fc_tasks
+import fc_change, fc_config, fc_core, fc_delivery, fc_herdr, fc_linear, fc_load, fc_plan, fc_readiness, fc_reconcile, fc_tasks
+import fc_factorystate
 
 JUDGE_LIMIT = 6
 OPEN = ("todo", "backlog")
@@ -193,3 +194,159 @@ def dispatch(repo, plan, entry, kind, state, now):
     state["dispatched"][story] = {"feature": feature, "project": slug, "kind": kind, "at": now}
     return (f"event factory=dispatched story={story} project={slug} kind={kind}  "
             f"(its team lead builds it; relay it: compose watch --project {slug} --from orchestrator)")
+
+DECISION_ID = re.compile(r"^([A-Z]+\d+):")
+OPEN_QUESTIONS = re.compile(r"^#+[ \t]*Open questions[^\n]*$.*?(?=^#|\Z)", re.M | re.S)
+
+def fingerprint(feature_desc, story_desc):
+    """What a plan change would touch: the feature's live decision lines, and a hash of the story without its Open questions (the loop writes those)."""
+    body = OPEN_QUESTIONS.sub("", story_desc or "").rstrip()
+    return {"decisions": fc_change.decision_lines(feature_desc), "story": hashlib.sha256(body.encode()).hexdigest()}
+
+def _decision_id(line):
+    m = DECISION_ID.match(line.lstrip("*_ "))
+    return m.group(1) if m else None
+
+def changed_refs(old, new, story):
+    """What changed between two fingerprints: the ids of changed decision lines in id order, then the story when its text changed or a changed line has no id."""
+    old_d, new_d = old.get("decisions") or [], new.get("decisions") or []
+    moved = [l for l in old_d if l not in new_d] + [l for l in new_d if l not in old_d]
+    ids = sorted({_decision_id(l) for l in moved} - {None}, key=lambda i: (re.match(r"[A-Z]+", i).group(0), int(i[len(re.match(r"[A-Z]+", i).group(0)):])))
+    return ids + ([story] if old.get("story") != new.get("story") or any(_decision_id(l) is None for l in moved) else [])
+
+def hold_changed(repo, proj_dir, story, refs, why):
+    """Hold the tasks that rest on what changed; returns the event line."""
+    ids = sorted(fc_change.rests_on(proj_dir, refs))
+    if not ids:
+        return f'event factory=changed story={story} why="{why}"  (nothing running rests on it)'
+    fc_change.hold_tasks(proj_dir, ids, f"factory: {why}")
+    return (f'event factory=held story={story} tasks={",".join(ids)} why="{why}"  '
+            "(re-plan it with the product owner: keep, part, or discard each held task with compose change, step 8)")
+
+def offer_day(repo, state, offer, now, out):
+    """What a day turn does when nothing can be started: offer the product owner the next ticket to shape."""
+    state["offer"] = {"id": offer["id"], "layer": offer["layer"], "at": now}
+    fc_factorystate.say_once(state, "offer", f'event factory=offer ticket={offer["id"]} layer={offer["layer"]} why="{offer["why"]}"  '
+                             "(offer to plan it with the product owner (sections/0f.md); they may pick another ticket or decline)", out)
+
+IDLE = {"day": offer_day}
+
+def _lines(state, key, line, out):
+    fc_factorystate.say_once(state, key, line, out)
+
+def _settle(repo, plan, state, out):
+    """Drop the records of stories that left the build (verified, finished) or lost their team lead."""
+    leads = None
+    for story, rec in list(state["dispatched"].items()):
+        s = (story_of(plan, story) or {}).get("state", "").lower()
+        if s in FREED:
+            if s == "in review":
+                out.append(f"event factory=verified story={story} project={rec.get('project')}  (verified: waiting for the product owner's look and merge)")
+        elif s in OPEN:
+            leads = fc_reconcile.live_leads(repo) if leads is None else leads
+            if rec.get("project") in leads:
+                continue
+            out.append(f"event factory=lead-lost story={story} project={rec.get('project')}  (its team lead is gone: the story goes back in the queue)")
+        else:
+            continue
+        del state["dispatched"][story]
+        state["prints"].pop(story, None)
+
+def _watch(repo, plan, entries, state, out):
+    """Hold the tasks of an in-flight story whose text, decisions or place in the plan changed since the last look."""
+    waits = {e["id"]: e["waits_on"] for e in entries}
+    for story in in_flight(plan, state):
+        feature = next((fid for fid, f in plan["features"].items() if any(s["id"] == story for s in f.get("stories") or [])), None)
+        got = project_for(repo, feature) if feature else None
+        if not got:
+            continue
+        new = fingerprint((fc_linear.linear_issue(feature).get("description") or ""),
+                                                              (fc_linear.linear_issue(story).get("description") or ""))
+        new["waits_on"] = list(waits.get(story) or [])
+        old = state["prints"].get(story)
+        state["prints"][story] = new
+        if not old:
+            continue
+        refs = changed_refs(old, new, story)
+        if refs:
+            on = story if old.get("story") != new["story"] else feature
+            out.append(hold_changed(repo, got[2], story, refs, f"{', '.join(refs)} changed on {on}"))
+        if new["waits_on"] and not old.get("waits_on"):
+            out.append(hold_changed(repo, got[2], story, [story], f"the product delivery plan now puts {feature} after {', '.join(new['waits_on'])}"))
+
+def _failed(why):
+    return f'event factory=turn-failed why="{why}"  (the next turn tries again)'
+
+def _move_up(repo, plan, entries, picked, state, judge, out):
+    """Ask once whether a ticket planned out of order, now specced, should move up in the plan."""
+    for ident in list(state["out_of_order"]):
+        under = [e for e in entries if e["id"] == ident or e["feature"] == ident]
+        ids = [ident] + [s["id"] for s in (plan["features"].get(ident) or {}).get("stories") or []] + [e["id"] for e in under]
+        ids = [i for n, i in enumerate(ids) if i not in ids[:n] and (story_of(plan, i) or any(e["id"] == i and e["kind"] == "story" for e in entries))]
+        done = next((i for i in ids if i in picked), None)
+        for i in ids:
+            if done:
+                break
+            try:
+                done = i if judge(i, write=False).get("specced") else None
+            except fc_readiness.NotAStory:
+                continue
+        if not done:
+            continue
+        e = next((e for e in entries if e["id"] == done), None)
+        state["out_of_order"].remove(ident)
+        if e and not e["waits_on"]:
+            continue
+        waits = ", ".join(e["waits_on"]) if e else "not-in-plan"
+        _lines(state, f"move-up:{ident}", f"event factory=move-up ticket={ident} waits_on={waits}  (planned out of order and now specced: ask the "
+               "product owner whether to move it up; on yes, write the tracks again (sections/0p.md))", out)
+
+def turn(repo, state, now):
+    """One pass of the build loop: follow the roadmap, start ready stories, pause work whose ground changed, offer what to shape next. Returns the event lines."""
+    out, said = [], state["said"]
+    try:
+        plan = fc_delivery.product_plan(repo)
+        if plan is None:
+            _lines(state, "bootstrap", "event factory=bootstrap  (no product delivery plan yet: plan it with the product owner from "
+                   "compose delivery seed (sections/0p.md); nothing is dispatched before it exists)", out)
+            return out
+        said.pop("bootstrap", None)
+        proposed = (fc_delivery.reconcile(repo) or {}).get("proposed") or []
+        for key in [k for k in said if k.startswith("proposed:") and k[9:] not in proposed]:
+            del said[key]
+        for text in proposed:
+            _lines(state, "proposed:" + text, f'event factory=proposed fix="{text}"  (bring it to the product owner with its reason; never apply it without their yes)', out)
+        plan = fc_delivery.product_plan(repo)
+        if plan is None:
+            raise RuntimeError("the product delivery plan went away during the turn")
+        entries = fc_plan.order_entries(plan["tracks"], plan["features"])
+        _settle(repo, plan, state, out)
+        _watch(repo, plan, entries, state, out)
+    except (SystemExit, RuntimeError, OSError) as ex:
+        _lines(state, "turn-failed", _failed(str(ex)), out)
+        return out
+    failed = False
+    free = 0 if fc_load.held() else max(0, fc_factorystate.pace(state)["cap"] - len(in_flight(plan, state)))
+    judge = lambda s, **kw: fc_readiness.story_readiness(repo, s, **kw)
+    got = pick(entries, plan, state, free, judge)
+    live = {i for i, _ in got["failed"]}
+    for key in [k for k in said if k.startswith("judge-failed:") and k[13:] not in live]:
+        del said[key]
+    for ident, err in got["failed"]:
+        _lines(state, f"judge-failed:{ident}", f'event factory=judge-failed story={ident} why="{err}"', out)
+    for e, kind in got["picks"]:
+        try:
+            out.append(dispatch(repo, plan, e, kind, state, now))
+        except RuntimeError as ex:
+            _lines(state, "turn-failed", _failed(str(ex)), out)
+            failed = True
+            break
+    _move_up(repo, plan, entries, got["specced"], state, judge, out)
+    if got["picks"] or got["ready_waiting"] or not got["offer"]:
+        said.pop("offer", None)
+        state["offer"] = None
+    elif not state["planning"] and now >= (state["declined_until"] or 0):
+        IDLE[fc_factorystate.pace(state)["mode"]](repo, state, got["offer"], now, out)
+    if not failed:
+        said.pop("turn-failed", None)
+    return out
