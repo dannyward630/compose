@@ -343,9 +343,10 @@ def ready_ids(issues):
                     for r in i["inverseRelations"]["nodes"] if r["type"] == "blocks")]
 
 def open_questions(description):
-    """The list items under an `## Open questions` heading (any level, `-` or `*` bullets); [] when the section is absent,
-    empty or says None."""
-    m = re.search(r"^#+[ \t]*Open questions[^\n]*$(.*?)(?=^#|\Z)", description or "", re.M | re.S)
+    """The list items (`-` or `*` bullets) of the `## Open questions` section: an H2 heading with an optional suffix, running to the
+    next H1 or H2 heading, so bullets under an H3 child count. An H3 `### Open questions` elsewhere does not. [] when the section
+    is absent, empty or says None."""
+    m = re.search(r"^##[ \t]+Open questions\b[^\n]*$(.*?)(?=^#{1,2}[ \t]|\Z)", description or "", re.M | re.S)
     items = [b.group(1) for b in map(re.compile(r"^\s*[-*]\s+(.*\S)").match, (m.group(1) if m else "").splitlines()) if b]
     return [i for i in items if i.strip().rstrip(".").lower() != "none"]
 

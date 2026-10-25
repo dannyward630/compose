@@ -882,3 +882,7 @@ class OpenQuestions(unittest.TestCase):
         self.assertEqual(fc.fc_linear.open_questions("## Open questions\n\n* a\n- b\n\n## Notes\n\nx"), ["a", "b"])
         self.assertEqual(fc.fc_linear.open_questions("## Open questions\n\nNone.\n"), [])
         self.assertEqual(fc.fc_linear.open_questions(""), [])
+
+    def test_open_questions_reads_only_the_h2_section_and_its_h3_children(self):
+        self.assertEqual(fc.fc_linear.open_questions("## Notes\n\n### Open questions\n\n- mine\n"), [])
+        self.assertEqual(fc.fc_linear.open_questions("## Open questions:\n\n- a\n\n### Detail\n\n- b\n\n## After\n\n- c\n"), ["a", "b"])
