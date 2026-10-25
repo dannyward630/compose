@@ -172,7 +172,7 @@ class CarryOver(unittest.TestCase):
         """A fresh run_task over the same repo and project; returns (a.txt, b.txt, prompt) of the first turn."""
         meta = {"id": "001", "title": "answer", "files": files or ["a.txt", "b.txt"], "protected": [], "test": "grep -q yes a.txt",
                 "model": "pi:p/primary", "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}
-        first, self.said = [], []
+        first, self.said, self.events = [], [], []
         def impl(cwd, model, prompt, session=None, task=None, timeout=None):
             if not first:
                 first.append(tuple((Path(cwd) / n).read_text() if (Path(cwd) / n).exists() else None for n in ("a.txt", "b.txt")) + (prompt,))
@@ -182,7 +182,7 @@ class CarryOver(unittest.TestCase):
             return "s", "", 1, {"cost": 0.0}
         with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement.fc_trailpack, "trail_pack", return_value=""), \
                 mock.patch.object(fc.fc_config, "TEST_READER", None), mock.patch.dict(os.environ, ENV), \
-                mock.patch.object(fc.fc_linear, "linear_event", lambda *a: None), \
+                mock.patch.object(fc.fc_linear, "linear_event", lambda *a: self.events.append(a[2:])), \
                 mock.patch.object(fc.fc_core, "say", lambda m, *a, **k: self.said.append(m)):
             try:
                 fc.fc_implement.run_task(repo, proj, meta, 3, **({"reset_files": True, "tag": bench} if bench else {}))
@@ -246,6 +246,24 @@ class CarryOver(unittest.TestCase):
         self.assertTrue((proj / "results" / "001-bench-m-r0.json").exists())
         seen = self.resume(repo, proj)  # the real task still starts from its kept edits
         self.assertEqual(seen[0], "half\n")
+
+    def test_a_bench_run_over_a_paused_fast_task_leaves_its_result_and_linear_alone(self):
+        r, repo, proj = self.pause_with({"a.txt": "half\n"})
+        before = (proj / "results" / "001.json").read_text()
+        with mock.patch.object(fc.fc_implement.fc_fast, "workflow", lambda *a: "fix-then-regression-test"):
+            self.resume(repo, proj, files=["a.txt"], bench="-bench-m-r0")
+        self.assertEqual((proj / "results" / "001.json").read_text(), before)
+        self.assertEqual(self.events, [])
+
+    def test_triage_reads_only_bare_task_ids_not_bench_results(self):
+        proj = Path(tempfile.mkdtemp())
+        (proj / "results").mkdir()
+        for name in ("001.json", "001-bench-m-r0.json"):
+            (proj / "results" / name).write_text(json.dumps({"status": "passed"}))
+        got = []
+        with mock.patch.object(fc.fc_core, "project_dir", lambda a: proj), mock.patch.object(fc.fc_run, "triage", lambda repo, p, ids: got.append(ids) or {"x": 1}):
+            fc.fc_run.cmd_triage(SimpleNamespace(repo=".", only=None))
+        self.assertEqual(got, [["001"]])
 
     def test_kept_edits_survive_a_released_run_that_is_stopped(self):
         r, repo, proj = self.pause_with({"a.txt": "half\n", "b.txt": "new\n"})
@@ -338,7 +356,7 @@ class RestsOn(HoldCase):
                 mock.patch.object(fc.fc_change.os, "replace", wraps=os.replace) as rep, mock.patch.object(fc.fc_change.os, "link", wraps=os.link) as link:
             path, rec = fc.fc_change.reflect(self.proj, "manual", "x")
         self.assertEqual(json.loads(path.read_text())["trigger"], "manual")
-        self.assertTrue(link.called or rep.called)
+        self.assertTrue(link.called)
         cache = json.loads((self.proj / "results" / "tasks.json").read_text())
         cache["issues"]["ENG-4"] = {"title": "x", "description": "", "status": "Todo"}; cache["issues"]["ENG-2"]["parentId"] = "ENG-3"; cache["issues"]["ENG-3"]["parentId"] = "ENG-2"
         (self.proj / "results" / "tasks.json").write_text(json.dumps(cache))

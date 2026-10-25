@@ -243,7 +243,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         fc_core.sh(["git", "commit", "-qam", fc_core.typed("reset implementation", "deps", fc_core.commit_convention(proj)) if fc_core.commit_convention(proj) else "bench: reset implementation"], wt, check=False)
     before = fc_core.digests(wt, meta["protected"])
     # Red first: a test that already passes on HEAD means the task is done or the test is vacuous. Do not spend an implementer on it.
-    fast = fc_fast.workflow(proj, meta) == "fix-then-regression-test"
+    fast = not (tag or reset_files) and fc_fast.workflow(proj, meta) == "fix-then-regression-test"  # a bench run is never routed: it leaves the real result and Linear alone
     red = run_test(meta, wt)
     if fast and red.returncode:
         return fc_fast.broken_base(proj, meta, red, base_name, branch, wt)

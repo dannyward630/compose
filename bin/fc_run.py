@@ -48,7 +48,7 @@ def triage(repo, proj, ids):
 def cmd_triage(a):
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     ids = [x.strip() for x in a.only.split(",")] if a.only else sorted(
-        f.stem for f in (proj / "results").glob("[0-9]*.json") if json.loads(f.read_text()).get("status") == "passed")
+        f.stem for f in (proj / "results").glob("[0-9]*.json") if f.stem.isdigit() and json.loads(f.read_text()).get("status") == "passed")
     if not triage(repo, proj, ids):
         sys.exit("no fast-model key (TEXT_MODEL_API_KEY) or no passed tasks: nothing triaged")
 
