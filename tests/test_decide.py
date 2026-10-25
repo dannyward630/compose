@@ -156,6 +156,8 @@ class Decide(unittest.TestCase):
         (self.proj / "results" / "yolo.json").write_text(json.dumps({**y, "mode": "yolo", "decisions": []}))
         self.decide(new=["x"])
         self.assertIn(f"- D1: x (yolo recommendation, unconfirmed, {TODAY})", self.linear.body)
+        logged = json.loads((self.proj / "results" / "yolo.json").read_text())["decisions"]
+        self.assertEqual([d["text"].split(" (")[0] for d in logged], ["D1: x"])
 
     def test_a_decision_from_conversation_lands_with_the_next_free_d_id(self):
         self.linear.body = MAP.replace("- Q0: Stripe", "- D1: one plan\n- ~~D2: old~~ (C1)\n- Q0: Stripe")
@@ -164,6 +166,11 @@ class Decide(unittest.TestCase):
         self.assertIn("- D4: day pace is capped (product owner,", self.linear.body)
         self.assertIn("Q1. Which auth?", self.linear.body)  # open cards untouched
         self.assertIn("recorded on NEB-1: D3: billing waits for auth", out)
+
+    def test_the_next_d_id_ignores_d_numbers_inside_a_quote_and_flattens_newlines(self):
+        self.linear.body = MAP.replace("- Q0: Stripe", '- D1: x (product owner, 2026-10-01; said: "like D12")\n- Q0: Stripe')
+        self.decide(new=["two\nlines"], quote="ok")
+        self.assertIn("- D2: two lines (product owner,", self.linear.body)
 
     def test_new_decisions_need_the_quote_unless_away_or_yolo(self):
         with self.assertRaises(SystemExit) as e:
