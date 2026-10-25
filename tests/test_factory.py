@@ -523,6 +523,8 @@ class Turn(unittest.TestCase):
         lines = ft.turn(self.repo, self.state, 100.0)
         self.assertEqual((self.dispatched(), self.state["backoff"]), (["NEB-10"], {}))
         self.assertIn('event factory=turn-failed why="herdr did not answer"  (the next turn tries again)', lines)
+        self.held.return_value = True; ft.turn(self.repo, self.state, 200.0)  # herdr answers, nothing to start
+        self.assertNotIn("herdr", self.state["said"])
 
     def test_a_crash_after_a_dispatch_keeps_the_lines_already_made(self):
         self.fail_dispatch({"NEB-11": TypeError("bad record")})

@@ -417,6 +417,8 @@ def _turn(repo, state, now, stopping, saved, out):
         fc_factorystate.say_once(state, "turn-failed", fc_factorystate.turn_failed(str(ex)), out)
         return
     said.pop("turn-failed", None)
+    if "herdr" in said and leads_or_none(repo) is not None:  # herdr answers again: a later outage is said again
+        said.pop("herdr")
     _expire(plan, state)
     free = 0 if fc_load.held() else max(0, fc_factorystate.pace(state)["cap"] - len(in_flight(plan, state)))
     judge = lambda s, **kw: fc_readiness.story_readiness(repo, s, **kw)
