@@ -6,6 +6,7 @@ TEAM_QUERY
 CREATE_ISSUE
 UPDATE_ISSUE
 CREATE_LABEL
+ANCESTORS_QUERY
 INVENTORY_QUERY
 sheet_path
 inventory
@@ -37,4 +38,9 @@ step
 save
 under_posture
 verb_apply
+ancestors
+touched
+live_leads
+change_lines
+verb_notices
 cmd_reconcile

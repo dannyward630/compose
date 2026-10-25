@@ -36,7 +36,7 @@ class FakeLinear:
         self.labels = [{"id": f"l-{n}", "name": n} for n in ("Epic", "Feature", "Story", "Ready", "needs-shaping", "deep-dive")]
 
     def seed(self, issues):
-        self.issues = {i["id"]: {"id": i["id"], "identifier": i["id"], "title": i["title"], "state": {"name": i["state"], "type": "started" if i["state"] == "In Progress" else "unstarted"}} for i in issues}
+        self.issues = {i["id"]: {"id": i["id"], "identifier": i["id"], "title": i["title"], "state": {"name": i["state"], "type": "started" if i["state"] == "In Progress" else "unstarted"}, "parent_id": i["parent"]} for i in issues}
 
     def comment(self, ident):
         return self.comments[ident][0]
@@ -54,10 +54,22 @@ class FakeLinear:
             return {"team": {"name": "Engineering", "states": {"nodes": [{"id": "s-backlog", "name": "Backlog"}]}, "labels": {"nodes": list(self.labels)}}}
         if "issue(id" in query:
             i = self.issues[variables["id"]]
+            if "parent { identifier parent" in query:
+                chain = {"parent": None}
+                for pid in reversed(self.chain(i)):
+                    chain = {"parent": {"identifier": pid, **chain}}
+                return {"issue": chain}
             return {"issue": {**i, "team": {"states": {"nodes": [{"id": "s-canceled", "name": "Canceled", "type": "canceled"}]}}}}
         n = int(variables["after"][1:]) + 1 if variables["after"] else 1
         page = self.pages[n - 1]
         return {"issues": {"pageInfo": {"hasNextPage": n < len(self.pages), "endCursor": f"c{n}"}, "nodes": [node(i) for i in page]}}
+
+    def chain(self, i):
+        out = []
+        while i.get("parent_id"):
+            out.append(i["parent_id"])
+            i = self.issues[i["parent_id"]]
+        return out
 
     def mutate(self, name, v):
         ident = v.get("id")
@@ -79,7 +91,7 @@ class FakeLinear:
         elif name == "issueCreate":
             self.created.append(v["in"])
             ident = f"NEB-{100 + len(self.created)}"
-            self.issues[ident] = {"id": ident, "identifier": ident, "title": v["in"]["title"], "state": {"name": "Backlog", "type": "backlog"}}
+            self.issues[ident] = {"id": ident, "identifier": ident, "title": v["in"]["title"], "state": {"name": "Backlog", "type": "backlog"}, "parent_id": v["in"]["parentId"]}
             self.pages[0].append(issue(ident, "Backlog", ("Feature",), v["in"]["parentId"]))  # a ticket filed is an open ticket of the project
             return {"issueCreate": {"issue": {"id": ident, "identifier": ident}}}
         return {}
@@ -260,6 +272,43 @@ class Reconcile(unittest.TestCase):
         self.assertIn('- NEB-3: "NEB-3 title" becomes "RS1. Chat with the Guide"', text)
         self.assertIn("- N1 So far: the draft report and its evidence (Feature under NEB-1, needs shaping)", text)
         self.assertNotIn(chr(0x2014), text)
+
+    def test_a_project_hears_changes_under_its_feature_and_above_it_only(self):
+        features = {"rec": "NEB-1733", "appux": "NEB-1890", "billing": "NEB-1732"}
+        chains = {"NEB-1789": ["NEB-1778", "NEB-1733", "NEB-1731"], "NEB-1890": ["NEB-1731"], "NEB-1731": [], "NEB-1733": ["NEB-1731"], "NEB-1732": ["NEB-1731"]}
+        changes = {"NEB-1789": "NEB-1789 ChatMessage shows the Guide: Canceled", "NEB-1890": "NEB-1890 App UI and UX, and the 37 open tickets under it: Canceled",
+                   "NEB-1731": 'NEB-1731 renamed "DecodeThisText investigation platform" (was "subscription app")'}
+        got = fc.fc_reconcile.touched(features, chains, changes)
+        self.assertEqual(got["rec"], [changes["NEB-1731"], changes["NEB-1789"]])
+        self.assertEqual(got["appux"], [changes["NEB-1731"], changes["NEB-1890"]])
+        self.assertEqual(got["billing"], [changes["NEB-1731"]])
+
+    def team_leads(self, features, live):
+        """Compose projects of the repo under the given features, with the named leads live in herdr."""
+        for name, feature in features.items():
+            (self.project_dir(name) / "linear.json").write_text(json.dumps({"feature": feature}))
+            crew = self.project_dir(name) / "results" / "crew"
+            crew.mkdir(parents=True, exist_ok=True)
+            (crew / f"{name}-orchestrator.json").write_text(json.dumps({"name": f"{name}-orchestrator", "space": f"w-{name}"}))
+        agents = [{"name": f"{n}-orchestrator", "workspace_id": f"w-{n}"} for n in live]
+        p = mock.patch.object(fc.fc_herdr, "live_agents", return_value=agents); p.start(); self.addCleanup(p.stop)
+
+    def test_notices_name_each_touched_project_and_whether_its_team_lead_is_live(self):
+        self.assertEqual(self.fails("notices")[1], 'nothing applied yet: compose reconcile apply --go "<their words>" first')
+        self.checked(extra=1)
+        self.raw["verify"], self.raw["keep"] = ["NEB-10"], ["NEB-1"]
+        self.out("check", file=self.sheet(self.raw))
+        self.team_leads({"rec": "NEB-3", "appux": "NEB-2", "calm": "NEB-10"}, live=["rec"])
+        self.linear.seed(self.issues)
+        self.attempt("apply", go="yes")
+        out = self.attempt("notices")
+        self.assertEqual(out[0], "rec: tell rec-orchestrator (live)")
+        self.assertIn("- NEB-10 NEB-10 title: left for the product owner to verify", out)
+        self.assertIn('- NEB-3 NEB-3 title: renamed "RS1. Chat with the Guide" (was "NEB-3 title"); Ready label removed (needs shaping); labeled deep-dive', out)
+        self.assertIn("appux: no live team lead; its next session reads Linear", out)
+        self.assertIn("- NEB-2 NEB-2 title, and the 1 open ticket under it: Canceled", out)
+        self.assertEqual(out[out.index("calm: no live team lead; its next session reads Linear") + 1:], ["- NEB-10 NEB-10 title: left for the product owner to verify"])  # nothing else is under or above NEB-10 but the verify
+        self.assertFalse([l for l in out if l.startswith("- NEB-5")])
 
     def test_apply_needs_the_go_in_their_words_and_refuses_under_away_or_yolo(self):
         self.checked()

@@ -3,7 +3,7 @@ import datetime, json, sys
 from pathlib import Path
 from types import SimpleNamespace
 
-import fc_core, fc_config, fc_linear, fc_linear_cmd, fc_tasks
+import fc_core, fc_config, fc_crew, fc_herdr, fc_linear, fc_linear_cmd, fc_tasks
 
 SORTS = ("keep", "cancel", "merge", "verify")
 LABELS = ("Epic", "Feature", "Story")
@@ -16,6 +16,7 @@ TEAM_QUERY = "query($id: String!) { team(id: $id) { name states { nodes { id nam
 CREATE_ISSUE = "mutation($in: IssueCreateInput!) { issueCreate(input: $in) { issue { id identifier } } }"
 UPDATE_ISSUE = "mutation($id: String!, $in: IssueUpdateInput!) { issueUpdate(id: $id, input: $in) { success } }"
 CREATE_LABEL = "mutation($name: String!, $team: String!) { issueLabelCreate(input: {name: $name, teamId: $team}) { issueLabel { id name } } }"
+ANCESTORS_QUERY = "query($id: String!) { issue(id: $id) { parent { identifier parent { identifier parent { identifier parent { identifier } } } } } }"
 INVENTORY_QUERY = ('query($after: String, $project: ID) { issues(first: 100, after: $after, filter: {project: {id: {eq: $project}}, '
                    'state: {type: {nin: ["completed", "canceled"]}}}) { pageInfo { hasNextPage endCursor } nodes { identifier title state { name } labels { nodes { name } } parent { identifier } } } }')
 
@@ -403,6 +404,71 @@ def verb_apply(a):
     print(f"applied {len(stored['applied'])} of {total}: {skipped} skipped, {failed} failed; compose reconcile notices lists what each team lead must hear")
     if failed:
         sys.exit(1)
+
+def ancestors(ident):
+    """The ticket's parent, grandparent and so on, up to four levels, in one Linear read."""
+    out, node = [], fc_linear.linear_gql(ANCESTORS_QUERY, {"id": ident})["issue"]
+    while node.get("parent"):
+        node = node["parent"]
+        out.append(node["identifier"])
+    return out
+
+def touched(features, chains, changes):
+    """For each project (slug to its feature), the change lines of every changed ticket that is its feature, under it, or above it."""
+    num = lambda t: int(t.rsplit("-", 1)[-1])
+    return {slug: [changes[t] for t in sorted(changes, key=num) if t == f or f in chains.get(t, []) or t in chains.get(f, [])] for slug, f in features.items()}
+
+def live_leads(repo):
+    """Project slug to its team lead's name, for each project whose crew record matches a live herdr agent by name and workspace."""
+    agents, out = fc_herdr.live_agents(), {}
+    for slug, (_, proj) in sorted(fc_core.all_projects(Path(repo).resolve()).items()):
+        lead = f"{slug}-orchestrator"
+        c = fc_crew.crew_record(proj, lead)
+        if c and any(ag.get("name") == c.get("agent", c["name"]) and ag.get("workspace_id") == c.get("space") for ag in agents):
+            out[slug] = lead
+    return out
+
+def change_lines(stored):
+    """One line per ticket the applied cleanup changed, or left for the product owner to verify; a subtree's members fold into their root."""
+    by_id = {i["id"]: i for i in stored["issues"]}
+    got = expand(stored, stored["issues"])
+    tails, name = {}, lambda i: f"{i} {by_id[i]['title']}"
+    for a in actions(stored):
+        if a["key"] not in stored["applied"]:
+            continue
+        if a["do"] == "create":
+            ident = stored["created"].get(a["new"]["key"]) or stored["applied"][a["key"]]
+            tails[ident] = (f"{ident} {a['new']['title']}", [f"new ticket filed under {stored['created'].get(a['new']['parent'], a['new']['parent'])}"])
+            continue
+        if got.get(a["id"], {}).get("under"):
+            continue
+        n = sum(1 for e in got.values() if e.get("under") == a["id"])
+        head = name(a["id"]) + (f", and the {n} open ticket{'s' if n != 1 else ''} under it" if n else "")
+        tail = {"title": f'renamed "{a.get("title")}" (was "{by_id[a["id"]]["title"]}")', "drop-ready": "Ready label removed (needs shaping)", "deep-dive": "labeled deep-dive",
+                "cancel": "Canceled", "merge": f"Canceled, merged into {a.get('into')}"}[a["do"]]
+        tails.setdefault(a["id"], (head, []))[1].append(tail)
+    for e in got.values():
+        if e["sort"] == "verify":
+            tails[e["id"]] = (name(e["id"]), ["left for the product owner to verify"])
+    return {i: f"{h}: {'; '.join(t)}" for i, (h, t) in tails.items()}
+
+def verb_notices(a):
+    project = fc_linear_cmd.linear_project(a.repo)
+    stored = read_stored(project)
+    if not stored or not stored["applied"]:
+        sys.exit('nothing applied yet: compose reconcile apply --go "<their words>" first')
+    changes = change_lines(stored)
+    features = {}
+    for slug, (_, proj) in sorted(fc_core.all_projects(Path(a.repo).resolve()).items()):
+        f = proj / "linear.json"
+        if f.exists() and (feature := json.loads(f.read_text()).get("feature")):
+            features[slug] = feature
+    chains = {t: ancestors(t) for t in {*changes, *features.values()}}
+    heard, leads = touched(features, chains, changes), live_leads(a.repo)
+    for slug in sorted(heard, key=lambda s: (s not in leads, s)):
+        if heard[slug]:
+            print(f"{slug}: tell {leads[slug]} (live)" if slug in leads else f"{slug}: no live team lead; its next session reads Linear")
+            print("\n".join(f"- {l}" for l in heard[slug]))
 
 def cmd_reconcile(a):
     if not fc_config.LINEAR_KEY:
