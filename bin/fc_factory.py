@@ -77,11 +77,15 @@ def _merge(repo, state, before):
 def run_loop(repo, turns=None):
     """One turn after another until SIGTERM or a stop (after the turn it is in) or `turns` are done. Only the loop writes pid and started."""
     lock = open(lock_path(repo), "w")
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        lock.close()
-        sys.exit("factory: already running")
+    for tries in range(20):  # a status or watch probe holds the lock for an instant: try again before saying another loop has it
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except OSError:
+            if tries == 19:
+                lock.close()
+                sys.exit("factory: already running")
+            time.sleep(0.05)
     stop = []
     previous = signal.signal(signal.SIGTERM, lambda signum, frame: stop.append(signum))
     try:
