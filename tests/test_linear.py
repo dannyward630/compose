@@ -434,11 +434,11 @@ class MarkReady(unittest.TestCase):
         return {"issueUpdate": {"success": True}}
 
     @staticmethod
-    def node(ident, state, *labels, blocked=False, tasks=("Todo",)):
+    def node(ident, state, *labels, blocked=False, tasks=("Todo",), desc=""):
         rels = [{"type": "blocks", "issue": {"identifier": "ENG-99", "state": {"name": "Todo"}, "labels": {"nodes": []}}}] if blocked else []
         return {"id": "id-" + ident, "identifier": ident, "title": "T " + ident, "state": {"name": state},
                 "labels": {"nodes": [{"id": "l-" + n.lower(), "name": n} for n in labels]}, "inverseRelations": {"nodes": rels},
-                "children": {"nodes": [{"state": {"name": t}} for t in tasks]}}
+                "children": {"nodes": [{"state": {"name": t}} for t in tasks]}, "description": desc}
 
     def mark(self, *expected):
         self.assertEqual(fc.fc_linear.linear_mark_ready("ENG-1"), [{"id": i, "title": "T " + i} for i in expected])
@@ -451,6 +451,13 @@ class MarkReady(unittest.TestCase):
         self.assertCountEqual(self.updates, [{"id": "id-ENG-2", "labels": ["l-bug", "l-area", "l-ready"]},
                                              {"id": "id-ENG-3", "labels": ["l-bug", "l-area"]}, {"id": "id-ENG-6", "labels": ["l-ready"]}])
         self.assertCountEqual(self.said, ["linear ENG-2 -> Ready", "linear ENG-3 -> not Ready", "linear ENG-6 -> Ready"])
+
+    def test_an_issue_with_open_questions_is_not_ready(self):
+        asked = "## Open questions\n\n* Where does ENG-2 stop? (readiness check, 2026-10-26)\n"
+        self.children = [self.node("ENG-2", "Todo", "Ready", desc=asked), self.node("ENG-3", "Todo", desc="## Open questions\n\nNone.\n")]
+        self.mark("ENG-3")
+        self.assertCountEqual(self.updates, [{"id": "id-ENG-2", "labels": []}, {"id": "id-ENG-3", "labels": ["l-ready"]}])
+        self.assertRegex(fc.fc_linear.LINEAR_READY_TREE, r"fragment ReadyNode on Issue \{[^}]*\bdescription\b")
 
     def test_a_story_without_a_live_task_is_not_ready(self):
         self.children = [self.node("ENG-2", "Todo", tasks=()), self.node("ENG-3", "Backlog", "Ready", tasks=("Canceled", "canceled")),
@@ -752,7 +759,7 @@ class FeatureAfterLink(unittest.TestCase):
 
 
 class ReadyTreeQuery(unittest.TestCase):
-    FRAGMENT = """fragment ReadyNode on Issue { id identifier title state { name } labels { nodes { id name } } children { nodes { state { name } } }
+    FRAGMENT = """fragment ReadyNode on Issue { id identifier title description state { name } labels { nodes { id name } } children { nodes { state { name } } }
   inverseRelations(first: 250) { nodes { type issue { identifier state { name } labels { nodes { name } } } } } }"""
 
     @staticmethod
