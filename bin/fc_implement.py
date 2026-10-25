@@ -256,6 +256,9 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         return result
     if delete:  # the task's own deletions, applied in the clone before any turn
         fc_core.sh(["git", "rm", "-r", "-q", "--"] + delete, wt)
+    res = proj / "results" / f"{tid}.json"
+    last = res.read_text() if res.exists() else None  # the pre-run result, before progress("running") replaces it
+    kept = fc_pause.carry_over(repo, wt, meta, json.loads(last) if last else {})
     checks, limit = task_checks(fc_core.project_config(proj)), int(meta.get("test_timeout") or fc_models.TEST_TIMEOUT)
     def checked(where):  # the project's checks run a long time: each one says what it runs, and where, before it starts
         def run(cmd, tree, secs, env=None):
@@ -284,7 +287,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     root = str(wt.resolve())
     abs_files = ", ".join(str(wt.resolve() / f) for f in meta["files"]) or "files under the root as needed"
     abs_protected = ", ".join(str(wt.resolve() / f) for f in meta["protected"]) or "none"
-    prompt = (f"You are implementing one small task in this repository.\n\n"
+    prompt = (fc_pause.carry_note(kept) + f"You are implementing one small task in this repository.\n\n"
               f"REPOSITORY ROOT FOR THIS TASK: {root}\n"
               f"Every file you read, create, or edit must be under that root. Project docs may mention other absolute paths "
               f"(for example the original checkout this task was cloned from); those are read-only references, never edit them.\n\n"
@@ -315,8 +318,6 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         fc_core.atomic_write((proj / "results" / f"{tid}.json"), json.dumps({"id": tid, "title": meta.get("title"), "status": state, "model": meta["model"],
             "attempts": spent(), "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": round(time.time() - started, 1),
             "cost": round(cost, 6), "branch": branch, "base": base_name, "worktree": str(wt), "log": log}, indent=2))
-    res = proj / "results" / f"{tid}.json"
-    last = res.read_text() if res.exists() else None
     progress("running")
     # A hold placed while the run cloned, based, and installed lands here, before any turn. `running` is on disk before the
     # holds are read, and `hold` writes the hold before it reads `running`: either this sees the hold, or `hold` says it runs.

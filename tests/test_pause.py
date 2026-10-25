@@ -143,3 +143,68 @@ class RunLoopPauses(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CarryOver(unittest.TestCase):
+    def pause_with(self, edits, choice=None, keep=None):
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            for name, text in edits.items():
+                (Path(cwd) / name).write_text(text)
+            fc.fc_proc.pause_task("001")
+            return "s", "", 1, {"cost": 0.0}
+        r, repo, proj = PauseRunningTask.go(self, impl)
+        self.assertEqual(r["status"], "paused")
+        path = proj / "results" / "001.json"
+        data = json.loads(path.read_text())
+        if choice:
+            data["paused"]["choice"] = choice
+        if keep is not None:
+            data["paused"]["keep"] = keep
+        path.write_text(json.dumps(data))
+        (proj / "results" / "hold.json").unlink()
+        fc.fc_proc.resume_task("001")
+        return r, repo, proj
+
+    def commit_on_main(self, repo, name, text):
+        (repo / name).write_text(text)
+        git(repo, "add", "-A"); git(repo, "commit", "-qm", f"move {name}")
+
+    def resume(self, repo, proj, files=None):
+        """A fresh run_task over the same repo and project; returns (a.txt, b.txt, prompt) of the first turn."""
+        meta = {"id": "001", "title": "answer", "files": files or ["a.txt", "b.txt"], "protected": [], "test": "grep -q yes a.txt",
+                "model": "pi:p/primary", "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}
+        first, self.said = [], []
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            if not first:
+                first.append(tuple((Path(cwd) / n).read_text() if (Path(cwd) / n).exists() else None for n in ("a.txt", "b.txt")) + (prompt,))
+            (Path(cwd) / "a.txt").write_text("yes\n")
+            return "s", "", 1, {"cost": 0.0}
+        with mock.patch.object(fc.fc_implement, "implementer", impl), mock.patch.object(fc.fc_implement.fc_trailpack, "trail_pack", return_value=""), \
+                mock.patch.object(fc.fc_config, "TEST_READER", None), mock.patch.dict(os.environ, ENV), \
+                mock.patch.object(fc.fc_linear, "linear_event", lambda *a: None), \
+                mock.patch.object(fc.fc_core, "say", lambda m, *a, **k: self.said.append(m)):
+            fc.fc_implement.run_task(repo, proj, meta, 3)
+        self.resume_prompt = first[0][2]
+        return first[0]
+
+    def test_a_released_task_starts_with_its_kept_edits_and_says_so_in_the_prompt(self):
+        r, repo, proj = self.pause_with({"a.txt": "half\n", "b.txt": "new\n"})
+        seen = self.resume(repo, proj)
+        self.assertEqual(seen[:2], ("half\n", "new\n"))
+        self.assertTrue(seen[2].startswith("WORK KEPT FROM BEFORE A PLAN CHANGE: a.txt, b.txt already hold edits"))
+
+    def test_a_file_the_new_brief_dropped_or_that_conflicts_is_left_out_and_said(self):
+        r, repo, proj = self.pause_with({"a.txt": "half\n", "b.txt": "new\n"})
+        self.commit_on_main(repo, "a.txt", "moved\n")
+        seen = self.resume(repo, proj, files=["a.txt"])
+        self.assertEqual(seen[0], "moved\n")
+        self.assertIn("001 kept    nothing; dropped a.txt, b.txt: they stay on refs/compose/", "\n".join(self.said))
+
+    def test_part_keeps_only_the_chosen_files_and_discard_keeps_none(self):
+        r, repo, proj = self.pause_with({"a.txt": "half\n", "b.txt": "new\n"}, choice="part", keep=["b.txt"])
+        seen = self.resume(repo, proj)
+        self.assertEqual(seen[:2], ("no\n", "new\n"))
+        r, repo, proj = self.pause_with({"a.txt": "half\n", "b.txt": "new\n"}, choice="discard")
+        seen = self.resume(repo, proj)
+        self.assertEqual(seen[0], "no\n")
+        self.assertFalse(seen[2].startswith("WORK KEPT"))

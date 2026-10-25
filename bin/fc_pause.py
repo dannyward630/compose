@@ -1,4 +1,4 @@
-import json, shutil, time
+import json, shutil, subprocess, time
 from pathlib import Path
 import fc_core, fc_readguard
 
@@ -37,3 +37,33 @@ def paused_result(repo, proj, meta, wt, base, base_name, log, attempts, cost, st
     (Path(proj) / "results").mkdir(exist_ok=True)
     fc_core.atomic_write(Path(proj) / "results" / f"{meta['id']}.json", json.dumps(result, indent=2))
     return result
+
+CARRY_NOTE = "WORK KEPT FROM BEFORE A PLAN CHANGE: {files} already hold edits made under the old brief. Keep what still fits the brief below and change what does not.\n\n"
+
+def carry_note(files):
+    return CARRY_NOTE.format(files=", ".join(files)) if files else ""
+
+def _apply_one(wt, base, name):
+    """One kept file's change onto the fresh clone; False (and the file back as HEAD has it) when it does not apply."""
+    diff = subprocess.run(["git", "diff", "--binary", base, "FETCH_HEAD", "--", name], cwd=wt, capture_output=True).stdout
+    if diff and subprocess.run(["git", "apply", "--3way", "--index"], cwd=wt, input=diff, capture_output=True).returncode:
+        subprocess.run(["git", "checkout", "HEAD", "--", name], cwd=wt, capture_output=True)
+        return False
+    return True
+
+def carry_over(repo, wt, meta, last):
+    """Start a released task from the edits its pause kept: those the new brief still owns, that the chosen `keep` allows
+    and that apply to the fresh clone. Returns the files kept; the rest stay on the ref."""
+    paused = last.get("paused") if last.get("status") == "paused" else None
+    choice = (paused or {}).get("choice") or "keep"
+    if not paused or choice == "discard":
+        return []
+    ref, base = paused["ref"], paused["base"]
+    wanted = [f for f in paused["files"] if choice != "part" or f in paused.get("keep", [])]
+    if not wanted or subprocess.run(["git", "fetch", "-q", str(repo), ref], cwd=wt, capture_output=True).returncode:
+        return []
+    kept, dropped = [], []
+    for f in wanted:
+        (kept if f in meta["files"] and _apply_one(wt, base, f) else dropped).append(f)
+    fc_core.say(f"{meta['id']} kept    {', '.join(kept) or 'nothing'}" + (f"; dropped {', '.join(dropped)}: they stay on {ref}" if dropped else ""))
+    return kept

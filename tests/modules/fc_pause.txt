@@ -1,2 +1,6 @@
 snapshot
 paused_result
+CARRY_NOTE
+carry_note
+_apply_one
+carry_over
