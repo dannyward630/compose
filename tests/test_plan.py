@@ -289,5 +289,22 @@ class ProductSeed(unittest.TestCase):
         self.assertEqual(fc_plan.derived_blocks(fc_plan.parse_tracks(fc_plan.seed_tracks(self.f))),
                          {("NEB-7", "NEB-9"), ("NEB-7", "NEB-12"), ("NEB-9", "NEB-15"), ("NEB-12", "NEB-15")})
 
+    def test_a_taken_track_name_gets_the_id_appended(self):
+        f = {"NEB-4": feat("NEB-4"), "NEB-5": feat("NEB-5")}
+        f["NEB-4"]["title"] = f["NEB-5"]["title"] = "Billing"
+        self.assertEqual(fc_plan.seed_tracks(f).splitlines(), ["1. Billing: NEB-4", "2. Billing NEB-5: NEB-5"])
+
+    def test_the_leftovers_of_a_blocker_cycle_are_placed_by_number(self):
+        f = {"NEB-8": feat("NEB-8", "Todo", ("NEB-6", "Todo")), "NEB-6": feat("NEB-6", "Todo", ("NEB-8", "Todo"))}
+        self.assertEqual(fc_plan.seed_tracks(f).splitlines()[0], "1. T NEB-6: NEB-6, NEB-8")
+
+    def test_a_title_with_a_comma_or_after_still_parses(self):
+        self.f["NEB-20"]["title"] = "Export, then (after hours) mail"
+        self.f["NEB-7"]["title"] = "Sign-in, (after: email)"
+        text = fc_plan.seed_tracks(self.f)
+        self.assertEqual(fc_plan.derived_blocks(fc_plan.parse_tracks(text)),
+                         {("NEB-7", "NEB-9"), ("NEB-7", "NEB-12"), ("NEB-9", "NEB-15"), ("NEB-12", "NEB-15")})
+        self.assertEqual([t["items"] for t in fc_plan.parse_tracks(text)][-1], ["NEB-20"])
+
     def test_no_open_feature_seeds_nothing(self):
         self.assertEqual(fc_plan.seed_tracks({"NEB-2": feat("NEB-2", "Done")}), "")

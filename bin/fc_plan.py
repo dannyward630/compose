@@ -365,7 +365,7 @@ def seed_tracks(features):
         if host is not None and host["items"][-1] == deps[i][0]:
             host["items"].append(i)
         else:
-            host = {"name": openf[i]["title"].replace(":", " -"), "items": [i]}
+            host = {"name": re.sub(r"\s+", " ", re.sub(r"[:,]", " -", re.sub(r"[()]", "", openf[i]["title"]))).strip() or i, "items": [i]}
             used = {t["name"].lower() for t in tracks}
             if host["name"].lower() in used:
                 host["name"] += " " + i
