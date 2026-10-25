@@ -307,6 +307,31 @@ class Cli(unittest.TestCase):
             self.cli("ENG-7", json=True)
         self.assertEqual(json.loads(self.out)[0]["id"], "ENG-7")
 
+    def test_json_lists_a_refused_story_and_an_errored_story_and_keeps_judging(self):
+        def sr(repo, s, refresh, write):
+            if s == "ENG-9":
+                raise fc_readiness.NotAStory("ENG-9 is a task")
+            if s == "ENG-6":
+                raise RuntimeError("readiness: the judge failed")
+            return READY
+        with mock.patch.object(fc_readiness, "story_readiness", side_effect=sr), self.assertRaises(SystemExit) as e:
+            self.cli("ENG-9", "ENG-6", "ENG-7", json=True)
+        self.assertEqual(e.exception.code, 1)
+        got = json.loads(self.out)
+        self.assertEqual(got[0], {"id": "ENG-9", "ready": False, "refused": "ENG-9 is a task"})
+        self.assertEqual(got[1], {"id": "ENG-6", "ready": False, "error": "readiness: the judge failed"})
+        self.assertEqual(got[2]["id"], "ENG-7")
+
+    def test_an_errored_story_is_a_line_and_the_next_story_is_still_judged(self):
+        def sr(repo, s, refresh, write):
+            if s == "ENG-6":
+                raise RuntimeError("readiness: the judge failed")
+            return READY
+        with mock.patch.object(fc_readiness, "story_readiness", side_effect=sr), self.assertRaises(SystemExit) as e:
+            self.cli("ENG-6", "ENG-7")
+        self.assertEqual(e.exception.code, 1)
+        self.assertEqual(self.out.splitlines(), ["ENG-6 not judged: readiness: the judge failed", "ENG-7 ready"])
+
     def test_line_shapes(self):
         L = fc_readiness.readiness_line
         self.assertEqual(L(dict(READY, has_tasks=False)), "ENG-7 ready (no tasks yet: the planner cuts them)")

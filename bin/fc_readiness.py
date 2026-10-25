@@ -260,7 +260,7 @@ def readiness_line(r):
 
 
 def cmd_readiness(a):
-    """Print whether each story can be built now; exit 1 when any is not ready or refused. Writes what a story lacks on it as
+    """Print whether each story can be built now; exit 1 when any is not ready, refused or errored (the rest are still judged). Writes what a story lacks on it as
     open questions unless --dry-run."""
     if not fc_config.LINEAR_KEY:
         sys.exit(fc_config.needs_linear_key("readiness"))
@@ -276,7 +276,12 @@ def cmd_readiness(a):
             bad = True
             continue
         except RuntimeError as e:
-            sys.exit(f"readiness: {e}")
+            if a.json:
+                results.append({"id": story, "ready": False, "error": str(e)})
+            else:
+                print(readiness_line({"id": story, "error": str(e)}))
+            bad = True
+            continue
         results.append(r)
         bad = bad or not r["ready"]
         if not a.json:
