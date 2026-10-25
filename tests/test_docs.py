@@ -2298,6 +2298,14 @@ class ReconcileFlow(unittest.TestCase):
         for want in self.LINES:
             self.assertEqual(lines.count(want), 1, want)
 
+    def test_fix_round_one_wording(self):
+        text = read("sections/0k.md")
+        self.assertNotIn("is the only thing that writes to Linear", text)
+        self.assertIn("Linear is written only through the compose CLI: `compose reconcile`, plus `compose linear doc create` for the two documents.", text.splitlines())
+        self.assertIn('File that document with `compose linear doc create --title "<project name>: reconcile research <date>"`.', text.splitlines())
+        self.assertIn("A kept ticket can also carry a new `title`, which renames it.", text.splitlines())
+        self.assertIn("A `new` entry takes `deep_dive` too.", text.splitlines())
+
     def test_plain_dashes_and_one_sentence_per_line(self):
         for rel in ("sections/0k.md", "commands/reconcile.md"):
             for line in read(rel).splitlines():
