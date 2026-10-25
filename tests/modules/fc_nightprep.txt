@@ -4,10 +4,17 @@ REFRESH_SECONDS
 INTRO
 GONE
 MAX_QUESTIONS
+WORKER_SECONDS
+RETRY_SECONDS
+DONE
 ERRORS
 ASK
 prep_print
 _q
+_line
+outcomes_path
+_outcome
+_done_since
 _issue
 _texts
 candidates
@@ -18,6 +25,7 @@ prep_doc
 _heading
 _old_section
 write_section
+_running
 _alive
 parse_reply
 _strings
@@ -25,5 +33,6 @@ _clean
 prep_prompt
 run_prep
 refresh
+_requeue_stuck
 prep_idle
 fc_factoryturn

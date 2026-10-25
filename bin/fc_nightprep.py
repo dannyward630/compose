@@ -2,8 +2,9 @@
 for the product owner's next planning session. It never shapes or plans anything and writes nothing to a ticket."""
 from __future__ import annotations
 import hashlib, json, os, re, subprocess, time
+from pathlib import Path
 
-import fc_claude, fc_config, fc_delivery, fc_factorystate, fc_factoryturn, fc_nightstate, fc_plan, fc_readiness
+import fc_claude, fc_config, fc_core, fc_delivery, fc_factorystate, fc_factoryturn, fc_nightstate, fc_plan, fc_readiness
 
 PREP_TITLE = "Night prep: questions for the next planning session"
 REFRESH_ON = ("dispatched", "verified", "held", "changed", "answered")
@@ -11,6 +12,9 @@ REFRESH_SECONDS = 1800
 INTRO = "Kept current overnight by night prep. These are researched questions with a recommendation marked as a guess; nothing here is a plan or a decision."
 GONE = ("done", "canceled", "cancelled", "in progress", "in review")
 MAX_QUESTIONS = 5
+WORKER_SECONDS = 1800 + 300  # a worker's timeout plus a margin: a pid older than this is another process's
+RETRY_SECONDS = 1800
+DONE = ('prepared', 'dropped')
 ERRORS = (RuntimeError, ValueError, TypeError, KeyError, OSError, SystemExit, subprocess.SubprocessError)
 ASK = ("You prepare the next planning session for this ticket; you never plan: do not write stories, mark anything ready, or answer your own questions. "
        "Read the code it touches, say what is built and what is still open, and write at most 5 questions the product owner must answer, "
@@ -22,7 +26,34 @@ def prep_print(ticket_text: str, feature_text: str) -> str:
     return hashlib.sha256(f"{ticket_text}\0{feature_text}".encode()).hexdigest()[:16]
 
 def _q(text, n=None) -> str:
-    return str(text).replace('"', "'")[:n]
+    return " ".join(str(text).replace('"', "'").split())[:n]
+
+def _line(text) -> str:
+    """Model text as one line that cannot open a heading."""
+    return " ".join(str(text).split()).lstrip("# ")
+
+def outcomes_path(repo) -> Path:
+    return fc_core.repo_link(repo).with_name("night-prep.jsonl")
+
+def _outcome(repo, ident, status) -> None:
+    path = outcomes_path(repo)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a") as out:
+        out.write(json.dumps({"ticket": ident, "status": status, "at": time.time()}) + "\n")
+
+def _done_since(repo, ident, at) -> bool:
+    try:
+        lines = outcomes_path(repo).read_text().splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(r, dict) and r.get("ticket") == ident and r.get("status") in DONE and (r.get("at") or 0) >= at:
+            return True
+    return False
 
 def _issue(repo, ident) -> dict:
     got = json.loads(fc_factoryturn.compose_cli(["linear", "get", ident, "--json", "--repo", str(repo)]))
@@ -56,7 +87,7 @@ def candidates(repo, offer_id, limit) -> list:
             got = fc_readiness.story_readiness(repo, e["id"], write=False)
         except ERRORS:
             continue
-        if not got.get("error") and got.get("specced") is False:
+        if not got.get("error") and (got.get("specced") is False or got.get("needs_shaping")):
             out.append({"id": e["id"], "title": e["title"], "layer": "story", "feature": e["feature"]})
     return out
 
@@ -107,17 +138,29 @@ def _old_section(body, ident) -> str:
     return "\n".join(lines[span[0]:span[1]]).strip() if span else ""
 
 def write_section(repo, ident, title, text) -> str:
-    """Replace this ticket's section of the prep document, or drop it (heading too) when text is None. Returns the document's url."""
-    if text is None:
-        doc_id, content = _find_doc(repo)
-        if not doc_id:
-            return ""
-        doc = {"id": doc_id, "content": content, "url": ""}
-    else:
-        doc = prep_doc(repo)
-    body = fc_plan.replace_section(doc["content"], _heading(doc["content"], ident, title), text or "")
-    shown = fc_factoryturn.compose_cli(["linear", "doc", "update", doc["id"], "--description", "--repo", str(repo)], stdin=body)
-    return shown.strip().removeprefix("updated ").strip() or doc["url"]
+    """Replace this ticket's section of the prep document, or drop it (heading too) when text is None. Returns the document's url.
+    The document is read back after the write; when another writer's save has undone ours, it is redone on the fresh body (two tries in all)."""
+    url = ""
+    for _ in range(2):
+        if text is None:
+            doc_id, content = _find_doc(repo)
+            if not doc_id or not any(l.startswith(f"## {ident}:") for l in content.split("\n")):
+                return url
+            doc = {"id": doc_id, "content": content, "url": ""}
+        else:
+            doc = prep_doc(repo)
+        body = fc_plan.replace_section(doc["content"], _heading(doc["content"], ident, title), text or "")
+        shown = fc_factoryturn.compose_cli(["linear", "doc", "update", doc["id"], "--description", "--repo", str(repo)], stdin=body)
+        url = shown.strip().removeprefix("updated ").strip() or doc["url"]
+        now = _find_doc(repo)[1]
+        if _old_section(now, ident) == (text or "").strip():
+            return url
+    raise RuntimeError(f"the prep document did not keep the section of {ident}")
+
+def _running(rec, now) -> bool:
+    """Whether the record's worker still runs: a pid older than the worker's timeout is another process's."""
+    pid = rec.get("pid")
+    return bool(pid) and now - (rec.get("at") or 0) <= WORKER_SECONDS and _alive(pid)
 
 def _alive(pid) -> bool:
     try:
@@ -146,10 +189,10 @@ def parse_reply(reply):
     return objs[-1] if objs else None
 
 def _strings(value) -> list:
-    return [str(x) for x in value] if isinstance(value, list) else []
+    return [_line(x) for x in value if _line(x)] if isinstance(value, list) else []
 
 def _clean(got) -> dict:
-    qs = [{"question": str(q.get("question") or "").strip(), "recommendation": str(q.get("recommendation") or "").strip(), "why": str(q.get("why") or "").strip()}
+    qs = [{"question": _line(q.get("question") or ""), "recommendation": _line(q.get("recommendation") or ""), "why": _line(q.get("why") or "")}
           for q in got.get("questions") or [] if isinstance(q, dict)]
     return {"code": _strings(got.get("code")), "built": _strings(got.get("built")), "open": _strings(got.get("open")),
             "questions": [q for q in qs if q["question"]][:MAX_QUESTIONS], "drop": bool(got.get("drop"))}
@@ -164,6 +207,7 @@ def run_prep(repo, ident) -> dict:
     model, effort = fc_config.NIGHT_MODEL
     try:
         issue = _issue(repo, ident)
+        title = _line(issue.get("title") or "") or ident
         feature = _texts(repo, issue)[1]
         try:
             plan = fc_delivery.product_plan(repo)
@@ -177,14 +221,17 @@ def run_prep(repo, ident) -> dict:
         got = parse_reply(reply)
         if got is None:
             fc_factorystate.add_event(repo, f'event factory=prep-failed ticket={ident} why="{_q(reply.strip(), 120)}"')
+            _outcome(repo, ident, "failed")
             return {"ticket": ident, "status": "failed"}
         found = _clean(got)
         if found["drop"] or not found["questions"]:
-            url = write_section(repo, ident, issue.get("title") or ident, None)
+            url = write_section(repo, ident, title, None)
+            _outcome(repo, ident, "dropped")
             fc_factorystate.add_event(repo, f"event factory=prep-dropped ticket={ident}  (no question is left for the product owner{': ' + url if url else ''})")
             return {"ticket": ident, "status": "dropped"}
-        text = render({"id": ident, "title": issue.get("title") or ident, "layer": layer}, found, fc_claude.claude_id(model), time.strftime("%Y-%m-%d %H:%M"))
-        url = write_section(repo, ident, issue.get("title") or ident, text)
+        text = render({"id": ident, "title": title, "layer": layer}, found, fc_claude.claude_id(model), time.strftime("%Y-%m-%d %H:%M"))
+        url = write_section(repo, ident, title, text)
+        _outcome(repo, ident, "prepared")
         fc_factorystate.add_event(repo, f"event factory=prepared ticket={ident} questions={len(found['questions'])}  (ready for the next planning session: {url})")
         return {"ticket": ident, "status": "prepared", "questions": len(found["questions"])}
     except ERRORS as e:
@@ -199,7 +246,7 @@ def refresh(repo, state, lines, now, out) -> None:
         return
     state["prep_checked"] = now
     for ident, rec in list(prep.items()):
-        if rec.get("pid") and _alive(rec["pid"]):
+        if _running(rec, now):
             continue
         try:
             issue = _issue(repo, ident)
@@ -210,31 +257,42 @@ def refresh(repo, state, lines, now, out) -> None:
                 except ERRORS:
                     pass  # a judge error leaves the section as it is; the text check below still runs
             if gone:
-                write_section(repo, ident, issue.get("title") or ident, None)
+                write_section(repo, ident, _line(issue.get("title") or "") or ident, None)
                 del prep[ident]
             elif rec.get("print") is not None and prep_print(*_texts(repo, issue)) != rec["print"]:
                 rec["print"] = None
         except ERRORS:
             continue
 
+def _requeue_stuck(repo, prep, now) -> None:
+    """A worker that died without a prepared or dropped outcome is tried once more, half an hour after it began."""
+    for ident, rec in prep.items():
+        if (rec.get("pid") and not _running(rec, now) and rec.get("print") is not None and not rec.get("attempts")
+                and now - (rec.get("at") or 0) >= RETRY_SECONDS and not _done_since(repo, ident, rec.get("at") or 0)):
+            rec["print"], rec["attempts"] = None, 1
+
 def prep_idle(repo, state, offer, now, out) -> None:
     """A night turn with nothing to start: refresh the document, then start one prep worker on the next unprepared ticket."""
+    state.setdefault("said", {})
     refresh(repo, state, [], now, out)
     prep = state.setdefault("prep", {})
-    if any(r.get("pid") and _alive(r["pid"]) for r in prep.values()):
+    _requeue_stuck(repo, prep, now)
+    night = state.get("night") or {}
+    if any(_running(r, now) for r in prep.values()) or night.get("wait") or night.get("ended") or night.get("draining") not in (None, "budget"):
         return
-    if (state.get("night") or {}).get("draining") not in (None, "budget"):
-        return
-    for c in candidates(repo, offer["id"], fc_config.FACTORY["prep_ahead"]):
-        rec = prep.get(c["id"])
-        if rec and rec.get("print") is not None:
-            continue
-        try:
-            fingerprint = prep_print(*_texts(repo, _issue(repo, c["id"])))
-        except ERRORS:
-            continue
-        pid = fc_nightstate.spawn_once(repo, ["factory", "prep", "--repo", str(repo), "--ticket", c["id"]], "night-prep.log")
-        prep[c["id"]] = {"pid": pid, "print": fingerprint, "at": now, "layer": c["layer"]}
-        return
+    try:
+        for c in candidates(repo, offer["id"], fc_config.FACTORY["prep_ahead"]):
+            rec = prep.get(c["id"])
+            if rec and rec.get("print") is not None:
+                continue
+            try:
+                fingerprint = prep_print(*_texts(repo, _issue(repo, c["id"])))
+            except ERRORS:
+                continue
+            pid = fc_nightstate.spawn_once(repo, ["factory", "prep", "--repo", str(repo), "--ticket", c["id"]], "night-prep.log")
+            prep[c["id"]] = {"pid": pid, "print": fingerprint, "at": now, "layer": c["layer"], "attempts": (rec or {}).get("attempts", 0)}
+            return
+    except ERRORS as e:
+        fc_factorystate.say_once(state, "prep-error", f'event factory=prep-failed why="{_q(str(e) or type(e).__name__, 120)}"  (night prep skips this turn)', out)
 
 fc_factoryturn.IDLE["night"] = prep_idle

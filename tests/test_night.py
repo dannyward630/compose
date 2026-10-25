@@ -474,7 +474,7 @@ class Prep(unittest.TestCase):
         self.titles = {"NEB-11": "Sign in", "NEB-12": "Billing"}
         self.descriptions = {"NEB-11": "d11", "NEB-12": "d12"}
         self.states = {}
-        self.docs, self.cli_calls = {}, []
+        self.docs, self.cli_calls, self.race = {}, [], None
         def readiness(repo, ident, refresh=False, write=True):
             assert write is False, "prep must not write to the ticket"
             r = self.results[ident]
@@ -511,6 +511,9 @@ class Prep(unittest.TestCase):
             return title() + "\n" + self.docs[title()] + "\n--- section hashes (--section \"<heading>\" --expect <hash>)\nabc ## x\n"
         if args[:3] == ["linear", "doc", "update"]:
             self.docs[title()] = stdin
+            if self.race:
+                self.docs[title()] = self.race(stdin)
+                self.race = None
             return "updated https://linear.app/doc/prep\n"
         raise AssertionError(f"unexpected compose call {args}")
 
@@ -583,6 +586,76 @@ class Prep(unittest.TestCase):
         self.state["prep"] = {"NEB-12": {"print": "old", "at": 1.0, "pid": None}}; self.state["prep_checked"] = 100.0
         fp.refresh(self.repo, self.state, ["event factory=offer ticket=NEB-12"], 200.0, self.out)
         self.assertEqual(self.cli_calls, [])
+
+    def reply(self, **kw):
+        found = {"code": [], "built": [], "open": [], "questions": [{"question": "Q?", "recommendation": "No", "why": "w"}], "drop": False, **kw}
+        self.claude.return_value = (None, json.dumps(found), 4, {})
+
+    def test_model_text_cannot_forge_a_heading_or_break_a_line(self):
+        self.reply(questions=[{"question": "Refunds?\n## NEB-5: x", "recommendation": "# No\nyes", "why": "w"}], built=["a\n## NEB-6: y"])
+        fp.run_prep(self.repo, "NEB-12")
+        doc = self.docs[fp.PREP_TITLE]
+        self.assertNotIn("## NEB-5:", doc.replace("1. Refunds? ## NEB-5: x", "")); self.assertNotIn("\n## NEB-6", doc)
+        self.assertEqual([l for l in doc.split("\n") if l.startswith("## ")], ["## NEB-12: Billing"])
+
+    def test_a_write_clobbered_by_another_writer_is_redone_on_the_fresh_body(self):
+        self.reply()
+        self.race = lambda ours: "## NEB-99: other\n\nz\n"  # the other writer, who read before ours, writes after it
+        fp.run_prep(self.repo, "NEB-12")
+        doc = self.docs[fp.PREP_TITLE]
+        self.assertIn("## NEB-99: other", doc); self.assertIn("## NEB-12: Billing", doc)
+        self.assertEqual(len([c for c in self.cli_calls if c[:3] == ["linear", "doc", "update"]]), 2)
+
+    def test_a_drop_with_no_heading_writes_nothing(self):
+        self.docs[fp.PREP_TITLE] = "## NEB-11: Sign in\n\ny\n"
+        self.reply(drop=True)
+        fp.run_prep(self.repo, "NEB-12")
+        self.assertEqual([c for c in self.cli_calls if c[:3] == ["linear", "doc", "update"]], [])
+
+    def test_a_pid_older_than_the_worker_timeout_counts_as_dead(self):
+        fp.prep_idle(self.repo, self.state, {"id": "NEB-11"}, 100.0, self.out)
+        fp.prep_idle(self.repo, self.state, {"id": "NEB-11"}, 100.0 + 1800 + 301, self.out)  # kill still says alive
+        self.assertEqual(self.spawn.call_count, 2)
+
+    def test_a_dead_worker_with_no_outcome_is_retried_once_after_half_an_hour(self):
+        idle = lambda now: fp.prep_idle(self.repo, self.state, {"id": "NEB-11"}, now, self.out)
+        idle(100.0); self.finish_worker("NEB-11"); idle(1000.0)
+        self.assertEqual(self.spawn.call_count, 2)  # NEB-12 started; NEB-11 not yet
+        self.assertEqual([c.args[1][-1] for c in self.spawn.call_args_list], ["NEB-11", "NEB-12"])
+        self.finish_worker("NEB-12"); idle(1900.0)
+        self.assertEqual(self.spawn.call_args.args[1][-1], "NEB-11")
+        self.finish_worker("NEB-11"); idle(4000.0); idle(8000.0)
+        self.assertEqual([c.args[1][-1] for c in self.spawn.call_args_list].count("NEB-11"), 2)
+
+    def test_a_deliberate_drop_is_not_retried(self):
+        self.reply(drop=True)
+        fp.prep_idle(self.repo, self.state, {"id": "NEB-11"}, 100.0, self.out); self.finish_worker("NEB-11")
+        fp.run_prep(self.repo, "NEB-11")
+        self.state["prep"]["NEB-12"] = {"pid": None, "print": self.print_of("NEB-12"), "at": 100.0}
+        fp.prep_idle(self.repo, self.state, {"id": "NEB-11"}, 5000.0, self.out)
+        self.assertEqual([c.args[1][-1] for c in self.spawn.call_args_list], ["NEB-11"])
+
+    def test_idle_returns_while_the_night_waits_or_has_ended(self):
+        for key in ("wait", "ended"):
+            self.state["night"][key] = {"until": 1.0} if key == "wait" else {"state": "no-credit"}
+            fp.prep_idle(self.repo, self.state, {"id": "NEB-11"}, 100.0, self.out); self.spawn.assert_not_called()
+            self.state["night"][key] = None
+
+    def test_a_failure_reading_candidates_or_spawning_is_said_once_and_the_turn_goes_on(self):
+        with unittest.mock.patch.object(fp.fc_delivery, "product_plan", side_effect=RuntimeError("linear down")):
+            fp.prep_idle(self.repo, self.state, {"id": "NEB-11"}, 100.0, self.out); fp.prep_idle(self.repo, self.state, {"id": "NEB-11"}, 101.0, self.out)
+        self.assertEqual(len(self.out), 1); self.assertIn("linear down", self.out[0])
+        self.spawn.side_effect = OSError("no fork"); self.state["prep_error"] = None
+        fp.prep_idle(self.repo, self.state, {"id": "NEB-11"}, 102.0, self.out)
+
+    def test_a_needs_shaping_story_is_a_candidate(self):
+        self.results["NEB-11"] = {**rd("NEB-11", ready=False, specced=None), "needs_shaping": True}
+        self.assertEqual([c["id"] for c in fp.candidates(self.repo, "NEB-11", 3)], ["NEB-11", "NEB-12"])
+
+    def test_an_event_is_always_one_line(self):
+        self.claude.return_value = (None, "two\nlines  of   text", 4, {})
+        fp.run_prep(self.repo, "NEB-12")
+        self.assertNotIn("\n", self.events[0]); self.assertIn("two lines of text", self.events[0])
 
 
 if __name__ == "__main__":
