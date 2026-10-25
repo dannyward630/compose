@@ -275,6 +275,14 @@ class Tracks(Fake):
             self.assertTrue(e.exception.code.startswith(msg))
         self.assertEqual(self.mutations(), [])
 
+    def test_an_empty_tracks_text_is_refused_and_writes_nothing(self):
+        for text in ("", "\n", "## Tracks\n\n", "### Tracks\n\n1. A: NEB-7\n", "## Why this order\n\nx\n"):
+            Path(self.tracks_file).write_text(text)
+            with self.subTest(text), self.assertRaises(SystemExit) as e:
+                self.run_verb("tracks", file=self.tracks_file, quote="x")
+            self.assertTrue(e.exception.code.startswith("delivery tracks: "), e.exception.code)
+        self.assertEqual(self.mutations(), [])
+
     def test_a_file_with_other_sections_writes_only_the_tracks_section(self):
         self.tracks_file.write_text(TRACKS + "\n## Why this order\n\nAuth first because x.\n")
         self.run_verb("tracks", file=self.tracks_file, quote="x")

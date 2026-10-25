@@ -176,6 +176,8 @@ def verb_tracks(a):
     body = fc_linear_cmd.read_body(a)
     text = _tracks_text(body) if "## Tracks" in body else body.strip()
     tracks = fc_plan.parse_tracks(text)
+    if not tracks:
+        sys.exit("delivery tracks: the Tracks text holds no track; nothing written (an empty list would erase the order across features)")
     fc_plan.track_waves(tracks)
     product = read_product(a.repo, tracks)
     unknown = [i for i in dict.fromkeys(i for t in tracks for i in t["items"]) if i not in product["features"]]
