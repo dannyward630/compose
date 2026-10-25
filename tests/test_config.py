@@ -20,7 +20,8 @@ class FactoryConfig(unittest.TestCase):
 
     def test_factory_keys_must_be_whole_numbers(self):
         for factory, msg in (({"day_tickets": 0}, "factory.day_tickets must be a whole number of 1 or more, not 0"),
-                             ({"turn_seconds": 5}, "factory.turn_seconds must be a whole number of 10 or more, not 5")):
+                             ({"turn_seconds": 5}, "factory.turn_seconds must be a whole number of 10 or more, not 5"),
+                             ({"offer_snooze_minutes": 0}, "factory.offer_snooze_minutes must be a whole number of 1 or more, not 0")):
             with self.assertRaises(SystemExit) as c: self.apply(factory)
             self.assertEqual(c.exception.code, f"{fc_config.CONFIG_PATH}: {msg}")
         self.apply({"day_tickets": 3})

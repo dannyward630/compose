@@ -29,6 +29,22 @@ class State(unittest.TestCase):
         st.state_path(self.repo).parent.mkdir(exist_ok=True); st.state_path(self.repo).write_text("{not json")
         self.assertEqual(st.load_state(self.repo), st.EMPTY)
 
+    def test_saved_values_of_the_wrong_type_are_ignored(self):
+        st.state_path(self.repo).parent.mkdir(exist_ok=True)
+        st.state_path(self.repo).write_text('{"dispatched": null, "said": [], "mode": ["x"], "day_tickets": 3, "pid": 7}')
+        s = st.load_state(self.repo)
+        self.assertEqual((s["dispatched"], s["said"], s["mode"], s["day_tickets"], s["pid"]), ({}, {}, "day", 3, 7))
+        st.state_path(self.repo).write_text("[1]")
+        self.assertEqual(st.load_state(self.repo), st.EMPTY)
+
+    def test_corrupt_event_lines_are_skipped_and_a_torn_line_is_not_glued_onto(self):
+        st.events_path(self.repo).parent.mkdir(exist_ok=True)
+        good = '{"n": 4, "at": 1.0, "line": "kept"}'
+        st.events_path(self.repo).write_text("null\n[]\n{}\n" + '{"x":1}\n' + good + '\n{"n": 9, "at"')
+        self.assertEqual([e["n"] for e in st.events_since(self.repo, 0)], [4])
+        self.assertEqual(st.add_event(self.repo, "next"), 5)
+        self.assertEqual([e["line"] for e in st.events_since(self.repo, 4)], ["next"])
+
     def test_day_pace_is_the_repos_setting_else_the_config(self):
         s = st.load_state(self.repo); self.assertEqual(st.pace(s), {"mode": "day", "cap": 2})
         s["day_tickets"] = 1; self.assertEqual(st.pace(s), {"mode": "day", "cap": 1})

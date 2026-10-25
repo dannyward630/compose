@@ -20,7 +20,9 @@ def load_state(repo):
     except (OSError, ValueError):
         return state
     if isinstance(saved, dict):
-        state.update(saved)
+        for k, v in saved.items():
+            if k in EMPTY and (EMPTY[k] is None or type(v) is type(EMPTY[k])):  # a None default takes any value
+                state[k] = v
     return state
 
 def save_state(repo, state):
@@ -36,9 +38,11 @@ def _read_events(repo):
     events = []
     for l in lines:
         try:
-            events.append(json.loads(l))
+            e = json.loads(l)
         except ValueError:
             continue
+        if isinstance(e, dict) and isinstance(e.get("n"), int):
+            events.append(e)
     return events
 
 def add_event(repo, line):
@@ -48,9 +52,10 @@ def add_event(repo, line):
     with open(path.with_name("factory-events.lock"), "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         events = _read_events(repo)
-        n = (events[-1]["n"] if events else 0) + 1
+        n = max([e["n"] for e in events], default=0) + 1
+        torn = path.exists() and path.stat().st_size and not path.read_bytes().endswith(b"\n")
         with open(path, "a") as f:
-            f.write(json.dumps({"n": n, "at": time.time(), "line": line}) + "\n")
+            f.write(("\n" if torn else "") + json.dumps({"n": n, "at": time.time(), "line": line}) + "\n")
     return n
 
 def events_since(repo, n):
