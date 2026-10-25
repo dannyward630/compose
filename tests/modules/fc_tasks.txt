@@ -7,6 +7,8 @@ task_from_issue
 hand_task
 sync_tasks
 linear_cache
+_cache_lock
+set_cached_state
 load_tasks
 blocker_finished
 waiting

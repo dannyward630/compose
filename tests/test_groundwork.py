@@ -888,6 +888,22 @@ class DesignCrews(unittest.TestCase):
         self.assertEqual([(c.args[1]["id"], c.args[2]) for c in self.ev.call_args_list], [("004", "dispatched")])
         self.assertIn("004 reopened", out)
 
+    def test_a_reopened_task_is_no_longer_shown_as_passed_while_the_new_builder_works(self):
+        def row(tid):
+            meta = next(m for m in fc.fc_tasks.load_tasks(self.proj) if m["id"] == tid)
+            return fc.fc_status.task_state(".", self.proj, meta, "", {"prefix": "t/", "have": set(), "merged": set()})
+        (self.proj / "results" / "004.json").write_text(json.dumps({"id": "004", "status": "passed"}))
+        self.assertEqual(row("004")["state"], "passed")
+        self.run_crews(only="004", redo=True)
+        self.assertEqual((row("004")["state"], row("004")["note"]), ("pending", ""))
+        self.assertEqual(fc.fc_tasks.load_tasks(self.proj)[3]["linear_state"], "In Progress")
+        self.assertEqual(row("003")["state"], "passed")  # the other tasks keep what the last sync said
+        cache = json.loads((self.proj / "results" / "tasks.json").read_text())
+        cache["tasks"][3]["linear_state"] = "In Review"
+        (self.proj / "results" / "tasks.json").write_text(json.dumps(cache))
+        self.run_crews(only="004", redo=True, busy={"design-004"})  # a builder that does not start leaves the task as it was
+        self.assertEqual(row("004")["state"], "passed")
+
     def test_redo_needs_only_leaves_done_tasks_closed_and_touches_nothing_when_the_builder_does_not_start(self):
         with self.assertRaises(SystemExit) as e:
             self.run_crews(redo=True)
