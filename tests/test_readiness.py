@@ -76,12 +76,9 @@ class Gates(unittest.TestCase):
             self.assertEqual([(x["item"], x["issue"]) for x in g], [("design", "ENG-1")])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 import json  # noqa: E402
-import fc_claude, fc_models  # noqa: E402
+import fc_claude, fc_core, fc_models  # noqa: E402
 from unittest import mock  # noqa: E402
 
 STATE = {"story": {"id": "ENG-7", "title": "Pay", "description": STORY}, "feature": FEATURE, "epic": "", "tech_docs": []}
@@ -148,6 +145,16 @@ class Judge(unittest.TestCase):
         asked = STORY + "\n## Open questions\n\n* Which brands?\n"
         self.assertNotIn("Open questions", fc_readiness.judge_state(fc_readiness.story_chain(tree(story=asked)))["story"]["description"])
 
+    def test_a_secret_in_the_story_text_does_not_reach_the_stronger_model(self):
+        self.jev = {"kind": ("TECHNICAL", 0.9)}
+        self.strong.return_value = json.dumps({"items": {k: {"ready": True, "missing": ""} for k in ("intent", "scope", "testable", "context")}})
+        state = {**STATE, "story": {**STATE["story"], "description": "use key sk-live-0123456789abcdef"}}
+        with mock.patch.dict(fc_core.os.environ, {"OPENROUTER_API_KEY": "sk-live-0123456789abcdef"}):
+            fc_readiness.judge(state, "ENG-7", deep_dive=False)
+        sent = " ".join(str(a) for a in self.strong.call_args.args)
+        self.assertNotIn("sk-live-0123456789abcdef", sent)
+        self.assertIn("<redacted>", sent)
+
 
 class ClaudeJson(unittest.TestCase):
     def test_claude_json_passes_effort(self):
@@ -158,3 +165,7 @@ class ClaudeJson(unittest.TestCase):
             self.assertEqual("--effort" in cmd, want)
             if want:
                 self.assertEqual(cmd[cmd.index("--effort") + 1], "high")
+
+
+if __name__ == "__main__":
+    unittest.main()

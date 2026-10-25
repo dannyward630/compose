@@ -1,5 +1,5 @@
 import json, re
-import fc_tasks, fc_linear, fc_change, fc_models, fc_claude, fc_config
+import fc_core, fc_tasks, fc_linear, fc_change, fc_models, fc_claude, fc_config
 
 DEEP_DIVE = "deep-dive"
 MAX_CRITERIA = 5
@@ -143,7 +143,7 @@ def judge(state, story, deep_dive):
         missing = [k for k in items if not ((answers.get(k) or {}).get("choice") == "READY" and prob(k, "READY") >= READY_FLOOR)]
         return {"technical": False, "judge": "jev", "missing": [{"item": k, "issue": story, "question": question(k)} for k in missing]}
     model, effort = fc_config.READINESS_MODEL
-    reply = fc_claude.claude_json(STRONG_SYSTEM, json.dumps({"state": state, "items": {k: v[0] for k, v in items.items()}}), model, timeout=600, effort=effort)
+    reply = fc_claude.claude_json(fc_core.scrub(STRONG_SYSTEM), fc_core.scrub(json.dumps({"state": state, "items": {k: v[0] for k, v in items.items()}})), model, timeout=600, effort=effort)
     try:
         got = fc_models.lenient_json(reply, key="items")
     except (ValueError, json.JSONDecodeError) as e:

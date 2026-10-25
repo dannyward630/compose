@@ -507,9 +507,6 @@ class TestCrewTiers(unittest.TestCase):
         self.assertEqual(self.start("planner", pins={"project": "no-frontier"}), "claude:claude-sonnet-5-5")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class ReadinessModel(unittest.TestCase):
     def read(self, value):
@@ -529,3 +526,7 @@ class ReadinessModel(unittest.TestCase):
         with self.assertRaises(SystemExit) as e:
             self.read("pi:x/y")
         self.assertIn("models.readiness must be a claude: model id", str(e.exception))
+
+
+if __name__ == "__main__":
+    unittest.main()
