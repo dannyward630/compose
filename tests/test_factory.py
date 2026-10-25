@@ -394,10 +394,14 @@ class Turn(unittest.TestCase):
 
     def test_in_review_frees_the_slot_and_a_lost_team_lead_requeues(self):
         self.state["dispatched"] = {s: {"feature": "NEB-9", "project": "sign-in", "kind": "build", "at": 1.0} for s in ("NEB-10", "NEB-11")}
+        self.state["prints"]["NEB-10"] = {"decisions": [], "story": "x", "waits_on": []}
         self.set_states(**{"NEB-10": "In Review"})  # NEB-11 still Todo, no live lead
         lines = ft.turn(self.repo, self.state, 100.0)
         self.assertIn("event factory=verified story=NEB-10 project=sign-in  (verified: waiting for the product owner's look and merge)", lines)
         self.assertIn("event factory=lead-lost story=NEB-11 project=sign-in  (its team lead is gone: the story goes back in the queue)", lines)
+        self.assertNotIn("NEB-10", self.state["dispatched"]); self.assertNotIn("NEB-10", self.state["prints"])
+        self.assertEqual([c.args[2]["id"] for c in self.dispatch.call_args_list], ["NEB-11"])  # requeued and started again on the same turn
+        self.assertEqual(list(self.state["dispatched"]), ["NEB-11"])
 
     def test_a_changed_or_reordered_in_flight_story_is_held_once(self):
         self.state["dispatched"] = {"NEB-10": {"feature": "NEB-9", "project": "sign-in", "kind": "build", "at": 1.0}}
@@ -408,6 +412,39 @@ class Turn(unittest.TestCase):
         self.assertEqual([c.args[2:4] for c in self.hold_changed.call_args_list], [("NEB-10", ["NEB-10"])])
         self.set_waits("NEB-10", ("NEB-5",)); ft.turn(self.repo, self.state, 400.0)
         self.assertEqual(self.hold_changed.call_args.args[4], "the product delivery plan now puts NEB-9 after NEB-5")
+
+    def test_a_failed_hold_is_tried_again_on_the_next_turn(self):
+        self.state["dispatched"] = {"NEB-10": {"feature": "NEB-9", "project": "sign-in", "kind": "build", "at": 1.0}}
+        self.set_states(**{"NEB-10": "In Progress"}); self.leads["sign-in"] = "sign-in-orchestrator"
+        ft.turn(self.repo, self.state, 100.0)
+        self.descriptions["NEB-10"] = "## Scope\n\nchanged\n"
+        self.hold_changed.side_effect = [SystemExit("hold: disk full"), "event factory=held story=NEB-10"]
+        self.assertEqual(ft.turn(self.repo, self.state, 200.0), ['event factory=turn-failed why="hold: disk full"  (the next turn tries again)'])
+        self.assertIn("event factory=held story=NEB-10", ft.turn(self.repo, self.state, 300.0))
+
+    def test_a_judge_that_raises_is_a_judge_failed_line_not_a_crash(self):
+        self.results["NEB-10"] = None
+        def boom(repo, s, **kw):
+            if s == "NEB-10":
+                raise RuntimeError("linear timed out")
+            return self.results[s]
+        with unittest.mock.patch.object(ft.fc_readiness, "story_readiness", boom):
+            lines = ft.turn(self.repo, self.state, 100.0)
+        self.assertIn('event factory=judge-failed story=NEB-10 why="linear timed out"', lines)
+
+    def test_a_bad_delivery_plan_is_one_turn_failed_line(self):
+        import fc_plan
+        self.product_plan.side_effect = fc_plan.TracksError("track a: no such wave")
+        lines = ft.turn(self.repo, self.state, 100.0) + ft.turn(self.repo, self.state, 200.0)
+        self.assertEqual(lines, ['event factory=turn-failed why="track a: no such wave"  (the next turn tries again)'])
+
+    def test_a_story_and_a_decision_changing_together_name_each_cause(self):
+        self.state["dispatched"] = {"NEB-10": {"feature": "NEB-9", "project": "sign-in", "kind": "build", "at": 1.0}}
+        self.set_states(**{"NEB-10": "In Progress"}); self.leads["sign-in"] = "sign-in-orchestrator"
+        ft.turn(self.repo, self.state, 100.0)
+        self.descriptions["NEB-10"] = "## Scope\n\nchanged\n"; self.descriptions["NEB-9"] = FEATURE.replace("30 day", "7 day")
+        ft.turn(self.repo, self.state, 200.0)
+        self.assertEqual(self.hold_changed.call_args.args[4], "D2 changed on NEB-9; NEB-10 changed")
 
     def test_proposals_and_failures_are_said_once_and_the_next_turn_tries_again(self):
         self.reconciled = {"added": [], "removed": [], "ready": [], "proposed": ["NEB-30 is not in the plan: add it or cancel it."], "doc": "u"}

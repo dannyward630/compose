@@ -56,7 +56,7 @@ def pick(entries, plan, state, free, judge):
         judged += 1
         try:
             r = judge(e["id"], write=True)
-        except fc_readiness.NotAStory as ex:
+        except (fc_readiness.NotAStory, RuntimeError, OSError) as ex:
             out["failed"].append((e["id"], str(ex)))
             continue
         if r.get("error"):
@@ -255,30 +255,37 @@ def _settle(repo, plan, state, out):
 def _watch(repo, plan, entries, state, out):
     """Hold the tasks of an in-flight story whose text, decisions or place in the plan changed since the last look."""
     waits = {e["id"]: e["waits_on"] for e in entries}
+    descriptions = {}
     for story in in_flight(plan, state):
         feature = next((fid for fid, f in plan["features"].items() if any(s["id"] == story for s in f.get("stories") or [])), None)
         got = project_for(repo, feature) if feature else None
         if not got:
             continue
-        new = fingerprint((fc_linear.linear_issue(feature).get("description") or ""),
-                                                              (fc_linear.linear_issue(story).get("description") or ""))
+        if feature not in descriptions:
+            descriptions[feature] = fc_linear.linear_issue(feature).get("description") or ""
+        new = fingerprint(descriptions[feature], fc_linear.linear_issue(story).get("description") or "")
         new["waits_on"] = list(waits.get(story) or [])
         old = state["prints"].get(story)
-        state["prints"][story] = new
-        if not old:
-            continue
-        refs = changed_refs(old, new, story)
+        refs = changed_refs(old, new, story) if old else []
         if refs:
-            on = story if old.get("story") != new["story"] else feature
-            out.append(hold_changed(repo, got[2], story, refs, f"{', '.join(refs)} changed on {on}"))
-        if new["waits_on"] and not old.get("waits_on"):
+            ids = [r for r in refs if r != story]
+            if ids and story in refs:
+                why = f"{', '.join(ids)} changed on {feature}; {story} changed"
+            else:
+                why = f"{', '.join(refs)} changed on {feature if ids else story}"
+            out.append(hold_changed(repo, got[2], story, refs, why))
+        if old and new["waits_on"] and not old.get("waits_on"):
             out.append(hold_changed(repo, got[2], story, [story], f"the product delivery plan now puts {feature} after {', '.join(new['waits_on'])}"))
+        state["prints"][story] = new  # only once the holds went through, so a failed hold is tried again
 
 def _failed(why):
     return f'event factory=turn-failed why="{why}"  (the next turn tries again)'
 
 def _move_up(repo, plan, entries, picked, state, judge, out):
-    """Ask once whether a ticket planned out of order, now specced, should move up in the plan."""
+    """Ask once whether a ticket planned out of order, now specced, should move up in the plan. Returns the (id, error) of judges that failed."""
+    failed = []
+    for key in [k for k in state["said"] if k.startswith("move-up:") and k[8:] not in state["out_of_order"]]:
+        del state["said"][key]
     for ident in list(state["out_of_order"]):
         under = [e for e in entries if e["id"] == ident or e["feature"] == ident]
         ids = [ident] + [s["id"] for s in (plan["features"].get(ident) or {}).get("stories") or []] + [e["id"] for e in under]
@@ -291,6 +298,9 @@ def _move_up(repo, plan, entries, picked, state, judge, out):
                 done = i if judge(i, write=False).get("specced") else None
             except fc_readiness.NotAStory:
                 continue
+            except (RuntimeError, OSError) as ex:
+                failed.append((i, str(ex)))
+                continue
         if not done:
             continue
         e = next((e for e in entries if e["id"] == done), None)
@@ -300,6 +310,7 @@ def _move_up(repo, plan, entries, picked, state, judge, out):
         waits = ", ".join(e["waits_on"]) if e else "not-in-plan"
         _lines(state, f"move-up:{ident}", f"event factory=move-up ticket={ident} waits_on={waits}  (planned out of order and now specced: ask the "
                "product owner whether to move it up; on yes, write the tracks again (sections/0p.md))", out)
+    return failed
 
 def turn(repo, state, now):
     """One pass of the build loop: follow the roadmap, start ready stories, pause work whose ground changed, offer what to shape next. Returns the event lines."""
@@ -322,13 +333,14 @@ def turn(repo, state, now):
         entries = fc_plan.order_entries(plan["tracks"], plan["features"])
         _settle(repo, plan, state, out)
         _watch(repo, plan, entries, state, out)
-    except (SystemExit, RuntimeError, OSError) as ex:
+    except (SystemExit, RuntimeError, OSError, ValueError, KeyError) as ex:
         _lines(state, "turn-failed", _failed(str(ex)), out)
         return out
     failed = False
     free = 0 if fc_load.held() else max(0, fc_factorystate.pace(state)["cap"] - len(in_flight(plan, state)))
     judge = lambda s, **kw: fc_readiness.story_readiness(repo, s, **kw)
     got = pick(entries, plan, state, free, judge)
+    got["failed"] += _move_up(repo, plan, entries, got["specced"], state, judge, out)
     live = {i for i, _ in got["failed"]}
     for key in [k for k in said if k.startswith("judge-failed:") and k[13:] not in live]:
         del said[key]
@@ -341,7 +353,6 @@ def turn(repo, state, now):
             _lines(state, "turn-failed", _failed(str(ex)), out)
             failed = True
             break
-    _move_up(repo, plan, entries, got["specced"], state, judge, out)
     if got["picks"] or got["ready_waiting"] or not got["offer"]:
         said.pop("offer", None)
         state["offer"] = None
