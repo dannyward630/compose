@@ -54,13 +54,31 @@ def load_sheet(path):
         sys.exit(f"sheet {path}: not valid JSON ({e})")
     if not isinstance(raw, dict):
         sys.exit(f"sheet {path}: expected a JSON object")
-    for key in ("keep", "verify", "tickets"):
+    for key in ("keep", "verify", "tickets", "new"):
+        if not isinstance(raw.get(key) or [], list):
+            sys.exit(f"sheet: {key} must be a list")
+    if not isinstance(raw.get("reasons") or {}, dict):
+        sys.exit("sheet: reasons must map a reason name to the path of its text file")
+    for key in ("keep", "verify"):
         for entry in raw.get(key) or []:
-            if (key == "tickets" and not (isinstance(entry, dict) and entry.get("id"))) or (key != "tickets" and not isinstance(entry, str)):
-                sys.exit(f"sheet: a {key} entry has no id: {entry}")
+            if not (isinstance(entry, str) and entry.strip()):
+                sys.exit(f"sheet: a {key} entry must be a ticket id like NEB-12: {entry!r}")
+    for entry in raw.get("tickets") or []:
+        if not isinstance(entry, dict):
+            sys.exit(f"sheet: a tickets entry must be an object with an id: {entry!r}")
+        if not entry.get("id"):
+            sys.exit(f"sheet: a tickets entry has no id: {entry}")
+    for name, path in (raw.get("reasons") or {}).items():
+        if not (isinstance(path, str) and path):
+            sys.exit(f"sheet: reason {name} must be the path of a text file: {path!r}")
+    for entry in raw.get("new") or []:
+        if not (isinstance(entry, dict) and entry.get("key")):
+            sys.exit(f"sheet: a new entry must be an object with a key: {entry!r}")
+        if entry.get("body") is not None and not isinstance(entry["body"], str):
+            sys.exit(f"sheet: new {entry['key']} body must be the path of a text file: {entry['body']!r}")
     return {"keep": list(raw.get("keep") or []), "verify": list(raw.get("verify") or []), "tickets": [dict(t) for t in raw.get("tickets") or []],
             "reasons": {k: read_text_file(f"reason {k}", p) for k, p in (raw.get("reasons") or {}).items()},
-            "new": [{**n, "body": read_text_file(f"new ticket {n.get('key')} body", n["body"]) if n.get("body") else ""} for n in raw.get("new") or []]}
+            "new": [{**n, "body": read_text_file(f"new ticket {n['key']} body", n["body"]) if n.get("body") else ""} for n in raw.get("new") or []]}
 
 def explicit(sheet):
     """Every entry the sheet sorts by hand, in order: the keep and verify lists first, then the tickets."""

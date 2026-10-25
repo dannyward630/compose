@@ -133,6 +133,18 @@ class Reconcile(unittest.TestCase):
         raw = {"tickets": [{"sort": "keep"}]}
         self.assertEqual(self.fails("check", file=self.write("noid.json", json.dumps(raw))), (1, "sheet: a tickets entry has no id: {'sort': 'keep'}"))
 
+    def test_a_sheet_of_the_wrong_shape_exits_with_a_message_not_a_traceback(self):
+        for raw, msg in (({"keep": "NEB-1"}, "sheet: keep must be a list"), ({"verify": {"a": 1}}, "sheet: verify must be a list"),
+                         ({"tickets": "NEB-1"}, "sheet: tickets must be a list"), ({"keep": [3]}, "sheet: a keep entry must be a ticket id like NEB-12: 3"),
+                         ({"verify": [["NEB-1"]]}, "sheet: a verify entry must be a ticket id like NEB-12: ['NEB-1']"),
+                         ({"tickets": ["NEB-1"]}, "sheet: a tickets entry must be an object with an id: 'NEB-1'"),
+                         ({"reasons": ["x"]}, "sheet: reasons must map a reason name to the path of its text file"),
+                         ({"reasons": {"x": 4}}, "sheet: reason x must be the path of a text file: 4"),
+                         ({"new": ["N1"]}, "sheet: a new entry must be an object with a key: 'N1'"),
+                         ({"new": [{"title": "t"}]}, "sheet: a new entry must be an object with a key: {'title': 't'}"),
+                         ({"new": [{"key": "N1", "body": 5}]}, "sheet: new N1 body must be the path of a text file: 5")):
+            self.assertEqual(self.fails("check", file=self.write("s.json", json.dumps(raw))), (1, msg))
+
     def test_check_refuses_bad_entries_and_stores_nothing(self):
         bad = {"tickets": [{"id": "NEB-9", "sort": "keep"}, {"id": "NEB-4", "sort": "merge", "into": "NEB-2", "reason": "dup"},
                            {"id": "NEB-1", "sort": "cancel"}, {"id": "NEB-5", "sort": "verify", "title": "x"}, {"id": "NEB-3", "sort": "keep", "drop_ready": True, "reason": "r"}]}
