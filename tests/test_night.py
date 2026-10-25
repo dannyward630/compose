@@ -265,6 +265,7 @@ class Answerer(unittest.TestCase):
         (self.proj / "linear.json").write_text(json.dumps({"feature": "NEB-9"}))
         (self.proj / "results" / "yolo.json").write_text(json.dumps({"mode": "night"}))
         self.state = {"night": ns.new_night(fc_core.report_time("2026-10-26 22:00:00"), 0.0, 10.0, None)}
+        st.save_state(self.repo, {"mode": "night", "night": self.state["night"]})  # the worker checks the night is still on before it writes
         self.gone, self.events, self.pids = set(), [], iter(range(5000, 5100))
         def cli(args, stdin=None, pane=None):
             return json.dumps({"identifier": args[2], "title": "t", "description": "d"}) if args[:2] == ["linear", "get"] else ""
@@ -333,6 +334,31 @@ class Answerer(unittest.TestCase):
         self.assertTrue(rec["never_set"]); self.prompt.assert_not_called()
         self.assertFalse(any(c.args[0][0] == "decide" for c in self.cli.call_args_list))
         self.assertTrue(self.events[-1].startswith('event factory=waiting project=sign-in question="NEB-10: force-push the rebased branch?"'))
+
+    def test_the_worker_writes_nothing_once_its_night_has_ended_or_another_began(self):
+        self.report("needs-user", "NEB-10: keep sessions?", "2026-10-27 01:05:00")
+        for change in (lambda s: s.update(mode="day", night={**s["night"], "ended": {"state": "back", "at": 1.0}}),
+                       lambda s: s.update(night=ns.new_night(s["night"]["since"] + 60, 0.0, 10.0, None))):
+            st.save_state(self.repo, {"mode": "night", "night": self.state["night"]})
+            def reply(*args, change=change, **kw):
+                with st.edit(self.repo) as s:
+                    change(s)
+                return (None, '{"never_set": false, "answer": "30 days", "reasoning": "r", "cards": {"Q1": "A"}}', 3, {})
+            self.claude.side_effect = reply
+            rec = fa.run_answer(self.repo, "sign-in", "2026-10-27 01:05:00")
+            self.assertEqual(rec["error"], "the night ended before the answer")
+            self.assertEqual([c for c in self.cli.call_args_list if c.args[0][0] != "linear" or c.args[0][1] != "get"], [])
+            self.prompt.assert_not_called()
+            self.assertTrue(self.events[-1].startswith('event factory=answer-failed project=sign-in question="NEB-10: keep sessions?" why="the night ended before the answer"'), self.events[-1])
+
+    def test_no_answerer_starts_during_a_usage_wait_and_the_question_waits_for_the_reset(self):
+        self.report("needs-user", "NEB-10: q", "2026-10-27 01:05:00")
+        self.state["night"]["wait"] = {"until": 500.0, "n": 0, "since": 90.0, "agents": [], "lines": {}}
+        self.assertEqual(fa.answer_step(self.repo, self.state, 100.0), [])
+        self.spawn.assert_not_called(); self.assertEqual(self.state["night"]["asked"], {})
+        self.state["night"]["wait"] = None
+        fa.answer_step(self.repo, self.state, 600.0)
+        self.assertEqual(self.spawn.call_args.args[1][-3:], ["2026-10-27 01:05:00", "--nth", "0"])
 
     def test_an_unparsable_reply_records_the_error_and_says_answer_failed(self):
         self.report("needs-user", "NEB-10: q", "2026-10-27 01:05:00")
@@ -469,6 +495,7 @@ class Prep(unittest.TestCase):
         self.repo = Path(tempfile.mkdtemp()).resolve()
         subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
         self.state = {"night": ns.new_night(100.0, 1e12, 10.0, None), "prep": {}}
+        st.save_state(self.repo, {"mode": "night", "night": self.state["night"]})
         self.out, self.events, self.gone, self.pids = [], [], set(), iter(range(7000, 7100))
         self.entries = [entry("NEB-11", "NEB-9"), entry("NEB-12", "NEB-12", kind="feature")]
         self.results = {"NEB-11": rd("NEB-11", ready=False, specced=False)}
@@ -553,6 +580,17 @@ class Prep(unittest.TestCase):
         self.assertEqual([c for c in self.cli_calls if c[:2] in (["linear", "update"], ["linear", "create"], ["linear", "labels"])], [])
         self.assertIn("never plan", self.claude.call_args.args[1])
         self.assertIn("event factory=prepared ticket=NEB-12 questions=1", self.events[-1])
+
+    def test_the_worker_writes_nothing_once_the_night_has_ended(self):
+        def reply(*args, **kw):
+            with st.edit(self.repo) as s:
+                s["mode"], s["night"]["ended"] = "day", {"state": "back", "at": 1.0}
+            return (None, json.dumps({"questions": [{"question": "Refunds in v1?", "recommendation": "No", "why": "D4"}], "drop": False}), 4, {})
+        self.claude.side_effect = reply
+        self.assertEqual(fp.run_prep(self.repo, "NEB-12"), {"ticket": "NEB-12", "status": "failed"})
+        self.assertEqual([c for c in self.cli_calls if c[:3] in (["linear", "doc", "create"], ["linear", "doc", "update"])], [])
+        self.assertEqual(json.loads(fp.outcomes_path(self.repo).read_text().splitlines()[-1])["status"], "failed")
+        self.assertEqual(self.events, ['event factory=prep-failed ticket=NEB-12 why="the night ended before the prep"'])
 
     def test_a_reply_that_will_not_parse_records_nothing(self):
         self.claude.return_value = (None, 'no json "here"', 4, {})
@@ -683,7 +721,9 @@ class Digest(unittest.TestCase):
         unittest.mock.patch.object(fd.fc_core, "all_projects", return_value={"sign-in": (self.repo, self.repo / ".compose" / "sign-in")}).start()
         unittest.mock.patch.object(fd.fc_tasks, "yolo_state", return_value=None).start()
         unittest.mock.patch.object(fd.fc_yolo, "digest_sections", return_value=[]).start()
-        self.prep_doc = unittest.mock.patch.object(fd.fc_nightprep, "prep_doc", side_effect=lambda repo: self.docs).start()
+        self.real_find = fd.fc_nightprep._find_doc
+        self.find = unittest.mock.patch.object(fd.fc_nightprep, "_find_doc", side_effect=lambda repo: (self.docs["id"], self.docs["content"])).start()
+        unittest.mock.patch.object(fd.fc_nightprep, "prep_doc", side_effect=AssertionError("the digest must not create the prep document")).start()
         self.addCleanup(unittest.mock.patch.stopall)
 
     def event(self, line):
@@ -777,7 +817,7 @@ class Digest(unittest.TestCase):
         self.event("event factory=verified story=NEB-10 project=sign-in  (verified)")
         self.last_reconcile.side_effect = ValueError("bad json")
         self.paused.side_effect = OSError("gone")
-        self.prep_doc.side_effect = RuntimeError("linear down")
+        self.find.side_effect = RuntimeError("linear down")
         self.state["prep"]["NEB-12"] = {"pid": None, "print": "x", "at": 1.0, "layer": "stories"}
         text = fd.render(self.repo, self.state, self.since + 60)
         self.assertIn("last reconcile unavailable: bad json", text)
@@ -791,7 +831,32 @@ class Digest(unittest.TestCase):
         self.state["prep"]["NEB-13"] = {"pid": 5, "print": None, "at": 1.0, "layer": "story"}
         self.state["night"]["morning_msgs"] = ["sign-in|plan the stories for NEB-9?"]
         self.assertEqual(fd.ready_to_plan(self.repo, self.state),
-                         ["NEB-12 Billing (stories): 2 questions prepared  https://linear.app/d", "Planning waits: sign-in: plan the stories for NEB-9?"])
+                         ["NEB-12 Billing (stories): 2 questions prepared", "Planning waits: sign-in: plan the stories for NEB-9?"])
+
+    def test_ready_to_plan_never_creates_a_missing_document(self):
+        calls = []
+        self.find.side_effect = self.real_find
+        self.state["prep"]["NEB-12"] = {"pid": None, "print": "x", "at": 1.0, "layer": "stories"}
+        with unittest.mock.patch.object(fp.fc_factoryturn, "compose_cli", side_effect=lambda args, stdin=None: calls.append(list(args)) or ""):
+            self.assertEqual(fd.ready_to_plan(self.repo, self.state), ["NEB-12 (stories): prepared questions unavailable (document missing)"])
+        self.assertEqual(calls, [["linear", "doc", "list", "--repo", str(self.repo)]])
+
+    def test_the_digest_reads_this_night_s_archived_posture_once_it_is_lifted(self):
+        results = self.repo / ".compose" / "sign-in" / "results"
+        results.mkdir(parents=True)
+        since = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.since))
+        stem = "yolo-" + since.replace(" ", "T").replace(":", "")
+        decided = lambda text: [{"ts": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.since + 5)), "text": text}]
+        for name, y in ((f"{stem}.json", {"since": since, "mode": "night", "decisions": decided("first")}),
+                        (f"{stem}-2.json", {"since": since, "mode": "night", "decisions": decided("second")}),
+                        (f"{stem}-10.json", {"since": since, "mode": "night", "decisions": decided("tenth")}),
+                        (f"{stem}-11.json", {"since": "2026-01-01 00:00:00", "mode": "night", "decisions": decided("other night")}),
+                        ("yolo-2026-10-25T230000.json", {"since": "2026-10-25 23:00:00", "mode": "night", "decisions": decided("last night")})):
+            (results / name).write_text(json.dumps(y))
+        fd.fc_yolo.digest_sections.side_effect = lambda repo, proj, y: [("Waiting on you", [f"001 {y['decisions'][0]['text']}"])]
+        self.assertEqual(fd.review(self.repo, self.state, []), ["To confirm: sign-in tenth", "Waiting on you: sign-in: 001 tenth"])
+        fd.fc_tasks.yolo_state.return_value = {"since": "2026-10-27 09:00:00", "mode": "yolo", "decisions": []}
+        self.assertEqual(fd.review(self.repo, self.state, []), ["To confirm: sign-in tenth", "Waiting on you: sign-in: 001 tenth"])
 
     def test_render_has_the_three_heads_the_end_state_and_the_spend(self):
         self.state["night"].update(ended={"state": "budget", "at": self.since + 3600}, spend=20.31, waits=1, waited=1861.0)
@@ -835,7 +900,7 @@ class Night(unittest.TestCase):
                              (fn.fc_answer, "answer_step", self.answer_step), (fn.fc_nightprep, "refresh", self.refresh),
                              (fd.fc_delivery, "product_plan", mock.Mock(side_effect=RuntimeError("no plan here"))),
                              (fd.fc_delivery, "last_reconcile", mock.Mock(return_value=None)), (fd.fc_change, "paused_tasks", mock.Mock(return_value={})),
-                             (fd.fc_nightprep, "prep_doc", mock.Mock(side_effect=RuntimeError("no doc here"))),
+                             (fd.fc_nightprep, "_find_doc", mock.Mock(side_effect=RuntimeError("no doc here"))),
                              (fd.fc_yolo, "digest_sections", mock.Mock(return_value=[]))):
             mock.patch.object(mod, name, m).start()
         mock.patch.dict(fc_config.FACTORY, {"turn_seconds": 0}).start()
@@ -927,6 +992,36 @@ class Night(unittest.TestCase):
         self.assertEqual(self.verb("stop").splitlines()[0], "factory: stopped at once; held 1 task, its work is kept on its ref (compose change keep|part|discard settles it)")
         self.hold.assert_called_once_with(self.proj("sign-in"), ["002"], "night stopped at once by the product owner")
         self.assertEqual(self.load()["night"]["ended"]["state"], "stopped at once"); self.sleeper.wait(timeout=5)
+
+    def test_a_graceful_stop_ends_the_loop_once_the_drain_finishes(self):
+        self.night_on(); self.verb("stop")
+        self.assertIsNone(self.load()["stopped"])
+        f.run_loop(self.repo, turns=3)
+        s = self.load()
+        self.assertEqual(s["night"]["ended"]["state"], "stopped"); self.assertIsNotNone(s["stopped"]); self.assertEqual(self.turn.call_count, 1)
+
+    def test_a_stop_at_once_lifts_the_night_postures(self):
+        self.night_on(); self.hold_lock(); self.save(pid=self.sleeper.pid)
+        self.make("admin", "NEB-40"); self.posture("admin", "away")
+        self.verb("stop", now=True)
+        for slug in ("sign-in", "billing"):
+            self.assertIsNone(fc.fc_tasks.yolo_state(self.proj(slug)))
+            self.assertEqual(len(list((self.proj(slug) / "results").glob("yolo-*.json"))), 1)
+        self.assertEqual(fc.fc_tasks.yolo_state(self.proj("admin"))["mode"], "away")
+        self.sleeper.wait(timeout=5)
+
+    def test_the_digest_keeps_each_project_s_items_after_the_next_tick_lifts_the_postures(self):
+        self.night_on()
+        path = self.proj("sign-in") / "results" / "yolo.json"
+        y = json.loads(path.read_text()); y["decisions"].append({"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "text": "db: postgres"}); path.write_text(json.dumps(y))
+        fd.fc_yolo.digest_sections.side_effect = lambda repo, proj, y: ([("Waiting on you", [f"001: needs-user  delete? ({y['mode']})"]), ("Tried and failed", ["002 t  failed"])]
+                                                                         if proj.name == "sign-in" else [])
+        s = self.load(); s["night"]["until"] = time.time() - 1; st.save_state(self.repo, s)
+        f.run_loop(self.repo, turns=2)
+        self.assertEqual(self.load()["night"]["ended"]["state"], "morning"); self.assertIsNone(fc.fc_tasks.yolo_state(self.proj("sign-in")))
+        out = self.verb("day")
+        for item in ("- To confirm: sign-in db: postgres", "- Waiting on you: sign-in: 001: needs-user  delete? (night)", "- Failed or stuck: sign-in: 002 t  failed"):
+            self.assertIn(item, out)
 
     def test_stop_now_stops_at_once_on_the_first_stop(self):
         self.night_on(); self.hold_lock(); self.save(pid=self.sleeper.pid)

@@ -21,13 +21,8 @@ GRACEFUL = ("factory: stopping gracefully: nothing new starts, running work fini
 AT_ONCE = "night stopped at once by the product owner"
 ERRORS = (RuntimeError, ValueError, TypeError, KeyError, OSError, SystemExit)
 
-def live(state) -> bool:
-    """A night is on and has not ended."""
-    night = state.get("night")
-    return state.get("mode") == "night" and isinstance(night, dict) and not night.get("ended")
-
-def _stamp(t) -> str:
-    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t))
+live = fc_nightstate.live
+_stamp = fc_nightstate.stamp
 
 def _hm(t) -> str:
     return time.strftime("%H:%M", time.localtime(t))
@@ -58,7 +53,7 @@ def posture_off(proj) -> dict | None:
     y = fc_tasks.yolo_state(Path(proj))
     if not y or y["mode"] != "night":
         return None
-    path, stem = _posture_path(proj), f"yolo-{str(y.get('since') or '').replace(' ', 'T').replace(':', '')}"
+    path, stem = _posture_path(proj), fc_nightstate.archive_stem(y.get("since"))
     n = 1
     while True:  # an archive is never overwritten: a second night posture with the same stamp goes to yolo-<stamp>-2.json
         archive = path.with_name(f"{stem}{'' if n == 1 else f'-{n}'}.json")
@@ -88,7 +83,8 @@ def _release() -> None:
 
 def _claim(repo, night) -> bool:
     """Write the night's end to the disk under the lock, so a verb sees it at once; when a verb ended this night there first, take its end
-    instead. True when the end is the tick's to say and note."""
+    instead. True when the end is the tick's to say and note. A graceful stop's drain, once done, stops the loop too (the loop takes `stopped`
+    from the disk)."""
     with fc_factorystate.edit(repo) as disk:
         theirs = disk["night"]
         if not isinstance(theirs, dict) or theirs.get("since") != night["since"]:
@@ -97,6 +93,8 @@ def _claim(repo, night) -> bool:
             night["ended"] = theirs["ended"]
             return False
         theirs["ended"] = night["ended"]
+        if night["ended"]["state"] == "stopped":
+            disk["stopped"] = night["ended"]["at"]
         return True
 
 def _end(repo, night, how, now, out, line=None) -> None:
@@ -212,6 +210,11 @@ def stop_stage(repo, state, now_flag: bool, hold=None) -> str | None:
     night["stops"] += 1
     night["ended"] = {"state": "stopped at once", "at": now}
     fc_nightstate.add_note(repo, f"- {_stamp(now)[:16]} night ended: stopped at once")
+    try:  # as factory day does: the night answerer stops with the night, and the archives keep the digest's items
+        for _slug, (_wt, proj) in sorted(fc_core.all_projects(repo).items()):
+            posture_off(proj)
+    except ERRORS:
+        pass
     one = held == 1
     print(f"factory: stopped at once; held {held} task{'' if one else 's'}, {'its' if one else 'their'} work is kept on {'its ref' if one else 'their refs'} "
           "(compose change keep|part|discard settles it)")

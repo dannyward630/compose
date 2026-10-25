@@ -205,6 +205,7 @@ def prep_prompt(issue, feature, plan_doc, notes, old) -> str:
 def run_prep(repo, ident) -> dict:
     """The worker: research one ticket and write its section of the prep document. A failure is an event, never a crash."""
     model, effort = fc_config.NIGHT_MODEL
+    since = fc_nightstate.night_since(repo)
     try:
         issue = _issue(repo, ident)
         title = _line(issue.get("title") or "") or ident
@@ -224,6 +225,10 @@ def run_prep(repo, ident) -> dict:
             _outcome(repo, ident, "failed")
             return {"ticket": ident, "status": "failed"}
         found = _clean(got)
+        if not fc_nightstate.still_on(repo, since):  # nothing is written once the night it was started under has ended
+            fc_factorystate.add_event(repo, f'event factory=prep-failed ticket={ident} why="the night ended before the prep"')
+            _outcome(repo, ident, "failed")
+            return {"ticket": ident, "status": "failed"}
         if found["drop"] or not found["questions"]:
             url = write_section(repo, ident, title, None)
             _outcome(repo, ident, "dropped")

@@ -28,3 +28,9 @@ no_credit
 is_pay_banner
 wait_line
 usage_step
+live
+night_since
+still_on
+stamp
+archive_stem
+archived_posture

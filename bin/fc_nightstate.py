@@ -190,3 +190,43 @@ def usage_step(night, leads, now, read, prompt) -> list[str]:
     night["resumed_lines"] = {**{a: ln for a, ln in resumed.items() if a in present}, **(wait.get("lines") or {})}
     night["wait"] = None
     return [f'event factory=usage-resumed agents={",".join(done)}  (the window reset: each waiting team lead was told to continue)']
+
+def live(state) -> bool:
+    """A night is on and has not ended."""
+    night = state.get("night")
+    return state.get("mode") == "night" and isinstance(night, dict) and not night.get("ended")
+
+def night_since(repo):
+    """When the live night on disk began, else None: a worker reads it as it starts."""
+    state = fc_factorystate.load_state(repo)
+    return state["night"].get("since") if live(state) else None
+
+def still_on(repo, since) -> bool:
+    """Whether the night a worker started under is still the live one: it checks this before it writes, so nothing is written after the night."""
+    return since is not None and night_since(repo) == since
+
+def stamp(t) -> str:
+    """A night's start as its posture's `since` says it."""
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t))
+
+def archive_stem(since: str) -> str:
+    """The name, before any -<n> and .json, a lifted posture with this `since` is archived under (as `compose yolo off` names it)."""
+    return f"yolo-{str(since or '').replace(' ', 'T').replace(':', '')}"
+
+def archived_posture(proj, since) -> dict | None:
+    """The night posture lifted from the project for the night begun at `since`: the newest archive (highest -<n>) whose since is the night's."""
+    text = stamp(since)
+    stem = archive_stem(text)
+    found = []
+    for path in Path(proj, "results").glob(f"{stem}*.json"):
+        m = re.fullmatch(rf"{re.escape(stem)}(?:-(\d+))?\.json", path.name)
+        if m:
+            found.append((int(m.group(1) or 1), path))
+    for _n, path in sorted(found, reverse=True):
+        try:
+            y = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(y, dict) and y.get("since") == text and y.get("mode") == "night":
+            return y
+    return None

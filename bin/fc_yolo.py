@@ -62,7 +62,8 @@ def cmd_yolo(a):
         sys.exit(1)
     if (words[:1] in (["off"], ["digest"], ["decided"]) or a.clear_words) and y["mode"] != P:
         word = "--clear-words" if a.clear_words else words[0]
-        print(f"{y['mode']} is on for {proj.name}, not {P}; run `compose {y['mode']} {word} --project {proj.name}`")
+        fix = "compose factory day" if y["mode"] == "night" else f"compose {y['mode']} {word} --project {proj.name}"  # night is the factory's: day ends it
+        print(f"{y['mode']} is on for {proj.name}, not {P}; run `{fix}`")
         sys.exit(1)
     if a.clear_words:
         if words or a.push:

@@ -70,6 +70,8 @@ def _projects(repo) -> list:
 def _project_items(repo, slug, since) -> tuple:
     proj = fc_core.all_projects(repo)[slug][1]
     y = fc_tasks.yolo_state(proj)
+    if not y or y["mode"] != "night":  # the night's posture was lifted (a tick after the end, a stop at once): its archive keeps the items
+        y = fc_nightstate.archived_posture(proj, since) or y
     if not y:
         return [], []
     confirm = []
@@ -129,16 +131,15 @@ def ready_to_plan(repo, state) -> list:
     out, prepared = [], {i: r for i, r in (state.get("prep") or {}).items() if r.get("print") is not None}
     if prepared:
         try:
-            doc = fc_nightprep.prep_doc(repo)
-            found, url = _sections(doc["content"]), doc.get("url") or ""
-            err = ""
+            doc_id, content = fc_nightprep._find_doc(repo)  # find only: the digest changes nothing
+            found, err = _sections(content), "" if doc_id else "document missing"
         except ERRORS as e:
-            found, url, err = {}, "", _why(e)
+            found, err = {}, _why(e)
         for ident, rec in prepared.items():
             layer = rec.get("layer", "story")
             if ident in found:
                 title, n = found[ident]
-                out.append(f"{ident} {title} ({layer}): {n} question{'' if n == 1 else 's'} prepared" + (f"  {url}" if url else ""))
+                out.append(f"{ident} {title} ({layer}): {n} question{'' if n == 1 else 's'} prepared")
             elif err:
                 out.append(f"{ident} ({layer}): prepared questions unavailable ({err})")
             else:

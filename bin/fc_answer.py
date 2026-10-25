@@ -140,7 +140,9 @@ def never_hits(*texts) -> list[str]:
     return sorted({m.group(0).lower() for t in texts for m in NEVER_WORDS.finditer(t)})
 
 def run_answer(repo, slug, at, nth=0) -> dict:
-    """The worker: answer one question, record it on the issue and in the lead, and return the record."""
+    """The worker: answer one question, record it on the issue and in the lead, and return the record. Nothing is written once the night it
+    was started under has ended."""
+    since = fc_nightstate.night_since(repo)
     wt, proj = fc_core.all_projects(repo)[slug]
     q = next((x for x in _questions(slug, proj) if x["at"] == at and x["nth"] == nth), None)
     if q is None:
@@ -172,6 +174,8 @@ def run_answer(repo, slug, at, nth=0) -> dict:
         if rec["never_set"]:
             rec.update(answer="", cards={})
         else:
+            if not fc_nightstate.still_on(repo, since):
+                raise RuntimeError("the night ended before the answer")
             fc_factoryturn.compose_cli(["linear", "comment", q["issue"], "--repo", str(repo)], stdin=comment_body(q, rec, model, time.strftime("%Y-%m-%d")))
             rec["commented"] = True
             if rec["cards"]:
@@ -239,7 +243,7 @@ def answer_step(repo, state, now) -> list[str]:
             held.append(mine)
             lines.append(f'event factory=for-morning project={q["project"]} question="{_q(q["message"])}"  '
                          "(asked again after the night answer: it waits for the product owner)")
-        elif running < ANSWERERS:
+        elif running < ANSWERERS and not night.get("wait"):  # during a usage wait the question stays unasked until the reset
             args = ["factory", "answer", "--repo", str(repo), "--project", q["project"], "--at", q["at"], "--nth", str(q["nth"])]
             pid = fc_nightstate.spawn_once(repo, args, "night-answer.log")
             night["asked"][q["key"]] = {"pid": pid, "at": now, "project": q["project"], "issue": q["issue"], "message": q["message"]}

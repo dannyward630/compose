@@ -206,6 +206,13 @@ class Yolo(unittest.TestCase):
         line = next(l for l in out if "state=needs-user" in l)
         self.assertTrue(line.endswith("  yolo=on (answer with the recommendation; log it: compose yolo decided ...)"), line)
 
+    def test_watch_under_a_night_posture_leaves_needs_user_to_the_night_answerer(self):
+        self.file.write_text(json.dumps({"since": stamp(), "decisions": [], "mode": "night", "push": False, "words": "", "by": {"role": "night", "session": None}}))
+        out = self.watch_now(snap(crew={"hw-q": [{"at": stamp(), "state": "needs-user", "message": "db?"}]}))
+        line = next(l for l in out if "state=needs-user" in l)
+        self.assertTrue(line.endswith("  night=on (the night answerer takes it: do not answer; wait for factory=answered|waiting|answer-failed)"), line)
+        self.assertNotIn("decided", line)
+
     def test_another_session_sees_who_set_yolo(self):
         """yolo is per project: a second engineering manager session on it is told the posture is not its own."""
         self.yolo("ship", "it", pane="w1:p2")
@@ -451,6 +458,15 @@ class PostureMismatchAndDigest(unittest.TestCase):
                 out, code = self.run_as(p, *({"decided": ["decided", "db?: postgres"], "--clear-words": []}.get(word, [word])), clear_words=word == "--clear-words")
                 self.assertEqual(out, f"{on or 'away'} is on for hw, not {p}; run `compose {on or 'away'} {word} --project hw`\n")
                 self.assertTrue(code == 1 or isinstance(code, str), code)
+                self.assertEqual(self.file.read_bytes(), before)
+
+    def test_a_night_posture_points_at_factory_day(self):
+        for p in ("away", "yolo"):
+            for word in ("off", "digest", "decided", "--clear-words"):
+                self.put("night")
+                before = self.file.read_bytes()
+                out, code = self.run_as(p, *({"decided": ["decided", "db?: postgres"], "--clear-words": []}.get(word, [word])), clear_words=word == "--clear-words")
+                self.assertEqual(out, f"night is on for hw, not {p}; run `compose factory day`\n")
                 self.assertEqual(self.file.read_bytes(), before)
 
     def test_digest_prints_its_headline_and_sections_and_leaves_the_file_and_nothing_on_exits_1(self):
