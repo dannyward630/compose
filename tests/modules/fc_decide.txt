@@ -3,6 +3,7 @@ DECIDED
 UNCONFIRMED
 CONFIRMED
 ANSWER
+TAG
 KEEP
 map_issue
 read_map
@@ -16,5 +17,6 @@ parse_answers
 answer_text
 superseded
 record
+replace_decision
 record_new
 cmd_decide

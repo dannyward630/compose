@@ -61,9 +61,9 @@ class Decide(unittest.TestCase):
         (self.proj / "linear.json").write_text(json.dumps({"feature": "NEB-1"}))
         self.linear = FakeLinear(MAP)
 
-    def run_cmd(self, fn, *answers, quote=None, accept_all=False, issue=None, change=None, new=None):
+    def run_cmd(self, fn, *answers, quote=None, accept_all=False, issue=None, change=None, new=None, replaces=None):
         out = io.StringIO()
-        a = SimpleNamespace(repo=".", project="shop", answers=list(answers), quote=quote, accept_all=accept_all, issue=issue, change=change, new=new or [])
+        a = SimpleNamespace(repo=".", project="shop", answers=list(answers), quote=quote, accept_all=accept_all, issue=issue, change=change, new=new or [], replaces=replaces)
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_linear, "linear_gql", self.linear.gql), \
                 mock.patch.object(fc.fc_linear_cmd, "SETTLE_SECONDS", 0), contextlib.redirect_stdout(out):
             fn(a)
@@ -189,6 +189,73 @@ class Decide(unittest.TestCase):
         self.linear.body = "## Destination\n\nA shop.\n"
         self.decide(new=["one store"], quote="one store")
         self.assertIn("## Decisions so far\n\n- D1: one store (product owner,", self.linear.body)
+
+    def recorded(self, *lines):
+        self.linear.body = "## Destination\n\nA shop.\n\n## Decisions so far\n\n" + "\n".join(lines) + "\n\n## Not yet specified\n\n## Out of scope\n"
+
+    def test_a_quote_confirms_a_recorded_unconfirmed_card(self):
+        self.recorded("- Q3: A. dark (yolo recommendation, unconfirmed, 2026-10-21)")
+        self.decide("Q3", quote="dark is fine")
+        self.assertIn(f'- Q3: A. dark (product owner, {TODAY}; said: "dark is fine")', self.linear.body)
+        self.assertNotIn("unconfirmed", self.linear.body)
+
+    def test_a_card_answer_replaces_the_text_of_a_recorded_unconfirmed_card(self):
+        self.recorded("- Q3: A. dark (yolo recommendation, unconfirmed, 2026-10-21)")
+        self.decide("Q3: light after all", quote="light")
+        self.assertIn(f'- Q3: light after all (product owner, {TODAY}; said: "light")', self.linear.body)
+
+    def test_a_quote_confirms_an_unconfirmed_d_line(self):
+        self.recorded("- D1: sessions last 30 days (product owner, 2026-10-20; said: \"ok\")", "- D2: one store (yolo recommendation, unconfirmed, 2026-10-21)")
+        self.decide("D2", quote="yes")
+        self.assertIn(f'- D2: one store (product owner, {TODAY}; said: "yes")', self.linear.body)
+        self.assertIn("- D1: sessions last 30 days", self.linear.body)
+
+    def test_confirming_a_confirmed_line_refuses(self):
+        self.recorded('- D2: one store (product owner, 2026-10-20; said: "ok")')
+        before = self.linear.body
+        with self.assertRaises(SystemExit) as e:
+            self.decide("D2", quote="yes")
+        self.assertIn("already decided", str(e.exception.code))
+        self.assertIn("compose change start", str(e.exception.code))
+        self.assertEqual((self.linear.writes, self.linear.body), ([], before))
+
+    def test_a_bare_id_with_nothing_recorded_refuses(self):
+        with self.assertRaises(SystemExit) as e:
+            self.decide("Q9", quote="yes")
+        self.assertIn("Q9", str(e.exception.code))
+        self.assertEqual(self.linear.writes, [])
+
+    def test_replaces_strikes_the_old_d_line_and_adds_the_next(self):
+        self.recorded('- D1: one store (product owner, 2026-10-20; said: "ok")', '- D2: dark (product owner, 2026-10-20; said: "ok")')
+        self.decide(new=["two stores"], replaces="D1", quote="two")
+        body = self.linear.body
+        self.assertIn('- ~~D1: one store (product owner, 2026-10-20; said: "ok")~~ (replaced by D3)', body)
+        self.assertIn(f'- D3: two stores (product owner, {TODAY}; said: "two")', body)
+        self.assertIn("- D2: dark", body)
+
+    def test_a_replaced_id_is_not_reused(self):
+        self.recorded('- D1: one store (product owner, 2026-10-20; said: "ok")')
+        self.decide(new=["two stores"], replaces="D1", quote="two")
+        self.decide(new=["three stores"], replaces="D2", quote="three")
+        self.assertIn("(replaced by D2)", self.linear.body)
+        self.assertIn("(replaced by D3)", self.linear.body)
+        self.assertIn("- D3: three stores", self.linear.body)
+
+    def test_replaces_needs_a_live_d_line_and_one_new(self):
+        self.recorded('- ~~D1: old (product owner, 2026-10-20; said: "ok")~~ (replaced by D2)', '- D2: one store (product owner, 2026-10-20; said: "ok")')
+        before = self.linear.body
+        for kw in ({"new": ["x"], "replaces": "D9"}, {"new": ["x"], "replaces": "D1"}, {"new": [], "replaces": "D2"}, {"new": ["x", "y"], "replaces": "D2"}):
+            with self.assertRaises(SystemExit, msg=str(kw)):
+                self.decide(quote="q", **kw)
+        self.assertEqual((self.linear.writes, self.linear.body), ([], before))
+
+    def test_replaces_under_yolo_without_a_quote_is_unconfirmed_and_logged(self):
+        self.recorded('- D1: one store (product owner, 2026-10-20; said: "ok")')
+        (self.proj / "results" / "yolo.json").write_text(json.dumps({"mode": "yolo", "decisions": []}))
+        self.decide(new=["two stores"], replaces="D1")
+        self.assertIn("- D2: two stores (yolo recommendation, unconfirmed,", self.linear.body)
+        self.assertIn("(replaced by D2)", self.linear.body)
+        self.assertEqual(len(json.loads((self.proj / "results" / "yolo.json").read_text())["decisions"]), 1)
 
     def test_a_quote_confirms_an_unconfirmed_line_and_a_confirmed_one_refuses(self):
         self.linear.body = MAP.replace("## Not yet specified\n", "## Not yet specified\n\nQ3. Theme?\nA. dark - affects: tokens\nB. light - affects: tokens\nRecommendation: A\n", 1)
