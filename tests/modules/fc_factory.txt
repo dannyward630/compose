@@ -4,8 +4,13 @@ alive
 clock
 spawn_loop
 _sleep
+running
+edit
+HUMAN_KEYS
+_merge
 run_loop
 status_lines
+_exited
 verb_start
 verb_stop
 verb_status

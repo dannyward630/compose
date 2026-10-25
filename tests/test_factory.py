@@ -476,6 +476,11 @@ class Verbs(unittest.TestCase):
         pa = mock.patch.dict(fc.fc_factory.fc_config.FACTORY, {"turn_seconds": 0}); pa.start(); self.addCleanup(pa.stop)  # no sleeping between turns
         pa = mock.patch.object(fc.fc_factory.fc_watch, "watch_key", return_value="t"); pa.start(); self.addCleanup(pa.stop)
 
+    def hold_lock(self):
+        """Stand in for a live loop: hold the repo's loop lock until the test ends."""
+        f = open(fc.fc_factory.lock_path(self.repo), "a"); self.fcntl.flock(f, self.fcntl.LOCK_EX)
+        self.addCleanup(f.close)
+
     def save(self, **kv):
         s = st.load_state(self.repo); s.update(kv); st.save_state(self.repo, s)
 
@@ -497,17 +502,86 @@ class Verbs(unittest.TestCase):
         with mock.patch.dict(os.environ, {"HERDR_ENV": ""}), self.assertRaises(SystemExit) as e:
             self.verb("start")
         self.assertEqual(e.exception.code, "factory: start it inside herdr: the team leads it starts live there (sections/0h.md)")
-        self.save(pid=os.getpid())
+        self.save(pid=os.getpid()); self.hold_lock()
         with mock.patch.dict(os.environ, {"HERDR_ENV": "1"}), mock.patch.object(fc.fc_factory.fc_herdr, "herdr_env", return_value=True), self.assertRaises(SystemExit) as e:
             self.verb("start")
         self.assertEqual(e.exception.code, f"factory: already running (pid {os.getpid()}); compose factory status shows it")
 
     def test_start_spawns_the_loop_and_says_so(self):
         mock = self.mock
-        with mock.patch.object(fc.fc_factory.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_factory, "spawn_loop", return_value=4242):
+        self.save(stopped=5.0)
+        def spawn(repo):
+            self.hold_lock(); return 4242  # the loop is up and holds its lock
+        with mock.patch.object(fc.fc_factory.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_factory, "spawn_loop", spawn):
             out = self.verb("start")
         self.assertEqual(out, "factory: started (pid 4242), day pace 2 tickets at once; compose factory watch wakes you on its events\n")
-        self.assertEqual(st.load_state(self.repo)["pid"], 4242)
+        self.assertEqual((st.load_state(self.repo)["pid"], st.load_state(self.repo)["stopped"]), (None, None))
+
+    def test_start_says_so_when_the_loop_dies_at_once(self):
+        mock = self.mock
+        st.state_path(self.repo).parent.mkdir(exist_ok=True)
+        st.state_path(self.repo).with_name("factory.log").write_text("Traceback\nValueError: no key\n")
+        spawn = lambda repo: subprocess.Popen([sys.executable, "-c", "pass"]).pid
+        with mock.patch.object(fc.fc_factory.fc_herdr, "herdr_env", return_value=True), mock.patch.object(fc.fc_factory, "spawn_loop", spawn), \
+             self.assertRaises(SystemExit) as e:
+            self.verb("start")
+        self.assertEqual(e.exception.code, "factory: the loop did not start; see .compose/factory.log: ValueError: no key")
+
+    def test_a_stop_during_a_turn_survives_it_and_ends_the_loop(self):
+        mock = self.mock
+        turns = []
+        def turn(repo, state, now):
+            turns.append(now); self.verb("stop"); self.verb("pace", "3"); return ["event factory=x"]
+        with mock.patch.object(fc.fc_factoryturn, "turn", turn):
+            fc.fc_factory.run_loop(self.repo, turns=3)
+        s = st.load_state(self.repo)
+        self.assertEqual((len(turns), s["day_tickets"]), (1, 3))
+        self.assertIsNotNone(s["stopped"])
+
+    def test_a_decline_and_a_plan_during_a_turn_survive_it(self):
+        mock = self.mock
+        self.save(said={"offer": "x"}, out_of_order=["NEB-30", "NEB-31"])
+        def turn(repo, state, now):
+            state["out_of_order"].remove("NEB-31")
+            self.verb("decline"); self.verb("plan", "NEB-40"); return []
+        with mock.patch.object(fc.fc_factoryturn, "turn", turn):
+            fc.fc_factory.run_loop(self.repo, turns=1)
+        s = st.load_state(self.repo)
+        self.assertEqual((s["said"], s["out_of_order"], s["planning"]["id"]), ({}, ["NEB-30", "NEB-40"], "NEB-40"))
+        self.assertIsNotNone(s["declined_until"])
+
+    def test_sigterm_ends_the_loop_after_the_turn_it_is_in(self):
+        import signal
+        mock = self.mock
+        turns = []
+        def turn(repo, state, now):
+            turns.append(now); os.kill(os.getpid(), signal.SIGTERM); return ["event factory=x"]
+        with mock.patch.object(fc.fc_factoryturn, "turn", turn):
+            fc.fc_factory.run_loop(self.repo)
+        self.assertEqual((len(turns), len(st.events_since(self.repo, 0))), (1, 1))
+
+    def test_a_state_write_that_fails_is_a_turn_failed_event_and_the_loop_goes_on(self):
+        mock = self.mock
+        real, calls = fc.fc_factorystate.load_state, []
+        def load(repo):
+            calls.append(1)
+            if len(calls) == 2:  # the first turn's read
+                raise OSError("disk full")
+            return real(repo)
+        with mock.patch.object(fc.fc_factorystate, "load_state", load), \
+             mock.patch("traceback.print_exc"), mock.patch.object(fc.fc_factoryturn, "turn", return_value=[]):
+            fc.fc_factory.run_loop(self.repo, turns=2)
+        self.assertEqual([e["line"] for e in st.events_since(self.repo, 0)], ['event factory=turn-failed why="OSError: disk full"  (the next turn tries again)'])
+
+    def test_spawn_loop_runs_the_loop_in_a_session_of_its_own(self):
+        mock = self.mock
+        (self.repo / ".compose").mkdir(exist_ok=True)
+        with mock.patch.object(subprocess, "Popen") as popen, mock.patch.object(fc.fc_factorystate, "state_path", return_value=self.repo / ".compose" / "factory.json"):
+            popen.return_value.pid = 77
+            self.assertEqual(fc.fc_factory.spawn_loop(self.repo), 77)
+        self.assertEqual(popen.call_args.args[0], [sys.executable, str(BIN / "compose.py"), "factory", "loop", "--repo", str(self.repo)])
+        self.assertTrue(popen.call_args.kwargs["start_new_session"])
+        self.assertEqual(popen.call_args.kwargs["stdin"], subprocess.DEVNULL)
 
     def test_one_loop_per_repo_appends_each_turns_lines(self):
         mock, fcntl = self.mock, self.fcntl
@@ -534,6 +608,7 @@ class Verbs(unittest.TestCase):
         self.assertFalse(fc.fc_factory.alive(999999))
 
     def test_stop_lets_work_finish_and_hold_pauses_it(self):
+        self.hold_lock()
         self.save(pid=self.sleeper.pid, dispatched={"NEB-10": {"feature": "NEB-9", "project": "sign-in", "kind": "build", "at": 1.0},
                                                     "NEB-11": {"feature": "NEB-8", "project": "gone", "kind": "build", "at": 1.0}})
         self.rests_on.return_value = {"002": "under NEB-10"}
@@ -544,7 +619,7 @@ class Verbs(unittest.TestCase):
         self.sleeper.wait(timeout=5)
 
     def test_stop_without_hold_holds_nothing(self):
-        self.save(pid=self.sleeper.pid)
+        self.hold_lock(); self.save(pid=self.sleeper.pid)
         self.assertEqual(self.verb("stop"), "factory: stopped; running work finishes\n")
         self.hold.assert_not_called()
         self.sleeper.wait(timeout=5)
@@ -584,6 +659,7 @@ class Verbs(unittest.TestCase):
         self.assertEqual(st.load_state(self.repo)["out_of_order"], ["NEB-30"])
 
     def test_status_names_the_pace_what_is_in_flight_and_the_offer(self):
+        self.hold_lock()
         started = self.time.mktime(self.time.strptime(self.time.strftime("%Y-%m-%d") + " 09:00:00", "%Y-%m-%d %H:%M:%S"))
         self.save(pid=self.sleeper.pid, started=started, offer={"id": "NEB-12", "layer": "stories", "at": 1.0},
                   dispatched={"NEB-10": {"feature": "NEB-9", "project": "sign-in", "kind": "build", "at": 1.0}})
