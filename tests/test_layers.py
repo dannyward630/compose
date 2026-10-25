@@ -208,6 +208,26 @@ class Layers(LayersBase):
             self.assertIn(f"verify is running on p (pid {os.getppid()}, since 21:01)", str(e.exception))
             self.assertEqual(self.layers(), [])
 
+    def hold(self, kind):
+        live = fc.fc_update.live_dir(); live.mkdir(parents=True, exist_ok=True)
+        held = live / f"{os.getppid()}.json"  # the pid of a process that stays alive; its record is removed when the test ends
+        held.write_text(json.dumps({"pid": os.getppid(), "kind": kind, "project": "p", "repo": str(self.repo), "since": "07:01"}))
+        self.addCleanup(held.unlink, missing_ok=True)
+
+    def test_a_verify_stops_while_a_run_or_resume_is_live_and_a_run_stops_while_a_verify_is_live(self):
+        """A run registers its stack in the same CLI worktree a verify stands on: a verify begun beside it judged the project branch, not the stack top."""
+        (self.proj / "verify.json").write_text(json.dumps({"review_base": "main"}))
+        a = argparse.Namespace(repo=str(self.repo), project="p", cmd="run", only=None, trunk="compose/p", force=False)
+        for kind in ("run", "resume"):
+            self.hold(kind)
+            with self.subTest(f"verify beside a {kind}"), mock.patch.object(fc.fc_init, "start_checks", side_effect=AssertionError("it stops before any check")), self.assertRaises(SystemExit) as e:
+                fc.fc_verify.cmd_verify(a)
+            self.assertIn(f"{kind} is running on p (pid {os.getppid()}, since 07:01)", str(e.exception))
+        self.hold("verify")
+        with self.subTest("run beside a verify"), mock.patch.object(fc.fc_run.fc_credit, "check", return_value="credit"), mock.patch.object(fc.fc_proc, "keep_awake"), self.assertRaises(SystemExit) as e:
+            fc.fc_run.run_tasks(self.repo, self.proj, [], a)
+        self.assertIn(f"verify is running on p (pid {os.getppid()}, since 07:01)", str(e.exception))
+
     def test_a_verify_whose_checkout_moved_off_its_branch_during_a_stage_is_void_and_records_nothing(self):
         self.stack()
         wt = fc.fc_worktree.stack_worktree(self.repo, self.proj, "compose/p")
