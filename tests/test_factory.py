@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import json, os, subprocess, tempfile, unittest, unittest.mock
+import inspect, json, os, subprocess, tempfile, unittest, unittest.mock
 from pathlib import Path
 import importlib.machinery, importlib.util, sys
 # tests/test_modules.py fails a test file without the next line
@@ -9,6 +9,32 @@ fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
 import fc_factorystate as st
+
+
+BIN = Path(__file__).resolve().parents[1] / "bin"
+
+
+class PlansLanded(unittest.TestCase):
+    def params(self, fn):
+        return list(inspect.signature(fn).parameters)
+
+    def test_the_interfaces_this_builds_on_exist_as_promised(self):
+        import fc_change as c, fc_delivery as d, fc_linear, fc_plan as p, fc_readiness as r, fc_reconcile
+        self.assertEqual([self.params(f) for f in (d.product_plan, d.delivery_order, d.last_reconcile)], [["repo"]] * 3)
+        self.assertEqual(self.params(d.reconcile), ["repo", "dry_run"])
+        self.assertTrue(d.NO_PLAN.startswith("no product delivery plan yet"))
+        self.assertEqual((self.params(p.order_entries), self.params(p.base_built)), (["tracks", "features"], ["state", "labels"]))
+        self.assertEqual(self.params(r.story_readiness), ["repo", "story", "refresh", "write"])
+        self.assertTrue(issubclass(r.NotAStory, Exception) and callable(r.readiness_line))
+        self.assertEqual((self.params(c.rests_on), self.params(c.hold_tasks)), (["proj", "refs"], ["proj", "ids", "reason"]))
+        self.assertEqual(fc_linear.NEEDS_SHAPING, "needs-shaping")
+        self.assertEqual(self.params(fc_reconcile.live_leads), ["repo"])
+
+    def test_their_verbs_are_registered(self):
+        run = lambda *a: subprocess.run([sys.executable, str(BIN / "compose.py"), *a], capture_output=True, text=True).stdout
+        for verb in ("delivery", "readiness", "reconcile", "hold"):
+            self.assertRegex(run("--help"), rf"(?m)^    {verb}\b")
+        self.assertIn("--rests-on", run("hold", "--help"))
 
 
 class State(unittest.TestCase):
