@@ -14,7 +14,10 @@ fc_factoryturn
 RESUME_BUFFER
 MIN_WAIT
 MAX_FALLBACK
+MAX_RESET
+PAY_PAUSE
 CONTINUE
+PANE_PAY
 IN_HOURS
 IN_MINUTES
 AT_AMPM
@@ -22,4 +25,6 @@ AT_CLOCK
 reset_at
 fallback_wait
 no_credit
+is_pay_banner
+wait_line
 usage_step

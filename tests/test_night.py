@@ -157,9 +157,11 @@ class UsageWaits(unittest.TestCase):
         night = ns.new_night(0.0, 10**10, 20.0, None)
         self.panes["a-orchestrator"] = "usage limit reached\n"
         ns.usage_step(night, {"a": "a-orchestrator"}, 0.0, self.read, self.prompt); self.assertEqual(night["wait"]["until"], 60.0)
+        self.panes["a-orchestrator"] = "usage limit reached again\n"
         ns.usage_step(night, {"a": "a-orchestrator"}, 61.0, self.read, self.prompt); self.assertEqual(night["wait"]["until"], 181.0)
         self.panes["a-orchestrator"] = "Error: 402 Payment Required - credit balance too low\n"; night["wait"] = None
-        lines = ns.usage_step(night, {"a": "a-orchestrator"}, 300.0, self.read, self.prompt)
+        ns.usage_step(night, {"a": "a-orchestrator"}, 300.0, self.read, self.prompt); self.assertIsNone(night["ended"])
+        lines = ns.usage_step(night, {"a": "a-orchestrator"}, 360.0, self.read, self.prompt)
         self.assertEqual(night["ended"]["state"], "no-credit"); self.assertIn("factory=night-ended state=no-credit", lines[0])
 
     def test_a_payment_halt_since_the_night_began_is_no_credit(self):
@@ -169,6 +171,67 @@ class UsageWaits(unittest.TestCase):
         path.write_text(json.dumps({"provider": "openrouter"})); os.utime(path, (100.0, 100.0))
         self.assertEqual(ns.no_credit(self.repo, 0.0), "sign-in: payment halt (openrouter)")
         self.assertIsNone(ns.no_credit(self.repo, 200.0))
+
+    PAY = "Error: 402 Payment Required - credit balance is too low"
+
+    def look(self, night, now, name="a-orchestrator"):
+        return ns.usage_step(night, {"a": name}, now, self.read, self.prompt)
+
+    def test_ordinary_pane_text_never_ends_the_night(self):
+        for text in ("src/billing/checkout.ts | 12 +++", "\u2713 returns 402 when the card is declined", "+  // top up the wallet",
+                     "expect(res.status).toBe(402)", "+  // error: 402 credit balance is too low", "- Error: 402 insufficient credits"):
+            night = ns.new_night(0.0, 10**10, 20.0, None)
+            self.panes["a-orchestrator"] = "usage limit reached\n" + text + "\n"
+            self.look(night, 0.0); self.look(night, 500.0); self.look(night, 1000.0)
+            self.assertIsNone(night["ended"], text)
+
+    def test_a_real_billing_banner_must_be_seen_twice_a_minute_apart(self):
+        night = ns.new_night(0.0, 10**10, 20.0, None)
+        self.panes["a-orchestrator"] = self.PAY + "\n"
+        self.look(night, 0.0); self.assertIsNone(night["ended"]); self.assertIsNotNone(night["wait"])
+        self.look(night, 60.0); self.assertEqual(night["ended"]["state"], "no-credit")
+        night = ns.new_night(0.0, 10**10, 20.0, None)
+        self.look(night, 0.0); self.panes["a-orchestrator"] = "usage limit reached, resets in 5m\n"; self.look(night, 60.0)
+        self.assertEqual(night["pay_seen"], {}); self.panes["a-orchestrator"] = self.PAY + "\n"; self.look(night, 400.0)
+        self.assertIsNone(night["ended"])
+
+    def test_a_stale_banner_at_the_due_time_is_prompted_not_waited_again(self):
+        night = ns.new_night(0.0, 10**10, 20.0, None)
+        self.panes["a-orchestrator"] = "usage limit reached, resets in 30m\n"
+        self.look(night, 0.0)
+        lines = self.look(night, 1861.0)
+        self.assertEqual(self.prompted, [("a-orchestrator", ns.CONTINUE)]); self.assertIsNone(night["wait"])
+        self.assertTrue(lines[0].startswith("event factory=usage-resumed"))
+        self.assertEqual(self.look(night, 1900.0), []); self.assertIsNone(night["wait"])
+        self.panes["a-orchestrator"] = "usage limit reached, resets in 2h\n"
+        self.look(night, 2000.0); self.assertEqual(night["wait"]["until"], 2000.0 + 7200 + 60)
+
+    def test_bare_clocks_in_timestamps_and_far_resets_do_not_count(self):
+        at = time.mktime((2026, 10, 27, 1, 10, 0, 0, 0, -1))
+        self.assertIsNone(ns.reset_at("[01:09:58] Retrying in 4s ... 429", at)); self.assertIsNone(ns.reset_at("limit, in 3 hello", at))
+        self.assertIsNotNone(ns.reset_at("limit reached, resets 3am", at))
+        night = ns.new_night(at, 10**11, 20.0, None)
+        self.panes["a-orchestrator"] = "usage limit reached, resets 11am\n"
+        self.look(night, at); self.assertEqual(night["wait"]["until"], at + 60)
+
+    def test_an_empty_read_or_a_failed_prompt_extends_the_wait_and_counts_nothing(self):
+        night = ns.new_night(0.0, 10**10, 20.0, None)
+        self.panes["a-orchestrator"] = "usage limit reached\n"; self.look(night, 0.0)
+        self.panes["a-orchestrator"] = ""; self.look(night, 61.0)
+        self.assertEqual((night["wait"]["until"], self.prompted, night["waits"]), (181.0, [], 0))
+        self.panes["a-orchestrator"] = "idle\n"; self.prompt = lambda name, text: False
+        self.look(night, 182.0); self.assertEqual((night["wait"]["until"], night["waits"]), (182.0 + 240, 0))
+        self.look(night, 500.0); self.assertEqual(night["waits"], 0)
+        self.prompt = lambda name, text: self.prompted.append((name, text)) or True
+        self.look(night, 1000.0); self.assertEqual((night["waits"], night["wait"]), (1, None))
+        night["wait"] = {"until": 0.0, "n": 0, "since": 0.0, "agents": ["gone"], "lines": {}}; self.prompted.clear()
+        self.look(night, 5.0); self.assertEqual((self.prompted, night["wait"]), ([], None))
+
+    def test_a_resume_json_that_is_not_an_object_is_reported_as_unknown(self):
+        proj = self.repo / ".compose" / "x"
+        (proj / "results").mkdir(parents=True); (proj / "verify.json").write_text("{}")
+        (proj / "results" / "resume.json").write_text("[1]")
+        self.assertEqual(ns.no_credit(self.repo, 0.0), "x: payment halt (unknown)")
 
 
 if __name__ == "__main__":

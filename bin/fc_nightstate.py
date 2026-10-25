@@ -87,11 +87,14 @@ fc_factoryturn.ORDER_FILTER["night"] = one_level
 RESUME_BUFFER = 60  # seconds past a stated reset before the leads are told to carry on
 MIN_WAIT = 60  # seconds of the first wait when a limit line states no reset
 MAX_FALLBACK = 1800  # the longest such wait
+MAX_RESET = 6 * 3600  # a stated reset further off than this is a misread (a timestamp, a count): use the fallback instead
+PAY_PAUSE = 60  # seconds apart two looks must be for a billing banner to end the night
 CONTINUE = "night: the usage window has reset; carry on from where you stopped."
-IN_HOURS = re.compile(r"\bin (\d+)\s*h(?:ours?)?(?:\s*(\d+)\s*m)?", re.I)
+PANE_PAY = re.compile(r"(?:api )?error\W{0,3}402|credit balance is too low|insufficient (?:credits|funds|balance)|out of credits", re.I)
+IN_HOURS = re.compile(r"\bin (\d+)\s*h(?:ours?)?\b(?:\s*(\d+)\s*m)?", re.I)
 IN_MINUTES = re.compile(r"\bin (\d+)\s*m(?:in(?:utes)?)?\b", re.I)
-AT_AMPM = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*([ap]m)\b", re.I)
-AT_CLOCK = re.compile(r"\b(\d{1,2}):(\d{2})\b")
+AT_AMPM = re.compile(r"\b(?:resets?|at|until|after)\s+(\d{1,2})(?::(\d{2}))?\s*([ap]m)\b", re.I)
+AT_CLOCK = re.compile(r"\b(?:resets?|at|until|after)\s+(\d{1,2}):(\d{2})\b")
 
 def reset_at(line, now) -> float | None:
     """When the usage window a limit line names resets (plus RESUME_BUFFER), else None."""
@@ -119,39 +122,70 @@ def no_credit(repo, since) -> str | None:
         path = Path(proj, "results", "resume.json")
         try:
             if path.stat().st_mtime >= since:
-                return f"{slug}: payment halt ({json.loads(path.read_text()).get('provider') or 'unknown'})"
-        except (OSError, ValueError, AttributeError):
+                halt = json.loads(path.read_text())
+                return f"{slug}: payment halt ({(halt.get('provider') if isinstance(halt, dict) else None) or 'unknown'})"
+        except (OSError, ValueError):
             continue
     return None
 
+def is_pay_banner(line) -> bool:
+    return bool(PANE_PAY.search(line)) and not line.lstrip().startswith(("+", "-", "\u2713", "expect("))
+
+def wait_line(until, names, line) -> str:
+    return (f'event factory=usage-wait until={time.strftime("%H:%M", time.localtime(until))} agents={",".join(names)} line="{line.replace(chr(34), chr(39))}"'
+            "  (a usage window is exhausted: nothing new starts until it resets)")
+
 def usage_step(night, leads, now, read, prompt) -> list[str]:
-    """One look at the team leads' panes. A billing line ends the night; a limit line starts or extends a wait; a due wait with no limit left prompts the leads to continue."""
+    """One look at the team leads' panes. A billing banner seen twice ends the night; a new limit line starts or extends a wait; at a due wait the leads are
+    prompted to continue (the prompt is the probe: an idle agent keeps its banner until something is typed)."""
     wait = night.get("wait")
     if wait and now < wait["until"]:
         return []
-    limited = {}
-    for name in sorted(leads.values()):
+    present = set(leads.values())
+    seen, resumed = night.setdefault("pay_seen", {}), night.setdefault("resumed_lines", {})
+    stale = (wait or {}).get("lines") or {}
+    limited, empty = {}, False
+    for name in sorted(present):
         pane = read(name) or ""
-        pay = next((ln.strip()[:160] for ln in reversed(pane.strip().splitlines()[-8:]) if fc_models.PAY_RE.search(ln)), None)
-        if pay:
-            night["ended"] = {"state": "no-credit", "at": now, "why": pay}
-            return [f'event factory=night-ended state=no-credit why="{pay}"  (a provider says there is no credit, which is the product owner\'s call: send one PushNotification naming it)']
+        if wait and name in wait["agents"] and not pane.strip():
+            empty = True
         line = fc_stall.limit_line(pane)
-        if line:
-            limited[name] = line
+        if line and is_pay_banner(line):
+            first = seen.get(name)
+            if first and first["line"] == line:
+                if now - first["at"] >= PAY_PAUSE:
+                    night["ended"] = {"state": "no-credit", "at": now, "why": line}
+                    return [f'event factory=night-ended state=no-credit why="{line.replace(chr(34), chr(39))}"  (a provider says there is no credit, which is the product owner\'s call: send one PushNotification naming it)']
+            else:
+                seen[name] = {"line": line, "at": now}
+        else:
+            seen.pop(name, None)
+        if line is None or line == resumed.get(name) or (wait and line == stale.get(name)):
+            if line is None:
+                resumed.pop(name, None)
+            continue
+        resumed.pop(name, None)
+        limited[name] = line
+    n = wait["n"] if wait else 0
     if limited:
-        names = sorted(limited)
-        parsed = [t for t in (reset_at(ln, now) for ln in limited.values()) if t]
-        n = 0 if parsed else (wait["n"] if wait else 0) + 1
+        parsed = [t for t in (reset_at(ln, now) for ln in limited.values()) if t and t - now <= MAX_RESET]
+        n = 0 if parsed else n + 1
         until = max(parsed) if parsed else now + fallback_wait(n)
-        night["wait"] = {"until": until, "n": n, "since": wait["since"] if wait else now, "agents": names}
-        line = limited[names[-1]].replace('"', "'")
-        return [f'event factory=usage-wait until={time.strftime("%H:%M", time.localtime(until))} agents={",".join(names)} line="{line}"  (a usage window is exhausted: nothing new starts until it resets)']
+        night["wait"] = {"until": until, "n": n, "since": wait["since"] if wait else now, "agents": sorted(limited), "lines": dict(limited)}
+        return [wait_line(until, sorted(limited), limited[sorted(limited)[-1]])]
     if not wait:
         return []
-    for name in wait["agents"]:
-        prompt(name, CONTINUE)
+    names = [a for a in wait["agents"] if a in present]
+    if not names:
+        night["wait"] = None
+        return []
+    done = [] if empty else [a for a in names if prompt(a, CONTINUE)]
+    if not done:
+        until = now + fallback_wait(n + 1)
+        night["wait"] = {**wait, "until": until, "n": n + 1}
+        return [wait_line(until, names, "no pane read" if empty else "the continue prompt was not delivered")]
     night["waits"] += 1
     night["waited"] += now - wait["since"]
+    night["resumed_lines"] = dict(wait.get("lines") or {})
     night["wait"] = None
-    return [f'event factory=usage-resumed agents={",".join(wait["agents"])}  (the window reset: each waiting team lead was told to continue)']
+    return [f'event factory=usage-resumed agents={",".join(done)}  (the window reset: each waiting team lead was told to continue)']
