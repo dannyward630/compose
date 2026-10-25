@@ -36,7 +36,6 @@ create_ticket
 apply_sheet
 step
 save
-under_posture
 verb_apply
 ancestors
 touched

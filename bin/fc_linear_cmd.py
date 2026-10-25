@@ -2,7 +2,7 @@
 import hashlib, json, os, select, sys, time, urllib.parse
 from pathlib import Path
 
-import fc_core, fc_config, fc_linear, fc_plan
+import fc_core, fc_config, fc_linear, fc_plan, fc_tasks
 
 
 def issue_line(issue):
@@ -308,7 +308,15 @@ def verb_comment(a):
     fc_linear.linear_comment(issue, body)
     print(f"commented on {issue['identifier']}")
 
+def under_posture(repo):
+    """The name and mode of a compose project of the repo under away or yolo, or None; every project counts, as the repo has one Linear project."""
+    for name, (_, proj) in sorted(fc_core.all_projects(Path(repo).resolve()).items()):
+        if y := fc_tasks.yolo_state(proj):
+            return name, y["mode"]
+
 def verb_cancel(a):
+    if posture := under_posture(a.repo):
+        sys.exit(f"{posture[0]} is under {posture[1]}: a cancel changes Linear only on the product owner's own go; cancel it once {posture[1]} is off")
     if not a.target:
         sys.exit("cancel needs an issue id")
     if len(a.target) > 1:
@@ -384,6 +392,8 @@ def verb_doc(a):
 def cmd_linear(a):
     if not fc_config.LINEAR_KEY:
         sys.exit(fc_config.needs_linear_key("compose linear"))
+    if a.action != "update" and (getattr(a, "add_label", None) or getattr(a, "drop_label", None)):
+        sys.exit("--add-label and --drop-label change an existing issue: compose linear update <id> takes them, and create takes --label")
     try:
         globals()[f"verb_{a.action}"](a)
     except (RuntimeError, OSError) as e:

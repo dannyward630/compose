@@ -181,6 +181,10 @@ def linear_cancel(ident: str, comment: str, into: Optional[str] = None, done: tu
     if not target:
         raise RuntimeError(f"{issue['identifier']}: the team has no canceled state")
     other = linear_issue(into) if into else None
+    if other and other["id"] == issue["id"]:
+        raise RuntimeError(f"{issue['identifier']} cannot be merged into itself")
+    if other and other["state"]["type"] == "canceled":
+        raise RuntimeError(f"{other['identifier']} is {other['state']['name']}: a ticket is merged only into an open or finished one")
     if "comment" not in done:
         linear_comment(issue, comment.strip())
         on_step and on_step("comment")
@@ -362,7 +366,6 @@ def linear_reconcile(proj, verified=False):
         linear_roll_up(proj, feature, verified=verified, moved=moved)
     except Exception as e:  # noqa: BLE001
         fc_core.say(f"linear {feature}: update failed ({str(e)[:200]})")
-
 
 NEEDS_SHAPING = "needs-shaping"
 

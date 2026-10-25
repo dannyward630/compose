@@ -1,7 +1,6 @@
 """`compose reconcile list | check | show | apply`: sort every open ticket of a messy Linear project once, check the sheet, render it as one proposal, and write it on the product owner's go."""
 import datetime, json, sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import fc_core, fc_config, fc_crew, fc_herdr, fc_linear, fc_linear_cmd, fc_tasks
 
@@ -159,6 +158,12 @@ def check_sheet(sheet, issues):
     problems += [f"{i['id']} is open and not sorted" for i in issues if i["id"] not in got]
     kept, keys = {i for i, e in got.items() if e["sort"] == "keep"}, set()
     for n in sheet["new"]:
+        if n.get("key") in keys:
+            problems.append(f"new {n.get('key')} is listed twice")
+        if n.get("key") in by_id:
+            problems.append(f"new {n.get('key')} has the id of an open ticket; give it a key like N1")
+        if not str(n.get("title") or "").strip():
+            problems.append(f"new {n.get('key')} has no title")
         if n.get("parent") not in kept and n.get("parent") not in keys:
             problems.append(f"new {n.get('key')} has parent {n.get('parent')}, which is neither a kept open ticket nor an earlier new ticket")
         if n.get("label") not in LABELS:
@@ -184,7 +189,7 @@ def render_proposal(stored):
     sheet, issues = stored, stored["issues"]
     by_id = {i["id"]: i for i in issues}
     got = expand(sheet, issues)
-    t = lambda i: f"{i} {by_id[i]['title']}"
+    t = lambda i: f"{i} {by_id.get(i, {}).get('title', '')}".rstrip()
     of = lambda sort: [e for e in got.values() if e["sort"] == sort]
     under = lambda root: sum(1 for e in got.values() if e.get("under") == root)
     def cancel_line(e):
@@ -199,7 +204,7 @@ def render_proposal(stored):
         ("Rename", "\n".join(f'- {e["id"]}: "{by_id[e["id"]]["title"]}" becomes "{e["title"]}"' for e in keeps if e.get("title"))),
         ("Ready removed (needs shaping)", grouped([e for e in keeps if e.get("drop_ready")], sheet["reasons"], lambda e: f"- {t(e['id'])}")),
         ("Label deep-dive", "\n".join(f"- {t(e['id'])}" for e in keeps if e.get("deep_dive"))),
-        ("New tickets", "\n".join(f"- {n['key']} {n['title']} ({n['label']} under {n['parent']}, needs shaping" + (", deep-dive" if n.get("deep_dive") else "") + ")" for n in sheet["new"])),
+        ("New tickets", "\n".join(f"- {n['key']} {n.get('title') or '(untitled)'} ({n.get('label') or '?'} under {n.get('parent') or '?'}, needs shaping" + (", deep-dive" if n.get("deep_dive") else "") + ")" for n in sheet["new"])),
         ("Left for you to verify", "\n".join(f"- {t(e['id'])}" for e in of("verify"))),
         ("Keep", "\n".join(f"- {t(e['id'])}" for e in keeps if not (e.get("title") or e.get("drop_ready") or e.get("deep_dive")))),
     ]
@@ -220,7 +225,8 @@ def verb_check(a):
     project, issues = inventory(a.repo)
     sheet = load_sheet(a.file)
     stored = read_stored(project)
-    if stored and stored["applied"] and any(a["key"] not in stored["applied"] and a["key"] not in stored.get("skipped", {}) for a in actions(stored)):
+    started = stored and (stored["applied"] or stored.get("steps"))  # a comment or relation that landed is Linear written too
+    if started and any(a["key"] not in stored["applied"] and a["key"] not in stored.get("skipped", {}) for a in actions(stored)):
         sys.exit(f"a reconcile is half applied ({len(stored['applied'])} of {len(actions(stored))}): "
                  f'finish it with compose reconcile apply --go "<their words>" first')
     problems = check_sheet(sheet, issues)
@@ -231,6 +237,7 @@ def verb_check(a):
     fresh = {**sheet, "project": {"id": project["id"], "name": project["name"], "team": project["team"]["id"]}, "checked_at": fc_core.now(),
              "issues": issues, "go": [], "applied": {}, "steps": {}, "skipped": {}, "created": {}}
     if stored:
+        fresh["go"] = list(stored.get("go", []))  # the product owner's earlier words stay with what they let through
         carry_done(stored, fresh)
     save(path, fresh)
     print(f"checked: {summary(expand(sheet, issues), sheet)}; compose reconcile show prints the proposal")
@@ -331,11 +338,11 @@ def do_action(stored, act, team, today, path):
 def create_ticket(stored, n, team):
     """A new ticket in Backlog under its parent, labeled and marked needs-shaping, the way `compose linear create` makes one."""
     names = [n["label"], fc_linear.NEEDS_SHAPING] + (["deep-dive"] if n.get("deep_dive") else [])
-    for name in names:
-        team.label(name)
-    p = SimpleNamespace(state="Backlog", label=names)
-    inp = {"teamId": team.id, "projectId": stored["project"]["id"], "title": n["title"], "description": n.get("body") or ""}
-    inp.update(fc_linear_cmd.state_and_labels(team.team, p))
+    backlog = next((s for s in team.team["states"]["nodes"] if s["name"].lower() == "backlog"), None)
+    if not backlog:
+        raise RuntimeError(f"team {team.team['name']} has no Backlog state")
+    inp = {"teamId": team.id, "projectId": stored["project"]["id"], "title": n.get("title") or "", "description": n.get("body") or "",
+           "stateId": backlog["id"], "labelIds": [team.label(name) for name in names]}
     parent = stored["created"].get(n["parent"], n["parent"])
     if n["parent"] in {x["key"] for x in stored["new"]} and n["parent"] not in stored["created"]:
         raise RuntimeError(f"its parent {n['parent']} was not created")
@@ -377,18 +384,11 @@ def step(stored, path, key):
 def save(path, stored):
     fc_core.atomic_write(path, json.dumps(stored, indent=1))
 
-def under_posture(a):
-    """The name and mode of a compose project of the repo under away or yolo, or None; --project does not narrow it, as a reconcile writes the repo's one Linear project."""
-    projects = fc_core.all_projects(Path(a.repo).resolve())
-    for name, (_, proj) in sorted(projects.items()):
-        if y := fc_tasks.yolo_state(proj):
-            return name, y["mode"]
-
 def verb_apply(a):
     go = (a.go or "").strip()
     if not go:
         sys.exit('apply needs the product owner\'s go, verbatim: --go "<their words>"')
-    if posture := under_posture(a):
+    if posture := fc_linear_cmd.under_posture(a.repo):
         sys.exit(f"{posture[0]} is under {posture[1]}: a reconcile changes Linear only on the product owner's own go; apply it once {posture[1]} is off")
     project = fc_linear_cmd.linear_project(a.repo)
     stored = read_stored(project)

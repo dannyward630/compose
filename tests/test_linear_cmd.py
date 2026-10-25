@@ -357,6 +357,12 @@ class LinearCreate(unittest.TestCase):
         self.assertEqual([v for q, v in self.calls if self.TEAM in q], [{"id": "t1"}])
         return [v["in"] for q, v in self.calls if self.CREATE in q], issue, blocked
 
+    def test_add_label_or_drop_label_on_create_is_refused_and_creates_nothing(self):
+        for kw in ({"add_label": ["Bug"]}, {"drop_label": ["Bug"]}):
+            self.assertEqual(self.fails(fc.fc_linear_cmd.cmd_linear, self.args("create", title="Fix it", **kw)),
+                             (1, "--add-label and --drop-label change an existing issue: compose linear update <id> takes them, and create takes --label"))
+        self.assertEqual(self.calls, [])
+
     def test_read_body_takes_the_file_then_piped_stdin_then_nothing(self):
         (body := self.repo / "body.md").write_text("from file\n")
         with mock.patch("sys.stdin", io.StringIO("from stdin")):
@@ -799,6 +805,22 @@ class LinearCancel(unittest.TestCase):
         self.issue["project"] = {"id": "p1", "name": "Shop"}; self.other["project"] = {"id": "p2", "name": "Other"}; self.calls.clear()
         self.assertEqual(self.fails(fc.fc_linear_cmd.cmd_linear, self.a("cancel", "ENG-7", body="x", into="ENG-3")), (1, "ENG-3 is not in project Shop; pass --any-project to use it"))
         self.assertEqual(self.writes(), [])
+
+    def test_into_itself_or_into_a_canceled_ticket_is_refused_and_writes_nothing(self):
+        self.assertEqual(self.fails(fc.fc_linear_cmd.cmd_linear, self.a("cancel", "ENG-7", body="x", into="ENG-7")), (1, "linear cancel: ENG-7 cannot be merged into itself"))
+        self.other["state"] = {"name": "Cancelled", "type": "canceled"}
+        self.assertEqual(self.fails(fc.fc_linear_cmd.cmd_linear, self.a("cancel", "ENG-7", body="x", into="ENG-3")),
+                         (1, "linear cancel: ENG-3 is Cancelled: a ticket is merged only into an open or finished one"))
+        self.assertEqual(self.writes(), [])
+
+    def test_cancel_refuses_while_any_project_of_the_repo_is_under_away_or_yolo(self):
+        for mode in ("away", "yolo"):
+            d = self.repo / ".compose" / "shop" / "results"; d.mkdir(parents=True, exist_ok=True)
+            (d.parent / "verify.json").write_text("{}"); (d / "yolo.json").write_text(json.dumps({"mode": mode}))
+            self.assertEqual(self.fails(fc.fc_linear_cmd.cmd_linear, self.a("cancel", "ENG-7", body="x")),
+                             (1, f"shop is under {mode}: a cancel changes Linear only on the product owner's own go; cancel it once {mode} is off"))
+        self.assertEqual(self.writes(), [])
+
 
 class LinearNoProject(unittest.TestCase):
     REFUSAL = (1, "ENG-7 is not in project Shop; pass --any-project to use it")

@@ -34,6 +34,7 @@ class FakeLinear:
         self.pages, self.queries, self.mutations = [], [], []
         self.issues, self.canceled, self.created, self.comments, self.labels_made, self.fail_on, self.fail_exc = {}, [], [], {}, [], None, RuntimeError
         self.labels = [{"id": f"l-{n}", "name": n} for n in ("Epic", "Feature", "Story", "Ready", "needs-shaping", "deep-dive")]
+        self.states = [{"id": "s-backlog", "name": "Backlog"}]
 
     def seed(self, issues):
         self.issues = {i["id"]: {"id": i["id"], "identifier": i["id"], "title": i["title"], "state": {"name": i["state"], "type": "started" if i["state"] == "In Progress" else "unstarted"}, "parent_id": i["parent"]} for i in issues}
@@ -51,7 +52,7 @@ class FakeLinear:
         if "mutation" in query:
             return self.mutate(re.search(r"\{\s*(\w+)\(", query).group(1), variables)
         if "team(id" in query:
-            return {"team": {"name": "Engineering", "states": {"nodes": [{"id": "s-backlog", "name": "Backlog"}]}, "labels": {"nodes": list(self.labels)}}}
+            return {"team": {"name": "Engineering", "states": {"nodes": list(self.states)}, "labels": {"nodes": list(self.labels)}}}
         if "issue(id" in query:
             i = self.issues[variables["id"]]
             if "parent { identifier parent" in query:
@@ -393,7 +394,7 @@ class Reconcile(unittest.TestCase):
         self.assertEqual(len(self.linear.created), 1)
         self.assertIn("N1 already filed as NEB-101; edit it in Linear", out)
 
-    def test_a_merge_retargeted_after_a_partial_failure_gets_its_own_relation_and_comment(self):
+    def test_a_merge_half_written_refuses_a_recheck_until_apply_finishes_it(self):
         self.linear.seed(self.issues)
         raw = {"keep": ["NEB-1", "NEB-2", "NEB-3", "NEB-5"], "tickets": [{"id": "NEB-4", "sort": "merge", "into": "NEB-3", "reason": "dup"}],
                "reasons": {"dup": self.write("dup.md", "Same slice.")}}
@@ -402,10 +403,12 @@ class Reconcile(unittest.TestCase):
         self.attempt("apply", go="yes")
         self.linear.fail_on = None
         raw["tickets"][0]["into"] = "NEB-5"
-        self.out("check", file=self.sheet(raw))
+        code, msg = self.fails("check", file=self.sheet(raw))
+        self.assertTrue(msg.startswith("a reconcile is half applied (0 of 1): finish it with compose reconcile apply --go"), msg)
         self.attempt("apply", go="yes")
-        self.assertEqual([m[2]["o"] for m in self.linear.mutations if m[0] == "issueRelationCreate"], ["NEB-3", "NEB-5"])
-        self.assertIn("merged into NEB-5", self.linear.comments["NEB-4"][-1])
+        self.assertEqual([m[2]["o"] for m in self.linear.mutations if m[0] == "issueRelationCreate"], ["NEB-3"])
+        self.assertEqual((self.linear.comments_on("NEB-4"), "NEB-4" in self.linear.canceled), (1, True))
+        self.assertIn("merged into NEB-3", self.linear.comment("NEB-4"))
 
     def test_a_recheck_is_allowed_when_only_skipped_actions_are_left_however_many_tickets_are_kept(self):
         self.checked(extra=10)
@@ -447,6 +450,36 @@ class Reconcile(unittest.TestCase):
     def test_show_prints_the_stored_proposal(self):
         self.out("check", file=self.sheet())
         self.assertTrue(self.out("show")[0].startswith("5 open tickets: 1 kept, 1 left for you to verify, 2 canceled, 1 merged; 1 new."))
+
+    def test_check_refuses_a_new_key_listed_twice_an_untitled_new_ticket_and_a_key_that_is_a_ticket_id(self):
+        s = sheet(keep=["NEB-1", "NEB-2", "NEB-3", "NEB-4", "NEB-5"],
+                  new=[{"key": "N1", "title": "A", "parent": "NEB-1", "label": "Feature"}, {"key": "N1", "title": "B", "parent": "NEB-1", "label": "Feature"},
+                       {"key": "N2", "parent": "NEB-1", "label": "Feature"}, {"key": "N3", "title": "  ", "parent": "NEB-1", "label": "Feature"},
+                       {"key": "NEB-3", "title": "C", "parent": "NEB-1", "label": "Story"}])
+        problems = fc.fc_reconcile.check_sheet(s, self.issues)
+        for p in ("new N1 is listed twice", "new N2 has no title", "new N3 has no title", "new NEB-3 has the id of an open ticket; give it a key like N1"):
+            self.assertIn(p, problems)
+
+    def test_show_never_crashes_on_a_stored_sheet_with_an_untitled_new_ticket(self):
+        self.out("check", file=self.sheet())
+        path = fc.fc_reconcile.sheet_path("p1")
+        stored = json.loads(path.read_text()); stored["new"] = [{"key": "N1", "body": ""}]; path.write_text(json.dumps(stored))
+        self.assertIn("- N1 (untitled) (? under ?, needs shaping)", self.out("show"))
+
+    def test_a_team_without_a_backlog_state_fails_each_new_ticket_and_the_rest_go_on_to_the_summary(self):
+        self.checked()
+        self.linear.states = [{"id": "s-todo", "name": "Todo"}]
+        out = self.attempt("apply", go="yes")
+        self.assertIn("N1:create FAILED: team Engineering has no Backlog state", out)
+        self.assertIn("NEB-2:cancel done", out)
+        self.assertEqual(out[-1], "applied 6 of 7: 0 skipped, 1 failed; compose reconcile notices lists what each team lead must hear")
+
+    def test_a_recheck_keeps_the_record_of_the_earlier_go(self):
+        self.checked()
+        self.linear.issues["NEB-5"]["state"] = {"name": "Done", "type": "completed"}
+        self.attempt("apply", go="yes, do it")
+        self.out("check", file=self.sheet({**self.raw, "keep": self.raw["keep"] + ["NEB-101"]}))
+        self.assertEqual(json.loads(fc.fc_reconcile.sheet_path("p1").read_text())["go"], [{"quote": "yes, do it", "at": ANY}])
 
 
 if __name__ == "__main__":
