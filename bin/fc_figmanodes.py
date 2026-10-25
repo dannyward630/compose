@@ -76,6 +76,14 @@ def restore_hidden(inst, main, props, prefix):
     if kids:
         inst["children"] = kids
 
+def mark_instance_contents(nodes, instance=None):
+    """Put `inInstance: <id of the nearest instance above>` on every node inside an instance. Framelink gives such a node nothing but an
+    `I...;` id prefix, and a judge request holds a node without its ancestors, so a text or icon an instance brings reads as hand-drawn."""
+    for n in nodes:
+        if instance:
+            put(n, "inInstance", instance)
+        mark_instance_contents(n.get("children") or [], n["id"] if n.get("type") == "INSTANCE" else instance)
+
 def self_contained(docs):
     """Framelink documents rewritten so a judge reads each node on its own: shared templates and styles inlined, every instance's variant
     properties (Framelink keeps only boolean and text ones; the variant is in its main component's name, `type=text, state=empty`) put in
@@ -101,6 +109,7 @@ def self_contained(docs):
             restore_hidden(n, main, n.get("componentProperties") or {}, n["id"].removeprefix("I"))
         else:
             absent.add(n["componentId"])
+    mark_instance_contents([n for d in docs for n in d.get("nodes") or []])  # after the hidden slots are put back: they are contents too
     return sorted(absent)
 
 

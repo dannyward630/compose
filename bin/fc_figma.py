@@ -215,7 +215,9 @@ SETTLE_TREE_CHARS = 300000  # a criterion no chunk can decide goes to one call o
 
 TREE_READING = ("Every field on a node belongs to that node alone: its strokes and strokeWeight are its own outline, never a neighbour's. "
                 "A node with \"visible\": false exists and is hidden. An instance's componentProperties hold its variant properties "
-                "(such as type and state) as well as its boolean and text ones. A node that has what the criterion requires satisfies that "
+                "(such as type and state) as well as its boolean and text ones. A node with \"inInstance\" is part of that component instance's "
+                "own contents (its text, icons, and fills), not something placed by hand: a criterion about what a frame is built from, or "
+                "about hand-drawn nodes, counts the instance itself and never the nodes inside it. A node that has what the criterion requires satisfies that "
                 "part: a stroke, tint, or hidden slot the criterion asks for is never a violation; a violation is a node that contradicts "
                 "the criterion's words. Framelink cannot show variable bindings: a fill or stroke bound to a variable reads as its resolved hex, "
                 "so a hex on a node is never evidence of a raw or unbound colour; only the WRITE RESULT section states bindings, and it is taken as true.")
