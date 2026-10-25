@@ -3,6 +3,7 @@ description: Go away - the engineering manager answers with the recommendation a
 argument-hint: "[--push] [words] | --clear-words | digest | off"
 allowed-tools: Bash(compose away:*)
 ---
+When `compose factory status` says the factory runs for this repo, run `compose factory night` instead (an end time or budget in the words go to `--until` and `--budget`) and follow sections/0n.md; `off` then means `compose factory day`.
 The project is the one this session runs; for an epic, every project of the epic.
 If `$ARGUMENTS` is `off`, run `compose away off --project <slug> < /dev/null` for each project and show each digest as is, then ask its "To confirm" decisions in one message: accept all, or name the ones to change.
 If `$ARGUMENTS` is `digest`, run `compose away digest --project <slug> < /dev/null` for each project and show each digest as is; away stays on.
