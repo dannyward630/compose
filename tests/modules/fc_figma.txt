@@ -18,6 +18,8 @@ PART_RULES
 CONFIRM
 SETTLE
 CONFIRM_PART
+BUILT_FROM
+instance_contents_only
 combine_choices
 confirm_asks
 figma_judge_chunks
