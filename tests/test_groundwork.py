@@ -10,6 +10,7 @@ _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoad
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
+import fc_planner_brief
 
 
 _mcp = mock.patch.object(fc.fc_mcp, "installed_servers", side_effect=lambda cwd: [])  # no test runs the real `claude mcp list`
@@ -114,7 +115,7 @@ class Groundwork(unittest.TestCase):
     def test_briefs_name_compose_linear_verbs_and_no_linear_mcp_tool(self):
         b = fc.fc_briefs
         printed = [self.printed(c, **kw) for c, kw in ((b.cmd_groundwork, {}), (b.cmd_planner, {"issue": None}), (b.cmd_explore, {}))]
-        consts = [getattr(b, n) for n in ("GROUNDWORK_BRIEF", "EXPLORE_BRIEF", "PLANNER_BRIEF", "TOOLSMITH_BRIEF", "CHANGE_BRIEF")]
+        consts = [getattr(b, n) for n in ("GROUNDWORK_BRIEF", "EXPLORE_BRIEF", "TOOLSMITH_BRIEF", "CHANGE_BRIEF")] + [fc_planner_brief.PLANNER_BRIEF]
         for brief in printed + consts:
             self.assertEqual([t for t in self.MCP_TOOLS if t in brief], [], brief[:60])
         _, planner, explore = printed
@@ -312,8 +313,9 @@ class Explore(unittest.TestCase):
         self.assertIn('trail ask "<question>" --source', b.GROUNDWORK_BRIEF)
         self.assertIn('trail ask "<question>" --source', b.CHANGE_BRIEF)
         for name in ("GROUNDWORK_BRIEF", "EXPLORE_BRIEF", "PLANNER_BRIEF", "CHANGE_BRIEF"):
-            self.assertNotRegex(getattr(b, name), r"\bgraft (ask|callers|map|skeleton|grep)\b", name)
-            self.assertNotRegex(getattr(b, name), r"`graft\b", name)
+            brief = getattr(fc_planner_brief if name == "PLANNER_BRIEF" else b, name)
+            self.assertNotRegex(brief, r"\bgraft (ask|callers|map|skeleton|grep)\b", name)
+            self.assertNotRegex(brief, r"`graft\b", name)
 
 
 class SectionRewrite(unittest.TestCase):
@@ -359,7 +361,7 @@ class SectionRewrite(unittest.TestCase):
     def test_no_brief_says_patch_append(self):
         b = fc.fc_briefs
         printed = [self.printed(c, **kw) for c, kw in ((b.cmd_groundwork, {}), (b.cmd_planner, {"issue": None}), (b.cmd_explore, {}))]
-        consts = [" ".join(getattr(b, n).split()) for n in dir(b) if n.endswith("_BRIEF")] + [" ".join(fc.fc_figma.DESIGNER_BRIEF.split())]
+        consts = [" ".join(getattr(b, n).split()) for n in dir(b) if n.endswith("_BRIEF")] + [" ".join(fc.fc_figma.DESIGNER_BRIEF.split()), " ".join(fc_planner_brief.PLANNER_BRIEF.split())]
         self.assertEqual(len(consts), 6)
         self.assertEqual([brief[:60] for brief in printed + consts if "patch append" in brief], [])
 
@@ -632,10 +634,10 @@ class LeanPlannerBrief(unittest.TestCase):
 
     def test_the_template_keeps_its_placeholders_and_house_text(self):
         import string
-        fields = {f for _, f, _, _ in string.Formatter().parse(fc.fc_briefs.PLANNER_BRIEF) if f}
+        fields = {f for _, f, _, _ in string.Formatter().parse(fc_planner_brief.PLANNER_BRIEF) if f}
         self.assertEqual(fields, {"issue", "name", "slug", "wt"})
         for banned in ("—", "Product-Manager-Skills", "deanpeters"):
-            self.assertNotIn(banned, fc.fc_briefs.PLANNER_BRIEF)
+            self.assertNotIn(banned, fc_planner_brief.PLANNER_BRIEF)
             self.assertNotIn(banned, self.brief)
 
 
@@ -655,11 +657,12 @@ class TersePlannerBrief(unittest.TestCase):
     )
 
     def test_the_brief_and_the_module_fit_their_caps(self):
-        self.assertLessEqual(len(fc.fc_briefs.PLANNER_BRIEF), 8200)
+        self.assertLessEqual(len(fc_planner_brief.PLANNER_BRIEF), 8200)
         self.assertLessEqual(len((Path(__file__).resolve().parents[1] / "bin" / "fc_briefs.py").read_text().splitlines()), 600)
+        self.assertLessEqual(len((Path(__file__).resolve().parents[1] / "bin" / "fc_planner_brief.py").read_text().splitlines()), 600)
 
     def test_the_feature_bullet_lines_are_the_terse_text_line_for_line(self):
-        lines = fc.fc_briefs.PLANNER_BRIEF.splitlines()
+        lines = fc_planner_brief.PLANNER_BRIEF.splitlines()
         first = next(n for n, l in enumerate(lines) if l.lstrip().startswith("- Feature: "))
         self.assertTrue(lines[first].endswith("and it has a `## Plan`."), lines[first])
         self.assertEqual(tuple(lines[first + 1:first + 1 + len(self.FEATURE)]), self.FEATURE)
@@ -1083,7 +1086,7 @@ class NoTestToWrite(unittest.TestCase):
 class ScenarioPlannerLine(unittest.TestCase):
     NEW = "   Run the `test:` command; what it covers; unlisted holdout cases; then a `scenarios` block (SKILL.md)."
     OLD = "   How to run (the `test:` command), what is covered in words, and that the test has holdout cases not listed."
-    BRIEF = fc.fc_briefs.PLANNER_BRIEF
+    BRIEF = fc_planner_brief.PLANNER_BRIEF
 
     def test_the_new_line_follows_the_test_plan_heading(self):
         lines = self.BRIEF.splitlines()

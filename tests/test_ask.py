@@ -8,6 +8,7 @@ _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoad
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
+import fc_planner_brief
 
 
 CARD = "Q2. Which auth?\nWhy: every screen signs in.\nA. Clerk - affects: billing, vendor\nB. Own JWT - affects: two tasks of work\nRecommendation: A - less to build\n"
@@ -220,7 +221,7 @@ class BriefsNameBothPostures(unittest.TestCase):
               f"`compose decide` ends its line `{AWAY}` or `{YOLO}`, the one its prefix names.")
 
     def flat(self, name):
-        return " ".join(getattr(fc.fc_briefs, name).split())
+        return " ".join(getattr(fc_planner_brief if name == "PLANNER_BRIEF" else fc.fc_briefs, name).split())
 
     def test_each_brief_carries_its_sentence(self):
         for name, want in (("PLANNER_BRIEF", self.PLANNER), ("CHANGE_BRIEF", self.CHANGE)):

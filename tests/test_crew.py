@@ -10,6 +10,7 @@ _spec = importlib.util.spec_from_loader("fc", importlib.machinery.SourceFileLoad
 fc = importlib.util.module_from_spec(_spec)
 for _m in [m for m in sys.modules if m.startswith("fc_") and m not in ("fc_cost", "fc_mcp", "fc_sessions")]: del sys.modules[_m]
 _spec.loader.exec_module(fc)
+import fc_planner_brief
 import fc_load
 
 
@@ -1232,7 +1233,7 @@ class RestrictedStart(unittest.TestCase):
                 self.assertFalse(any("AUTO_COMPACT" in x or x.startswith("--autocompact") for x in args))
 
     def test_briefs_name_skill_md_and_their_sections(self):
-        p, d = fc.fc_briefs.PLANNER_BRIEF, fc.fc_figma.DESIGNER_BRIEF
+        p, d = fc_planner_brief.PLANNER_BRIEF, fc.fc_figma.DESIGNER_BRIEF
         self.assertTrue("Read SKILL.md and sections/1.md, 2.md, 3.md, 3b.md first." in p and "as sections/2.md says" in p and "step 2 of the" not in p)
         self.assertTrue("1. Read SKILL.md and sections/0d.md, then follow 0d." in d)
         self.assertFalse(any("invoke the compose skill" in b.lower() for b in (p, d)))
@@ -1310,19 +1311,19 @@ class CardsById(unittest.TestCase):
         self.assertTrue(self.needs_user(self.flat(fc.fc_briefs.CHANGE_BRIEF, " 3. ", " 4. "))[0].startswith("change {cid}: "))
 
     def test_planner_decision_cards_and_story_proposal_report_one_line(self):
-        self.assertNotIn("<the cards in full>", fc.fc_briefs.PLANNER_BRIEF)
-        self.assertNotIn("one needs-user list", " ".join(fc.fc_briefs.PLANNER_BRIEF.split()))
-        cards = self.flat(fc.fc_briefs.PLANNER_BRIEF, "Checks 1, 3, 6", "Checks 2, 4, 5")
+        self.assertNotIn("<the cards in full>", fc_planner_brief.PLANNER_BRIEF)
+        self.assertNotIn("one needs-user list", " ".join(fc_planner_brief.PLANNER_BRIEF.split()))
+        cards = self.flat(fc_planner_brief.PLANNER_BRIEF, "Checks 1, 3, 6", "Checks 2, 4, 5")
         self.assertIn("Not yet specified", cards)
         for line in self.needs_user(cards):
             self.assertIn("cards", line)
             self.assertIn("recommendation", line)
-        stories = self.flat(fc.fc_briefs.PLANNER_BRIEF, "Stories missing", "Then check and cut each story")
+        stories = self.flat(fc_planner_brief.PLANNER_BRIEF, "Stories missing", "Then check and cut each story")
         self.assertIn("drafted on the issue", stories)  # stories are drafted on the issue ...
         self.assertIn("needs-user", stories)  # ... and named in one line
 
     def test_planner_cuts_a_width_pinned_test_with_its_exact_wrapped_text_in_the_brief(self):
-        cut = " ".join(fc.fc_briefs.PLANNER_BRIEF.split())
+        cut = " ".join(fc_planner_brief.PLANNER_BRIEF.split())
         self.assertIn("A test that pins a line width or exact text", cut)
         self.assertIn("already wrapped as the test expects, in the brief, line by line", cut)
         self.assertIn("width-pinned or exact text the test asserts, verbatim", cut)
@@ -1331,7 +1332,7 @@ class CardsById(unittest.TestCase):
     def test_answers_travel_by_card_id_and_the_line_is_forwarded_unchanged(self):
         for name in ("CHANGE_BRIEF", "PLANNER_BRIEF"):
             with self.subTest(name):
-                text = " ".join(getattr(fc.fc_briefs, name).split())
+                text = " ".join(getattr(fc_planner_brief if name == "PLANNER_BRIEF" else fc.fc_briefs, name).split())
                 self.assertIn("card id", text)
                 self.assertIn("unchanged", text)
 
@@ -1341,7 +1342,7 @@ class CardsById(unittest.TestCase):
                   "CHANGE_BRIEF": {"cid", "feature", "name", "page", "reflect", "slug", "why", "wt"}}
         for name, want in fields.items():
             with self.subTest(name):
-                text = getattr(fc.fc_briefs, name)
+                text = getattr(fc_planner_brief if name == "PLANNER_BRIEF" else fc.fc_briefs, name)
                 self.assertEqual({f for _, f, _, _ in string.Formatter().parse(text) if f}, want)  # no stray {n} or {ids}
         self.assertIn("npx -y lavish-axi poll {page}", fc.fc_briefs.CHANGE_BRIEF)  # visual cards still go through the Lavish page
 
@@ -1511,7 +1512,7 @@ class TerseTemplatesA(unittest.TestCase):
     """The explore and toolsmith briefs are terse: inside their sizes, same placeholders, every command, report form, heading and step marker kept."""
 
     def flat(self, name):
-        return " ".join(getattr(fc.fc_briefs, name).split())
+        return " ".join(getattr(fc_planner_brief if name == "PLANNER_BRIEF" else fc.fc_briefs, name).split())
 
     def test_sizes_and_placeholders(self):
         import string
@@ -1519,8 +1520,8 @@ class TerseTemplatesA(unittest.TestCase):
                 "TOOLSMITH_BRIEF": (610, {"at", "cli_commit", "cli_repo", "message", "project", "repo", "reporter", "variant"})}
         for name, (limit, fields) in want.items():
             with self.subTest(name):
-                self.assertLessEqual(len(getattr(fc.fc_briefs, name)), limit)
-                self.assertEqual({f for _, f, _, _ in string.Formatter().parse(getattr(fc.fc_briefs, name)) if f}, fields)
+                self.assertLessEqual(len(getattr(fc_planner_brief if name == "PLANNER_BRIEF" else fc.fc_briefs, name)), limit)
+                self.assertEqual({f for _, f, _, _ in string.Formatter().parse(getattr(fc_planner_brief if name == "PLANNER_BRIEF" else fc.fc_briefs, name)) if f}, fields)
 
     def test_explore_and_toolsmith_keep_their_commands_and_steps(self):
         for token in ("`trail map`", "`trail ask \"<question>\" --source`", "`trail callers <symbol>`", "`trail skeleton <file>`", "`compose linear get <id> --body`",

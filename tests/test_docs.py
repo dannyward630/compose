@@ -1316,7 +1316,7 @@ class LinkFeatures(unittest.TestCase):
         self.assertFalse([l for l in bullet if "\u2014" in l])
 
     def test_planner_epic_line_ends_with_the_link_rule(self):
-        brief = read("bin/fc_briefs.py").split('PLANNER_BRIEF = """', 1)[1].split('"""', 1)[0]
+        brief = read("bin/fc_planner_brief.py").split('PLANNER_BRIEF = """', 1)[1].split('"""', 1)[0]
         lines = [l.strip() for l in brief.splitlines()]
         epic = [i for i, l in enumerate(lines) if l.startswith(self.EPIC)]
         self.assertEqual(len(epic), 1)

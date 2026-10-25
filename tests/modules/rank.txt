@@ -67,6 +67,7 @@ fc_figmaplan
 fc_figmanodes
 fc_figma
 fc_testred
+fc_planner_brief
 fc_briefs
 fc_buildercheck
 fc_libapi
