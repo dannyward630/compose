@@ -2,7 +2,7 @@
 import hashlib, json, os, select, sys, time, urllib.parse
 from pathlib import Path
 
-import fc_core, fc_config, fc_linear, fc_plan
+import fc_core, fc_config, fc_linear, fc_plan, fc_tasks
 
 
 def issue_line(issue):
@@ -55,6 +55,15 @@ def in_scope(item, a, name=None):
     if (item["project"] or {}).get("id") != p["id"]:
         sys.exit(f"{name or item['identifier']} is not in project {p['name']}; pass --any-project to use it")
 
+def label_ids(team, names):
+    ids = []
+    for name in names:
+        l = next((l for l in team["labels"]["nodes"] if l["name"].lower() == name.lower()), None)
+        if not l:
+            sys.exit(f"team {team['name']} has no label '{name}'; compose linear labels --create {name} makes it")
+        ids.append(l["id"])
+    return ids
+
 def state_and_labels(team, a):
     out = {}
     if a.state:
@@ -63,13 +72,20 @@ def state_and_labels(team, a):
             sys.exit(f"team {team['name']} has no state '{a.state}'")
         out["stateId"] = s["id"]
     if a.label:
-        ids = []
-        for name in a.label:
-            l = next((l for l in team["labels"]["nodes"] if l["name"].lower() == name.lower()), None)
-            if not l:
-                sys.exit(f"team {team['name']} has no label '{name}'; compose linear labels --create {name} makes it")
-            ids.append(l["id"])
-        out["labelIds"] = ids
+        out["labelIds"] = label_ids(team, a.label)
+    return out
+
+def label_changes(team, a):
+    """{"addedLabelIds": [...], "removedLabelIds": [...]} for --add-label and --drop-label, by the same case-insensitive lookup
+    as --label; Linear ignores dropping a label the issue lacks, so the issue's own labels are not read."""
+    if not (a.add_label or a.drop_label):
+        return {}
+    if a.label:
+        sys.exit("update takes --label (the whole list) or --add-label/--drop-label, not both")
+    out = {}
+    for key, names in (("removedLabelIds", a.drop_label), ("addedLabelIds", a.add_label)):
+        if names:
+            out[key] = label_ids(team, names)
     return out
 
 PRIORITIES = {"none": 0, "urgent": 1, "high": 2, "medium": 3, "low": 4}  # Linear's own numbers
@@ -253,8 +269,8 @@ def verb_update(a):
     if not a.target:
         sys.exit("update needs an issue id")
     writes = writes_body(a, "update")
-    if not (writes or a.title or a.parent or a.state or a.label or a.priority is not None or a.blocked_by is not None):
-        sys.exit("update needs --title, --state, --parent, --label, --priority, --blocked-by, or a body: --section, --append, or --description with --file or stdin")
+    if not (writes or a.title or a.parent or a.state or a.label or a.add_label or a.drop_label or a.priority is not None or a.blocked_by is not None):
+        sys.exit("update needs --title, --state, --parent, --label, --add-label, --drop-label, --priority, --blocked-by, or a body: --section, --append, or --description with --file or stdin")
     prio = priority(a)  # a bad value refuses before the issue is read
     issue = fc_linear.linear_gql("query($id: String!) { issue(id: $id) { id identifier description project { id name } team { name states { nodes { id name } } labels(first: 250) { nodes { id name } } } } }",
                                  {"id": a.target[0]})["issue"]
@@ -265,6 +281,7 @@ def verb_update(a):
     if a.parent:
         inp["parentId"] = fc_linear.linear_issue(a.parent)["id"]
     inp.update(state_and_labels(issue["team"], a))
+    inp.update(label_changes(issue["team"], a))
     inp.update(prio)
     if writes:
         inp["description"] = new_body(a, issue["description"])
@@ -290,6 +307,35 @@ def verb_comment(a):
         sys.exit("comment needs a body: --file <path>, or stdin")
     fc_linear.linear_comment(issue, body)
     print(f"commented on {issue['identifier']}")
+
+def under_posture(repo):
+    """The name and mode of a compose project of the repo under away or yolo, or None; every project counts, as the repo has one Linear project."""
+    for name, (_, proj) in sorted(fc_core.all_projects(Path(repo).resolve()).items()):
+        if y := fc_tasks.yolo_state(proj):
+            return name, y["mode"]
+
+def verb_cancel(a):
+    if posture := under_posture(a.repo):
+        sys.exit(f"{posture[0]} is under {posture[1]}: a cancel changes Linear only on the product owner's own go; cancel it once {posture[1]} is off")
+    if not a.target:
+        sys.exit("cancel needs an issue id")
+    if len(a.target) > 1:
+        sys.exit("cancel takes the reason from --file <path> or stdin, not from the command line: "
+                 f"compose linear cancel {a.target[0]} --file <path>")
+    scope = "query($id: String!) { issue(id: $id) { id identifier title project { id name } } }"
+    issue = fc_linear.linear_gql(scope, {"id": a.target[0]})["issue"]
+    in_scope(issue, a)
+    reason = read_body(a).strip()
+    if not reason:
+        sys.exit("cancel needs a reason: --file <path>, or stdin")
+    if a.into:
+        other = fc_linear.linear_gql(scope, {"id": a.into})["issue"]
+        in_scope(other, a)
+        reason = fc_linear.MERGED.format(id=other["identifier"], title=other["title"]) + "\n" + reason
+    if fc_linear.linear_cancel(issue["identifier"], reason, a.into):
+        print(f"canceled {issue['identifier']}")
+    else:
+        print(f"{issue['identifier']} is already Canceled: nothing written")
 
 def verb_labels(a):
     p = linear_project(a.repo)
@@ -346,10 +392,12 @@ def verb_doc(a):
 def cmd_linear(a):
     if not fc_config.LINEAR_KEY:
         sys.exit(fc_config.needs_linear_key("compose linear"))
+    if a.action != "update" and (getattr(a, "add_label", None) or getattr(a, "drop_label", None)):
+        sys.exit("--add-label and --drop-label change an existing issue: compose linear update <id> takes them, and create takes --label")
     try:
         globals()[f"verb_{a.action}"](a)
     except (RuntimeError, OSError) as e:
         sys.exit(f"linear {a.action}: {e}")
     finally:
-        if a.action in ("create", "update", "comment"):  # the verbs that can change an issue
+        if a.action in ("create", "update", "comment", "cancel"):  # the verbs that can change an issue
             drop_get_cache(a)

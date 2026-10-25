@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fc_cost, fc_mcp  # noqa: E402
-import fc_core, fc_proc, fc_readguard, fc_libapi, fc_green, fc_gate, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_delivery, fc_claude, fc_models, fc_route, fc_quick, fc_herdr, fc_worktree, fc_layers, fc_blockers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_decide, fc_hooks, fc_pin, fc_reports, fc_crew, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_buildercheck, fc_format, fc_implement, fc_shrink, fc_jev, fc_accept, fc_verify, fc_taskreview, fc_ship, fc_prove, fc_run, fc_status, fc_tiers, fc_tierpin, fc_budget, fc_spec, fc_watch, fc_history, fc_yolo, fc_bench, fc_setup, fc_update, fc_readiness  # noqa: E402
+import fc_core, fc_proc, fc_readguard, fc_libapi, fc_green, fc_gate, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_delivery, fc_claude, fc_models, fc_route, fc_quick, fc_herdr, fc_worktree, fc_layers, fc_blockers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_decide, fc_hooks, fc_pin, fc_reports, fc_crew, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_buildercheck, fc_reconcile, fc_format, fc_implement, fc_shrink, fc_jev, fc_accept, fc_verify, fc_taskreview, fc_ship, fc_prove, fc_run, fc_status, fc_tiers, fc_tierpin, fc_budget, fc_spec, fc_watch, fc_history, fc_yolo, fc_bench, fc_setup, fc_update, fc_readiness  # noqa: E402
 
 DETACHED = ("run", "verify", "resume")  # the long commands: a closed tab or a crashed session must not end them
 
@@ -92,7 +92,7 @@ def main():
                             ("resume", fc_run.cmd_resume, "continue a run or verify that stopped on PAYMENT REQUIRED"),
                             ("done", fc_status.cmd_done, "record tasks the team lead finished by hand: --only ids --note why"),
                             ("sync", fc_linear.cmd_sync, "store the feature and its tasks, read from Linear with the workspace key; --stdin reads them as JSON instead"),
-                            ("linear", fc_linear_cmd.cmd_linear, "read and write Linear with the workspace key: get | list | create | update | comment | labels | project | doc"),
+                            ("linear", fc_linear_cmd.cmd_linear, "read and write Linear with the workspace key: get | list | create | update | comment | cancel | labels | project | doc"),
                             ("tasks", fc_spec.cmd_tasks, "the task list to review before dispatch: ids, titles, files, after, tests; warns on shared files"),
                             ("route", fc_route.cmd_route, "route each task: a workflow and a depth, project policies first, Jev for the rest; --recalculate recomputes"),
                             ("quick", fc_quick.cmd_quick, "pin check-only on tasks, stories, or the feature, then route them"),
@@ -126,6 +126,7 @@ def main():
                             ("change", fc_change.cmd_change, "start | done | undo a change of course: what changed in Linear and why, undoable"),
                             ("decisions", fc_decide.cmd_decisions, "print the project's pending-decisions page: every open card in full, when it was asked, and the decisions so far; --issue picks another map"),
                             ("decide", fc_decide.cmd_decide, "record the product owner's answers on the map (`\"Q1: A\" ...` or --accept-all) with their words attached: --quote \"<what they said>\"; without it, only under away or yolo, as unconfirmed"),
+                            ("reconcile", fc_reconcile.cmd_reconcile, "the one-time cleanup of a messy Linear project: list | check --file | show | apply --go | notices"),
                             ("crew", fc_crew.cmd_crew, "start | list | focus | stop teammates, the Claude sessions in the project's herdr space (the team lead, the architect, helpers)"),
                             ("report", fc_crew.cmd_report, "a teammate session reports up: working | needs-user | blocked | done, with one line"),
                             ("tool-bug", fc_toolbug.cmd_tool_bug, "file a tool bug (file) or open its fix's PR (pr --worktree): scrub --body and post it on the maintainer's machine or with --approved, else save a draft; --comment N or --new skips the search"),
@@ -156,12 +157,13 @@ def main():
         if name == "sync":
             s.add_argument("--stdin", action="store_true", help="read the sync JSON from stdin instead of Linear")
         if name == "linear":
-            s.add_argument("action", choices=("get", "list", "create", "update", "comment", "labels", "project", "doc"))
+            s.add_argument("action", choices=("get", "list", "create", "update", "comment", "cancel", "labels", "project", "doc"))
             s.add_argument("target", nargs="*")
             for flag in ("--body", "--comments", "--json", "--append", "--description", "--any-project", "--fresh"):
                 s.add_argument(flag, action="store_true")
-            s.add_argument("--label", action="append")
-            for flag in ("--parent", "--search", "--state", "--priority", "--title", "--blocked-by", "--file", "--section", "--expect", "--create"):
+            for flag in ("--label", "--add-label", "--drop-label"):
+                s.add_argument(flag, action="append")
+            for flag in ("--parent", "--search", "--state", "--priority", "--title", "--blocked-by", "--file", "--section", "--expect", "--create", "--into"):
                 s.add_argument(flag)
         if name == "delivery":
             s.add_argument("action", choices=("seed", "order", "reconcile", "tracks"))
@@ -289,6 +291,10 @@ def main():
             s.add_argument("words", nargs="*", help="what pre-answers questions, verbatim; or `decided <q>: <a>`; or `digest`; or `off`")
         if name in ("decisions", "decide"):
             s.add_argument("--issue", help="the issue to read (default: the project's feature issue)")
+        if name == "reconcile":
+            s.add_argument("action", choices=("list", "check", "show", "apply", "notices"))
+            s.add_argument("--file", help="check: the sheet of how every open ticket is sorted (outside the repo)")
+            s.add_argument("--go", help="apply: the product owner's words, verbatim")
         if name == "decide":
             s.add_argument("answers", nargs="*", help='"<card id>: <letter or answer>", one per card, e.g. "Q1: A" "Q2: own JWT"; a bare id ("Q3", "D2") confirms the line already recorded')
             s.add_argument("--new", action="append", default=[], help="a decision reached in conversation, with no card: recorded as the issue's next D<n> under Decisions so far; repeat for more")
