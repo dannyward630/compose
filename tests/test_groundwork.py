@@ -103,7 +103,7 @@ class Groundwork(unittest.TestCase):
         brief = self.planner()
         for s in ("NEB-9", str(self.repo), "p-planner", "### Codebase brief", "## Plan", "needs-user", "blocked",
                   "compose sync", "spec-check --project p", "compose tasks", "change start --why", "change done",
-                  "crew start --role", "explore", "groundwork", "architect", "Design", "designer"):
+                  "crew start --role", "explore", "groundwork", "shaping (0b)", "Design", "designer"):
             self.assertIn(s, brief)
         runs = [m.start() for m in re.finditer(r"compose run\b", brief)]
         self.assertTrue(runs, "the brief must say the planner never runs `compose run`")

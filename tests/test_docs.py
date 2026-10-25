@@ -281,7 +281,7 @@ class DesignerCommand(unittest.TestCase):
 
 
 class BriefsNameFiles(unittest.TestCase):
-    FILES = "SKILL.md, sections/0h.md, sections/0a.md, sections/0e.md, sections/0g.md, sections/4.md, sections/5.md, sections/6.md, sections/6a.md, sections/7.md, sections/8.md and ~/.claude/skills/herdr/SKILL.md, then continue from 0b"
+    FILES = "SKILL.md, sections/0h.md, sections/0a.md, sections/0e.md, sections/0g.md, sections/4.md, sections/5.md, sections/6.md, sections/6a.md, sections/7.md, sections/8.md and ~/.claude/skills/herdr/SKILL.md, then continue from 0e"
     EM = "The engineering manager's own session is outside the CLI's reach: it runs unrestricted, with every server and skill the product owner has."
 
     def setUp(self):
@@ -1303,7 +1303,7 @@ class LinkFeatures(unittest.TestCase):
         self.assertEqual(len(epic), 1)
         line = lines[epic[0]]
         self.assertTrue(line.endswith(" " + self.LINK), line)
-        self.assertIn("Fog (its features cannot be named yet) is architect's: hand it to 0b and stop.", line)
+        self.assertIn("An epic whose features cannot be named yet goes back to shaping (0b): report needs-user and stop.", line)
         self.assertEqual(brief.count(self.LINK), 1)
         self.assertTrue(lines[epic[0] + 1].startswith("- Feature: "))
 
@@ -1559,7 +1559,7 @@ class DryRunDocs(unittest.TestCase):
         self.assertEqual(sum(l.count("--dry-run") for l in read("docs/cli.md").splitlines() if l.startswith("| `setup` |")), 1)  # `clean --abandon` has its own
 
 
-FEATURE_HEAD = "- **feature**: if its map is not clear, architect it (step 0b). When it has no stories, the planner teammate proposes them as a `needs-user` list "
+FEATURE_HEAD = "- **feature**: if it has no approved design, shape it (step 0b). When it has no stories, the planner teammate proposes them as a `needs-user` list "
 FEATURE_TAIL = " and creates them on the product owner's go; then it writes the plan (step 1) and splits (step 2) under each story."
 LEAN_PAREN = "(one issue per story, each the thinnest slice that works end to end and unblocks the next, at most 5 criteria, in the order they should ship)"
 PLANNING_MISS = "A second wave for polish or a toolchain fix the first wave could have seen is a planning miss."
@@ -1699,7 +1699,8 @@ class ManagerProseNamesPostures(unittest.TestCase):
         self.assertLess(self.lines.index(self.BIAS), end)
         away = "\n".join(self.lines[start:end])
         for want in ["compose away off --project <slug>", "away: <card ids>: accept-all", "compose decide --project <slug> --accept-all",
-                     "(away recommendation, unconfirmed, <date>)", "compose away decided --project <slug>", "compose decide --quote"]:
+                     "(away recommendation, unconfirmed, <date>)", "compose away decided --project <slug>",
+                     'compose decide --project <slug> "<id>" --quote "<their words>"']:
             self.assertIn(want, away)
         for gone in ["compose yolo", "yolo:", "/compose:yolo", "(yolo recommendation"]:
             self.assertNotIn(gone, away)
@@ -2165,3 +2166,20 @@ class HarnessTierDocs(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ShapingIsTheManagersBrainstorm(unittest.TestCase):
+    HANDOFF = ("When the team lead reports `needs-user \"shape <issue>: ...\"`, the engineering manager brainstorms that issue with the product owner here (0b), "
+               "then sends `herdr agent prompt <slug>-orchestrator \"shaped <issue>\"`.")
+    ASK_ONCE = ("Every round-trip to the product owner stalls the project, so shape in one conversation (0b): "
+                "start groundwork and the smoke check (0g) at once so toolchain findings join the brainstorm.")
+
+    def test_0h_names_the_handoff_once(self):
+        self.assertEqual(read("sections/0h.md").count(self.HANDOFF), 1)
+        self.assertIn('`herdr agent prompt <slug>-orchestrator "shaped <id>"`', read("sections/0b.md"))
+
+    def test_skill_shapes_in_one_conversation_not_through_architect_cards(self):
+        text = read("SKILL.md")
+        for gone in ("ask once, through architect", "as a card in the card format (0b)"):
+            self.assertNotIn(gone, text)
+        self.assertIn(self.ASK_ONCE, text)

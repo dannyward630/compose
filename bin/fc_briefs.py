@@ -34,7 +34,7 @@ Phase A, toolchain (probe and report; never change dependencies):
 3. Report `working "toolchain: <what breaks>; recommend <fix>, alternative <alt>"` and wait for team lead's go in this pane.
 
 Phase B, after the go:
-1. Dependency, lockfile, and toolchain changes are implementer tasks, never yours: planner splits them; a choice the probe found is a architect card for the product owner.
+1. Dependency, lockfile, and toolchain changes are implementer tasks, never yours: planner splits them; a choice the probe found is a decision for the product owner (0b).
 2. Write schema, codegen, wiring, and stubs the task briefs need, with the exact signatures briefs give: stubs compile and return "not implemented" errors, zero values, or null. No feature logic.
 3. verify.json ({verify}):`checks` = every smoke command that passed. For UI or server: `e2e_setup` starting server on $E2E_PORT and client on $E2E_CLIENT_PORT (CLI hands out free ports and stops what setup starts; never hardcode unpinned ports, never free ports with lsof or kill), `e2e_setup_wait`, one `e2e` case per user flow with a goal and an `assert` script checking real log or DOM: once it sees the app in the state the flow needs (signed in, no overlay, seed present) and the feature absent, it prints a line starting `ASSERT FAILED` and exits non-zero; if it cannot tell, it exits non-zero without that line. Scripts go in {e2e_dir}, never ~/.compose or /tmp. Run checks with `compose verify --project {slug} --skip-review --skip-e2e --fix 0`, then prove e2e cases with `compose verify --project {slug} --prove`: each must fail only because the feature is missing, and `run` refuses until that holds; fix what it names. Run both directly: under `compose timed` jev has no TypeSafe key.
 4. Commit.
@@ -115,7 +115,7 @@ Cut only for this ticket's feature. Teammates you start (`compose crew start`) r
 
 1. Level sets the job (ticket label, else parent chain):
    - Project link: list epics and features with counts; ask which to continue (needs-user).
-   - Epic: one planner per feature, in parallel. Fog (its features cannot be named yet) is architect's: hand it to 0b and stop. Link a feature blocked by another feature only when it needs that feature's code.
+   - Epic: one planner per feature, in parallel. An epic whose features cannot be named yet goes back to shaping (0b): report needs-user and stop. Link a feature blocked by another feature only when it needs that feature's code.
    - Feature: check the map is settled (Not yet specified empty), the `### Codebase brief` is in its Notes, and it has a `## Plan`.
      No plan: write `## Plan` in the feature description with `compose linear update <id> --section "## Plan" --file <path>`:
      a header (Goal, Architecture, Global constraints, Review focus), a file map, then numbered steps, each with files touched,
