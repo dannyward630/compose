@@ -171,7 +171,8 @@ def usage_step(night, leads, now, read, prompt) -> list[str]:
         parsed = [t for t in (reset_at(ln, now) for ln in limited.values()) if t and t - now <= MAX_RESET]
         n = 0 if parsed else n + 1
         until = max(parsed) if parsed else now + fallback_wait(n)
-        night["wait"] = {"until": until, "n": n, "since": wait["since"] if wait else now, "agents": sorted(limited), "lines": dict(limited)}
+        kept = {a: ln for a, ln in stale.items() if a in present and a not in limited}  # still waiting: prompted when the longer wait is due
+        night["wait"] = {"until": until, "n": n, "since": wait["since"] if wait else now, "agents": sorted({*limited, *kept}), "lines": {**kept, **limited}}
         return [wait_line(until, sorted(limited), limited[sorted(limited)[-1]])]
     if not wait:
         return []

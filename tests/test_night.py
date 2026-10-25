@@ -164,6 +164,16 @@ class UsageWaits(unittest.TestCase):
         lines = ns.usage_step(night, {"a": "a-orchestrator"}, 360.0, self.read, self.prompt)
         self.assertEqual(night["ended"]["state"], "no-credit"); self.assertIn("factory=night-ended state=no-credit", lines[0])
 
+    def test_a_new_limit_at_a_due_wait_keeps_the_leads_already_waiting(self):
+        night, leads = ns.new_night(0.0, 10**10, 20.0, None), {"a": "a-orchestrator", "b": "b-orchestrator"}
+        self.panes["a-orchestrator"] = "usage limit reached\n"
+        ns.usage_step(night, leads, 0.0, self.read, self.prompt)
+        self.panes["b-orchestrator"] = "usage limit reached · resets in 10m\n"
+        ns.usage_step(night, leads, 61.0, self.read, self.prompt)
+        self.assertEqual(night["wait"]["agents"], ["a-orchestrator", "b-orchestrator"]); self.assertEqual(self.prompted, [])
+        ns.usage_step(night, leads, 61.0 + 660, self.read, self.prompt)
+        self.assertEqual(sorted(n for n, _ in self.prompted), ["a-orchestrator", "b-orchestrator"]); self.assertIsNone(night["wait"])
+
     def test_a_payment_halt_since_the_night_began_is_no_credit(self):
         proj = self.repo / ".compose" / "sign-in"
         (proj / "results").mkdir(parents=True); (proj / "verify.json").write_text("{}")
