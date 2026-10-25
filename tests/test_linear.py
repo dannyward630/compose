@@ -420,7 +420,7 @@ class MarkReady(unittest.TestCase):
     UPDATE = "mutation($id: String!, $labels: [String!]!) { issueUpdate(id: $id, input: {labelIds: $labels}) { success } }"
 
     def setUp(self):
-        self.reads, self.updates, self.said, self.parent = [], [], [], None
+        self.reads, self.updates, self.said, self.parent, self.feature_rels = [], [], [], None, []
         self.team = [{"id": "l-bug", "name": "Bug"}, {"id": "l-ready", "name": "Ready"}]
         for mod, name, value in ((fc.fc_config, "LINEAR_KEY", "k"), (fc.fc_linear, "linear_gql", self.gql), (fc.fc_core, "say", self.said.append)):
             p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
@@ -428,7 +428,8 @@ class MarkReady(unittest.TestCase):
     def gql(self, query, variables):
         if query == fc.fc_linear.LINEAR_READY_TREE:
             self.reads.append(variables)
-            return {"issue": {"team": {"labels": {"nodes": self.team}}, "children": {"nodes": self.children}, "parent": self.parent}}
+            return {"issue": {"team": {"labels": {"nodes": self.team}}, "children": {"nodes": self.children}, "parent": self.parent,
+                              "inverseRelations": {"nodes": self.feature_rels}}}
         self.assertEqual(query, self.UPDATE)
         self.updates.append(variables)
         return {"issueUpdate": {"success": True}}
@@ -439,6 +440,10 @@ class MarkReady(unittest.TestCase):
         return {"id": "id-" + ident, "identifier": ident, "title": "T " + ident, "state": {"name": state},
                 "labels": {"nodes": [{"id": "l-" + n.lower(), "name": n} for n in labels]}, "inverseRelations": {"nodes": rels},
                 "children": {"nodes": [{"state": {"name": t}} for t in tasks]}, "description": desc}
+
+    @staticmethod
+    def rel(kind, ident, state):
+        return {"type": kind, "issue": {"identifier": ident, "state": {"name": state}, "labels": {"nodes": []}}}
 
     def mark(self, *expected):
         self.assertEqual(fc.fc_linear.linear_mark_ready("ENG-1"), [{"id": i, "title": "T " + i} for i in expected])
@@ -451,6 +456,17 @@ class MarkReady(unittest.TestCase):
         self.assertCountEqual(self.updates, [{"id": "id-ENG-2", "labels": ["l-bug", "l-area", "l-ready"]},
                                              {"id": "id-ENG-3", "labels": ["l-bug", "l-area"]}, {"id": "id-ENG-6", "labels": ["l-ready"]}])
         self.assertCountEqual(self.said, ["linear ENG-2 -> Ready", "linear ENG-3 -> not Ready", "linear ENG-6 -> Ready"])
+
+    def test_a_feature_that_waits_on_an_unbuilt_feature_has_no_ready_story(self):
+        self.children = [self.node("ENG-2", "Todo"), self.node("ENG-3", "Todo", "Ready")]
+        self.feature_rels = [self.rel("blocks", "ENG-90", "In Progress"), self.rel("related", "ENG-91", "Todo")]
+        self.mark()
+        self.assertEqual(self.updates, [{"id": "id-ENG-3", "labels": []}])
+
+    def test_a_verified_base_feature_lets_its_dependents_start(self):
+        self.children = [self.node("ENG-2", "Todo")]
+        self.feature_rels = [self.rel("blocks", "ENG-90", "In Review")]
+        self.mark("ENG-2")
 
     def test_an_issue_with_open_questions_is_not_ready(self):
         asked = "## Open questions\n\n* Where does ENG-2 stop? (readiness check, 2026-10-26)\n"
@@ -793,7 +809,8 @@ class ReadyTreeQuery(unittest.TestCase):
         self.assertEqual(extra, [])  # the operation holds only issue
         self.assertTrue(issue.startswith("issue(id: $id) {"), issue)
         self.assertEqual(self.fields(self.inner(issue)), ["team { labels { nodes { id name } } }", "children { nodes { ...ReadyNode } }",
-                                                          "parent { children { nodes { ...ReadyNode } } }"])
+                                                          "parent { children { nodes { ...ReadyNode } } }",
+                                                          "inverseRelations(first: 50) { nodes { type issue { identifier state { name } labels { nodes { name } } } } }"])
 
     def test_the_fragment_is_unchanged_and_follows_the_operation(self):
         self.assertEqual(self.fields(fc.fc_linear.LINEAR_READY_TREE)[1:], [self.norm(self.FRAGMENT)])
@@ -875,6 +892,17 @@ class RoutePin(unittest.TestCase):
                                                    "issues": [issue("ENG-7", "T", block(id="001", test="t", route=value))]})
             self.assertEqual(e.exception.code,
                              f"ENG-7: route must be test-first, implement-then-test, fix-then-regression-test or check-only, not {value}")
+
+
+class BlockedByOrder(unittest.TestCase):
+    def test_new_blockers_are_created_before_old_ones_are_deleted(self):
+        calls = []
+        def gql(query, variables):
+            calls.append("delete" if "issueRelationDelete" in query else "create" if "issueRelationCreate" in query else "read")
+            return {"issue": {"inverseRelations": {"nodes": [{"id": "r1", "type": "blocks", "issue": {"id": "u5", "identifier": "ENG-5"}}]}}}
+        with mock.patch.object(fc.fc_linear, "linear_gql", gql), mock.patch.object(fc.fc_linear, "linear_issue", lambda i: {"id": "u-" + i}):
+            fc.fc_linear.linear_blocked_by({"id": "u12"}, ["ENG-9"])
+        self.assertEqual(calls, ["read", "create", "delete"])  # a failed create leaves the old blocker in place
 
 
 class OpenQuestions(unittest.TestCase):
