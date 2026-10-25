@@ -2458,6 +2458,8 @@ class FactoryLoop(unittest.TestCase):
     COMMAND = [
         "Invoke the compose skill, resolve the repo by its steps 0 and 0j, and follow sections/0f.md.",
         "When `$ARGUMENTS` is `stop`, `status`, or `pace <n>`, run `compose factory $ARGUMENTS` and show its output as is.",
+        "When `$ARGUMENTS` is `stop --hold <why>`, run `compose factory stop --hold \"<why>\"` with the why quoted as one argument, and show its output as is.",
+        "With no arguments, do not ask which project as 0j does for a bare project link: the factory works on the repo's Linear project from step 0, so run `compose factory start` and follow sections/0f.md.",
         "In this session, never write code, stories, or tasks yourself.",
     ]
     HOW = "The factory (`/compose:factory`) runs in the background: it builds every ready story in delivery plan order at a day pace you set, pauses work a plan change rests on, and offers the next thing to plan when nothing is ready."
@@ -2472,8 +2474,11 @@ class FactoryLoop(unittest.TestCase):
         for line in self.SECTION:
             self.assertEqual(lines.count(line), 1, line)
         text = read("sections/0f.md")
-        for need in ("dispatched", "proposed", "loop-lost", "compose watch --project", "/compose:reconcile", "sections/0k.md", "yolo", "away"):
+        for need in ("dispatched", "proposed", "loop-lost", "compose watch --project", "/compose:reconcile", "sections/0k.md", "yolo", "away",
+                     "unless one already runs for that project", "waits for their look and merge", "waits 3 turns"):
             self.assertIn(need, text)
+        for event in ("verified", "lead-lost", "dropped", "changed", "judge-failed", "turn-failed", "watching"):
+            self.assertEqual(len([l for l in lines if l.startswith(f"On `event factory={event}`")]), 1, event)
 
     def test_command_file(self):
         text = read("commands/factory.md")
