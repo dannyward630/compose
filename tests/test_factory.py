@@ -55,5 +55,63 @@ class State(unittest.TestCase):
         self.assertEqual(out, ["a", "b"])
 
 
+import fc_factoryturn as ft
+
+
+def story(id, state="Todo", *labels):
+    return {"id": id, "title": id, "state": state, "labels": list(labels)}
+
+def plan_of(**features):
+    return {"features": {k.replace("_", "-"): {"id": k.replace("_", "-"), "stories": v} for k, v in features.items()}}
+
+def entry(id, feature, kind="story", state="Todo", waits_on=()):
+    return {"id": id, "title": id, "state": state, "kind": kind, "feature": feature, "track": "t", "wave": 1, "waits_on": list(waits_on)}
+
+def rd(id, ready=True, has_tasks=True, specced=True, missing=(), error=None):
+    return {"id": id, "ready": ready, "has_tasks": has_tasks, "specced": specced, "missing": list(missing), "error": error}
+
+def judge(results):
+    return lambda repo, s, **kw: results[s]
+
+
+class Pick(unittest.TestCase):
+    def test_build_needs_ready_tasks_and_the_label_and_cut_needs_no_needs_shaping(self):
+        self.assertEqual(ft.classify(["Story", "Ready"], rd("A")), "build")
+        self.assertIsNone(ft.classify(["Story"], rd("A")))  # tasks but no Ready: another gate holds it
+        self.assertEqual(ft.classify(["Story"], rd("A", has_tasks=False)), "cut")
+        self.assertIsNone(ft.classify(["Story", "needs-shaping"], rd("A", has_tasks=False)))
+        self.assertIsNone(ft.classify(["Story", "Ready"], rd("A", ready=False)))
+
+    def test_in_flight_counts_hand_started_stories_and_frees_in_review(self):
+        plan = plan_of(NEB_9=[story("NEB-10", "In Progress"), story("NEB-11"), story("NEB-13", "In Review")])
+        self.assertEqual(ft.in_flight(plan, {"dispatched": {"NEB-11": {}, "NEB-13": {}}}), ["NEB-10", "NEB-11"])
+
+    def test_pick_fills_free_slots_in_order_and_starts_nothing_without_one(self):
+        plan = plan_of(NEB_9=[story("NEB-10", "Todo", "Ready"), story("NEB-11", "Todo", "Ready"), story("NEB-14", "In Progress")])
+        entries = [entry("NEB-14", "NEB-9", state="In Progress"), entry("NEB-10", "NEB-9"), entry("NEB-11", "NEB-9"),
+                   entry("NEB-20", "NEB-12", waits_on=("NEB-9",))]
+        j = judge({"NEB-10": rd("NEB-10"), "NEB-11": rd("NEB-11")})
+        out = ft.pick(entries, plan, {"dispatched": {}}, 1, j)
+        self.assertEqual(([(e["id"], k) for e, k in out["picks"]], out["ready_waiting"], out["offer"]), ([("NEB-10", "build")], True, None))
+        self.assertEqual(ft.pick(entries, plan, {"dispatched": {}}, 0, j)["picks"], [])
+
+    def test_nothing_dispatchable_offers_the_first_entry_that_needs_planning(self):
+        missing = [{"item": "scope", "issue": "NEB-10", "question": "What is out?"}]
+        out = ft.pick([entry("NEB-10", "NEB-9"), entry("NEB-12", "NEB-12", kind="feature")], plan_of(NEB_9=[story("NEB-10")]),
+                      {"dispatched": {}}, 2, judge({"NEB-10": rd("NEB-10", ready=False, specced=False, missing=missing)}))
+        self.assertEqual(out["offer"], {"id": "NEB-10", "layer": "story", "why": "scope: What is out?"})
+        out = ft.pick([entry("NEB-12", "NEB-12", kind="feature")], plan_of(), {"dispatched": {}}, 2, judge({}))
+        self.assertEqual(out["offer"], {"id": "NEB-12", "layer": "stories", "why": "no stories yet"})
+
+    def test_a_failed_judge_is_reported_never_offered_and_judging_stops_at_the_limit(self):
+        out = ft.pick([entry("NEB-10", "NEB-9")], plan_of(NEB_9=[story("NEB-10", "Todo", "Ready")]), {"dispatched": {}}, 2,
+                      judge({"NEB-10": rd("NEB-10", ready=False, specced=None, error="no TypeSafe key")}))
+        self.assertEqual((out["picks"], out["offer"], out["failed"]), ([], None, [("NEB-10", "no TypeSafe key")]))
+        calls, entries = [], [entry(f"NEB-{n}", "NEB-9") for n in range(30, 40)]
+        ft.pick(entries, plan_of(NEB_9=[story(e["id"]) for e in entries]), {"dispatched": {}}, 2,
+                lambda repo, s, **kw: calls.append(s) or rd(s, ready=False, specced=False))
+        self.assertLessEqual(len(calls), ft.JUDGE_LIMIT)
+
+
 if __name__ == "__main__":
     unittest.main()
