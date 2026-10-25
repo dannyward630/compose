@@ -422,7 +422,7 @@ class FigmaJudge(unittest.TestCase):
             self.assertLessEqual(len(user), fc.fc_figma.fc_figmanodes.TREE_CHUNK_CHARS + 500)
 
     def test_no_chunk_showing_met_leaves_the_criterion_unmet(self):
-        res = self.judge_big(lambda t: ("UNCLEAR", 0.0))
+        res = self.judge_big(lambda t: ("UNCLEAR", 0.0), confirm={"confirmed": False, "evidence": "the tree does not show it"})
         self.assertEqual((res["status"], res["criteria"][0]["choice"]), ("failed", "UNCLEAR"))
 
     def test_a_criterion_whose_nodes_sit_in_different_chunks_is_settled_on_the_whole_tree(self):
@@ -446,6 +446,21 @@ class FigmaJudge(unittest.TestCase):
         self.assertEqual((res["status"], res["criteria"][0]["choice"]), ("blocked", "UNCLEAR"))
         self.assertIn("confirm call failed", res["judge_errors"][0]["evidence"])
         self.assertNotIn("reask", res["criteria"][0])  # the chunks' re-ask could still turn it MET
+
+    def test_a_tree_over_the_confirm_size_is_still_settled_on_the_whole_tree_when_it_fits_one_call(self):
+        """Task 059 had 186695 characters in 8 chunks, every chunk UNCLEAR on "24 variants, each 44 or 48 high", and the whole-tree
+        call that says so was never made. Only a tree beyond SETTLE_TREE_CHARS stays with the chunks."""
+        text, crit = big_tree(), "The first and last variants have their Tint (2:0 and 2:14)"
+        self.assertTrue(fc.fc_figma.CONFIRM_TREE_CHARS < len(text) <= fc.fc_figma.SETTLE_TREE_CHARS)
+        for met, status in ((True, "passed"), (False, "failed")):
+            with self.subTest(met=met):
+                res = self.judge_big(lambda t: ("UNCLEAR", 0.0), text=text, criterion=crit, confirm={"confirmed": met, "evidence": "both hold a Tint"})
+                self.assertEqual((res["status"], self.confirm.call_count, res["criteria"][0]["whole_tree"]["met"]), (status, 1, met))
+                self.assertEqual(self.confirm.call_args.args[2].split("TREE:\n", 1)[1], text)
+        huge = big_tree(40)
+        self.assertGreater(len(huge), fc.fc_figma.SETTLE_TREE_CHARS)
+        res = self.judge_big(lambda t: ("UNCLEAR", 0.0), text=huge, criterion=crit, confirm={"confirmed": True, "evidence": "x"})
+        self.assertEqual((res["status"], self.confirm.call_count, "whole_tree" in res["criteria"][0]), ("failed", 0, False))
 
     def test_a_chunk_that_errors_blocks_and_is_never_a_pass(self):
         def jev(env, cfg, state, q, label):
