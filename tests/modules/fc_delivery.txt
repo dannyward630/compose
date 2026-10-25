@@ -13,4 +13,14 @@ delivery_order
 entry_line
 verb_order
 verb_seed
+DOC_UPDATE
+DOC_CREATE
+state_path
+last_reconcile
+_blocked_comment
+reconcile
+summary
+_reconciled
+verb_reconcile
+verb_tracks
 cmd_delivery

@@ -18,12 +18,12 @@ def node(ident, state, *blockers, title=None, parent=None, project="p1"):
             "inverseRelations": {"nodes": [{"type": "blocks", "issue": {"identifier": b, "state": {"name": s}, "labels": {"nodes": []}}} for b, s in blockers]}}
 
 
-class Product(unittest.TestCase):
+class Fake(unittest.TestCase):
     def setUp(self):
         self.repo = Path(tempfile.mkdtemp()).resolve()
         (self.repo / ".compose").mkdir()
         (self.repo / ".compose" / "linear.json").write_text(json.dumps({"project": URL, "team": "Engineering"}))
-        self.calls, self.created, self.doc_writes, self.page = [], None, [], None
+        self.calls, self.created, self.doc_writes, self.page, self.live = [], None, [], None, False
         self.content = TRACKS
         self.docs = [("Product delivery plan", "u/doc"), ("NEB-9: delivery plan", "u/d9")]
         self.nodes = [node("NEB-7", "Done"), node("NEB-9", "Todo", ("NEB-7", "Done")), node("NEB-12", "Todo")]
@@ -53,9 +53,13 @@ class Product(unittest.TestCase):
             return {"document": {"id": "d0", "title": "Product delivery plan", "url": "u/doc", "content": self.content}}
         if "documentCreate" in q:
             self.created = variables
+            if self.live:
+                self.docs.append(("Product delivery plan", "u/new")); self.content = variables["content"]
             return {"documentCreate": {"document": {"id": "dnew", "title": variables["title"], "url": "u/new", "content": variables["content"]}}}
         if "documentUpdate" in q:
             self.doc_writes.append(variables["content"])
+            if self.live:
+                self.content = variables["content"]
             return {"documentUpdate": {"success": True}}
         if "issue(id" in q:
             return {"issue": next((n for n in self.nodes if n["identifier"] == variables["id"]), None)}
@@ -70,6 +74,8 @@ class Product(unittest.TestCase):
             fc.fc_delivery.cmd_delivery(a)
         return out.getvalue()
 
+
+class Product(Fake):
     def test_no_document_or_no_tracks_means_no_plan_and_order_says_how_to_start(self):
         for docs, content in (([], ""), (None, fc_plan.product_skeleton())):
             self.set_docs(docs, content)
@@ -110,3 +116,123 @@ class Product(unittest.TestCase):
         with redirect_stderr(io.StringIO()) as err:
             self.run_verb("order")
         self.assertEqual(err.getvalue(), "NEB-311 is in a track but was not found in Linear: fix the id or drop it from the track\n")
+
+
+PLAN = "## Tracks\n\n1. Sign-in: NEB-7, NEB-9\n2. Onboarding: NEB-12 (after Sign-in)\n3. Old: NEB-5\n"
+
+
+class Reconcile(Fake):
+    def setUp(self):
+        super().setUp()
+        self.content = PLAN
+        self.nodes = [node("NEB-7", "Done"), node("NEB-9", "Todo", ("NEB-7", "Done")), node("NEB-12", "Todo", ("NEB-5", "Todo"), ("NEB-40", "Todo")),
+                      node("NEB-5", "Todo"), node("NEB-30", "Todo")]
+        self.comments = []
+        self.mark = mock.Mock(side_effect=lambda ident: [{"id": "NEB-10", "title": "T NEB-10"}] if ident == "NEB-9" else [])
+        self.blocked_by = mock.Mock()
+        for name, value in (("linear_issue", self.issue), ("linear_blocked_by", self.blocked_by), ("linear_mark_ready", self.mark),
+                            ("linear_comment", lambda issue, body: self.comments.append((issue["identifier"], body)))):
+            p = mock.patch.object(fc.fc_linear, name, value); p.start(); self.addCleanup(p.stop)
+
+    def issue(self, ident):
+        return {"id": "uuid-" + ident, "identifier": ident}
+
+    def apply_writes(self):
+        for (issue, want), _ in self.blocked_by.call_args_list:
+            n = next(n for n in self.nodes if n["identifier"] == issue["identifier"])
+            n["inverseRelations"]["nodes"] = [{"type": "blocks", "issue": {"identifier": b, "state": {"name": "Todo"}, "labels": {"nodes": []}}} for b in want]
+        if self.doc_writes:
+            self.content = self.doc_writes[-1]
+
+    def test_reconcile_adds_and_removes_feature_blocks_comments_and_marks_ready(self):
+        r = fc.fc_delivery.reconcile(self.repo)
+        self.assertEqual((r["added"], r["removed"], r["ready"]), ([["NEB-9", "NEB-12"]], [["NEB-5", "NEB-12"]], ["NEB-10"]))
+        self.blocked_by.assert_called_once_with(self.issue("NEB-12"), ["NEB-9", "NEB-40"])
+        self.assertEqual(self.comments, [("NEB-12", "Product delivery plan reconcile: now blocked by NEB-9; no longer blocked by NEB-5. "
+                                          "The plan wins over Linear; change the plan to change this: u/doc")])
+        self.assertEqual([c.args[0] for c in self.mark.call_args_list], ["NEB-9", "NEB-5", "NEB-12"])  # open plan features, in plan order
+        self.assertIn("NEB-30 T NEB-30 is an open feature the plan does not name: add it to a track, or cancel it.", r["proposed"])
+        self.assertEqual(json.loads(fc.fc_delivery.state_path(self.repo).read_text())["removed"], [["NEB-5", "NEB-12"]])
+        self.assertEqual(fc.fc_delivery.last_reconcile(self.repo)["added"], [["NEB-9", "NEB-12"]])
+        self.assertIn("## Start today\n\n1. NEB-10", self.doc_writes[-1])
+        self.assertFalse([q for q in self.mutations() if any(w in q for w in ("issueDelete", "issueArchive", "parentId", "stateId"))])  # destructive fixes are only proposed
+
+    def test_a_second_reconcile_writes_nothing(self):
+        fc.fc_delivery.reconcile(self.repo)
+        self.apply_writes()  # the fake now holds the relations and document the first run wrote
+        before = len(self.mutations()); self.blocked_by.reset_mock(); self.comments.clear()
+        fc.fc_delivery.reconcile(self.repo)
+        self.assertEqual((self.mutations()[before:], self.blocked_by.call_count, self.comments), ([], 0, []))
+
+    def test_no_reconcile_yet_reads_as_none(self):
+        self.assertIsNone(fc.fc_delivery.last_reconcile(self.repo))
+
+    def test_dry_run_prints_what_it_would_do_and_writes_nothing(self):
+        out = self.run_verb("reconcile", dry_run=True).splitlines()
+        self.assertEqual(out[:3], ["product delivery plan (dry run, nothing written): 1 blocks added, 1 removed, 0 ready, 1 proposed",
+                                   "  + NEB-9 blocks NEB-12", "  - NEB-5 no longer blocks NEB-12"])
+        self.assertEqual(self.mutations(), []); self.mark.assert_not_called(); self.blocked_by.assert_not_called()
+        self.assertFalse(fc.fc_delivery.state_path(self.repo).exists())
+
+    def test_the_summary_lists_ready_and_proposed_lines(self):
+        out = self.run_verb("reconcile").splitlines()
+        self.assertEqual(out[0], "product delivery plan: 1 blocks added, 1 removed, 1 ready, 1 proposed")
+        self.assertIn("  ready: NEB-10", out)
+        self.assertIn("  proposed: NEB-30 T NEB-30 is an open feature the plan does not name: add it to a track, or cancel it.", out)
+
+    def test_a_bad_plan_stops_before_any_write(self):
+        self.content = "## Tracks\n\n1. A: NEB-7 (after B)\n2. B: NEB-9 (after A)\n"
+        with self.assertRaises(SystemExit):
+            self.run_verb("reconcile")
+        self.assertEqual((self.mutations(), self.blocked_by.call_count), ([], 0))
+
+    def test_a_linear_failure_says_to_run_it_again(self):
+        self.blocked_by.side_effect = RuntimeError("boom")
+        with self.assertRaises(SystemExit) as e:
+            self.run_verb("reconcile")
+        self.assertEqual(e.exception.code, "delivery reconcile: boom; run it again: it only writes what is still out of step")
+
+
+class Tracks(Fake):
+    def setUp(self):
+        super().setUp()
+        self.live = True
+        self.nodes = [node("NEB-7", "Done"), node("NEB-9", "Todo"), node("NEB-12", "Todo")]
+        self.mark = mock.Mock(return_value=[])
+        for name, value in (("linear_issue", lambda ident: {"id": "uuid-" + ident, "identifier": ident}), ("linear_blocked_by", mock.Mock()),
+                            ("linear_mark_ready", self.mark), ("linear_comment", mock.Mock())):
+            p = mock.patch.object(fc.fc_linear, name, value); p.start(); self.addCleanup(p.stop)
+
+    def test_tracks_need_the_product_owners_words(self):  # there is no away or yolo variant
+        with self.assertRaises(SystemExit) as e:
+            self.run_verb("tracks", file=self.tracks_file)
+        self.assertEqual(e.exception.code, 'delivery tracks needs --quote "<the product owner\'s words>": the order across features is theirs to set')
+        self.assertEqual(self.mutations(), [])
+
+    def test_first_tracks_create_the_document_and_record_who_set_them(self):
+        self.set_docs([], "")
+        out = self.run_verb("tracks", file=self.tracks_file, quote="auth first,\nsearch whenever")
+        self.assertEqual((self.created["title"], self.created["projectId"]), ("Product delivery plan", "p1"))
+        body = self.doc_writes[0]
+        self.assertIn("## Tracks\n\n1. Sign-in: NEB-7, NEB-9", body)
+        self.assertIn(f'## History\n\n- {TODAY}: tracks set; the product owner said: "auth first, search whenever"', body)
+        self.assertIn(f"## Why this order\n\n{fc_plan.PRODUCT_NEXT}", body)
+        self.assertTrue(out.splitlines()[0].startswith("tracks set on u/doc"))
+        self.assertIn("product delivery plan: ", out)  # the reconcile ran
+
+    def test_new_tracks_replace_the_old_ones_and_add_a_history_line(self):
+        self.content = fc_plan.with_history(PLAN, "- 2026-01-01: first")
+        self.run_verb("tracks", file=self.tracks_file, quote="x")
+        self.assertIsNone(self.created)
+        self.assertIn("## Tracks\n\n1. Sign-in: NEB-7, NEB-9\n2. Onboarding", self.doc_writes[0])
+        self.assertNotIn("3. Old", self.doc_writes[0])
+        self.assertIn(f'- 2026-01-01: first\n- {TODAY}: tracks set', self.doc_writes[0])
+
+    def test_an_unknown_id_or_a_bad_line_writes_nothing(self):
+        for text, msg in (("1. A: NEB-311\n", "delivery tracks: NEB-311 is no issue in this project; nothing written"),
+                          ("1. A NEB-7\n", 'delivery tracks: the Tracks section does not parse: line 1: not a track: "1. A NEB-7"')):
+            Path(self.tracks_file).write_text(text)
+            with self.subTest(text), self.assertRaises(SystemExit) as e:
+                self.run_verb("tracks", file=self.tracks_file, quote="x")
+            self.assertTrue(e.exception.code.startswith(msg))
+        self.assertEqual(self.mutations(), [])
