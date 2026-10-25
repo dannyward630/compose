@@ -168,7 +168,7 @@ class CarryOver(unittest.TestCase):
         (repo / name).write_text(text)
         git(repo, "add", "-A"); git(repo, "commit", "-qm", f"move {name}")
 
-    def resume(self, repo, proj, files=None, stop=False):
+    def resume(self, repo, proj, files=None, stop=False, bench=""):
         """A fresh run_task over the same repo and project; returns (a.txt, b.txt, prompt) of the first turn."""
         meta = {"id": "001", "title": "answer", "files": files or ["a.txt", "b.txt"], "protected": [], "test": "grep -q yes a.txt",
                 "model": "pi:p/primary", "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}
@@ -185,7 +185,7 @@ class CarryOver(unittest.TestCase):
                 mock.patch.object(fc.fc_linear, "linear_event", lambda *a: None), \
                 mock.patch.object(fc.fc_core, "say", lambda m, *a, **k: self.said.append(m)):
             try:
-                fc.fc_implement.run_task(repo, proj, meta, 3)
+                fc.fc_implement.run_task(repo, proj, meta, 3, **({"reset_files": True, "tag": bench} if bench else {}))
             except KeyboardInterrupt:
                 pass
         self.resume_prompt = first[0][2]
@@ -236,20 +236,16 @@ class CarryOver(unittest.TestCase):
         self.assertEqual(seen[0], "no\n")
         self.assertIn("001 kept    nothing; the ref refs/compose/gone could not be fetched", "\n".join(self.said))
 
-    def test_a_bench_run_starts_from_scratch(self):
+    def test_a_bench_run_starts_from_scratch_and_leaves_the_paused_record_alone(self):
         r, repo, proj = self.pause_with({"a.txt": "half\n"})
-        meta = {"id": "001", "title": "answer", "files": ["a.txt"], "protected": [], "test": "grep -q yes a.txt",
-                "model": "pi:p/primary", "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}
-        with mock.patch.object(fc.fc_implement.fc_pause, "carry_over", side_effect=AssertionError("carried")):
-            with mock.patch.object(fc.fc_implement, "implementer", lambda cwd, *a, **k: ("s", "", 1, {"cost": 0.0})), \
-                    mock.patch.object(fc.fc_implement.fc_trailpack, "trail_pack", return_value=""), mock.patch.dict(os.environ, ENV), \
-                    mock.patch.object(fc.fc_core, "say", lambda *a, **k: None):
-                try:
-                    fc.fc_implement.run_task(repo, proj, meta, 3, reset_files=True)
-                except AssertionError as e:
-                    self.fail(str(e))
-                except Exception:
-                    pass
+        before = (proj / "results" / "001.json").read_text()
+        seen = self.resume(repo, proj, files=["a.txt"], bench="-bench-m-r0")
+        self.assertIsNone(seen[0])  # the bench reset removed the implementation, and nothing was carried back
+        self.assertNotIn("WORK KEPT", seen[2])
+        self.assertEqual((proj / "results" / "001.json").read_text(), before)
+        self.assertTrue((proj / "results" / "001-bench-m-r0.json").exists())
+        seen = self.resume(repo, proj)  # the real task still starts from its kept edits
+        self.assertEqual(seen[0], "half\n")
 
     def test_kept_edits_survive_a_released_run_that_is_stopped(self):
         r, repo, proj = self.pause_with({"a.txt": "half\n", "b.txt": "new\n"})
@@ -330,6 +326,24 @@ class RestsOn(HoldCase):
         self.write_reflect(flagged=["D3: one plan"])
         self.assertEqual(fc.fc_change.rests_on(self.proj, ["reflect"]), {"003": "cites D3"})
 
+    def test_a_torn_newest_reflect_falls_back_to_the_next_one_or_none(self):
+        self.write_reflect(flagged=["D3: one plan"])
+        (self.proj / "results" / "reflect-20270101-000000-01.json").write_text('{"flagged": [')
+        self.assertEqual(fc.fc_change.rests_on(self.proj, ["reflect"]), {"003": "cites D3"})
+        (self.proj / "results" / "reflect-20260101-000000-01.json").unlink()
+        self.assertEqual(fc.fc_change.rests_on(self.proj, ["reflect"]), {})
+
+    def test_a_reflect_file_appears_whole_and_a_parent_cycle_ends(self):
+        with mock.patch.object(fc.fc_models, "jev_ask", return_value={"model": "m", "answers": {}}), \
+                mock.patch.object(fc.fc_change.os, "replace", wraps=os.replace) as rep, mock.patch.object(fc.fc_change.os, "link", wraps=os.link) as link:
+            path, rec = fc.fc_change.reflect(self.proj, "manual", "x")
+        self.assertEqual(json.loads(path.read_text())["trigger"], "manual")
+        self.assertTrue(link.called or rep.called)
+        cache = json.loads((self.proj / "results" / "tasks.json").read_text())
+        cache["issues"]["ENG-4"] = {"title": "x", "description": "", "status": "Todo"}; cache["issues"]["ENG-2"]["parentId"] = "ENG-3"; cache["issues"]["ENG-3"]["parentId"] = "ENG-2"
+        (self.proj / "results" / "tasks.json").write_text(json.dumps(cache))
+        self.assertEqual(fc.fc_change.rests_on(self.proj, ["ENG-4"]), {})
+
     def test_hold_rests_on_holds_them_and_a_ref_that_matches_nothing_is_said(self):
         out = self.hold(rests_on="ENG-2,NOPE-9", reason="story ENG-2 changed")
         self.assertIn("rests on ENG-2: 001 (under ENG-2), 002 (under ENG-2)", out)
@@ -366,6 +380,15 @@ class TeammateSteer(HoldCase):
         self.assertIn("003 held  D2 changed\n", out)
         self.hold(release="002")
         self.assertIn("compose linear get ENG-2 --body", self.calls[-1][3])
+
+    def test_a_teammate_that_is_done_or_does_not_take_the_prompt_is_not_called_paused(self):
+        agent = fc.fc_herdr.agent_name(self.proj.name, "tests-002")
+        self.live = {agent}
+        with mock.patch.object(fc.fc_herdr, "herdr", lambda *a, **k: {"agent": {"agent_status": "done"}} if a[1] == "get" else {}):
+            self.assertNotIn("teammate", self.hold(only="002", reason="x"))
+        self.hold(release="002")
+        with mock.patch.object(fc.fc_herdr, "herdr", lambda *a, **k: {} if a[1] == "get" else None):
+            self.assertNotIn("teammate", self.hold(only="002", reason="x"))
 
 
 if __name__ == "__main__":

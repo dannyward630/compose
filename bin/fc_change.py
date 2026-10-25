@@ -95,8 +95,12 @@ def reflect(proj, trigger, evidence, against=()):
     while True:  # claim the name: another process screening in the same second never overwrites this one
         path = proj / "results" / f"reflect-{stamp}-{n:02d}.json"
         try:
-            with open(path, "x") as f:
-                f.write(fc_core.scrub(json.dumps(rec, indent=2)))
+            tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+            fc_core.atomic_write(tmp, fc_core.scrub(json.dumps(rec, indent=2)))
+            try:
+                os.link(tmp, path)  # whole or absent, and the name claimed: another process in the same second never overwrites this one
+            finally:
+                tmp.unlink(missing_ok=True)
             return path, rec
         except FileExistsError:
             n += 1
@@ -112,15 +116,20 @@ def rests_on(proj, refs):
     tasks, issues, feature = cache["tasks"], cache.get("issues", {}), (cache.get("feature") or {}).get("id")
     live = [m.group(0) for l in decision_lines((cache.get("feature") or {}).get("description")) if (m := DECISION_ID.match(l.lstrip("*_ ")))]
     flagged = []
-    for path in sorted((proj / "results").glob("reflect-*.json"))[-1:]:
-        for v in json.loads(path.read_text()).get("flagged", []):
-            if m := DECISION_ID.match((v.get("line") if isinstance(v, dict) else v).lstrip("*_ ")):
-                flagged.append(m.group(0))
+    for path in sorted((proj / "results").glob("reflect-*.json"), reverse=True):  # the newest readable one
+        try:
+            lines = [(v.get("line") if isinstance(v, dict) else v) for v in json.loads(path.read_text()).get("flagged", [])]
+        except (OSError, ValueError):
+            continue
+        flagged = [m.group(0) for l in lines if (m := DECISION_ID.match(l.lstrip("*_ ")))]
+        break
     found = {}
     def add(m, why):
         found.setdefault(m["id"], why)
     def parents(issue_id):
-        while issue_id:
+        seen = set()
+        while issue_id and issue_id not in seen:  # a parentId cycle ends
+            seen.add(issue_id)
             yield issue_id
             issue_id = (issues.get(issue_id) or {}).get("parentId")
     for ref in [d for r in refs for d in (flagged if r == "reflect" else [r])]:
@@ -143,7 +152,11 @@ def rests_on(proj, refs):
             for dep in filter(None, m.get("after", "").split(",")):
                 if dep in found:
                     add(m, f"after {dep}")
-    done = lambda m: (proj / "results" / f"{m['id']}.json").exists() and json.loads((proj / "results" / f"{m['id']}.json").read_text()).get("status") in fc_tasks.FINISHED
+    def done(m):  # its result file, read once; a missing or corrupt one is not finished
+        try:
+            return json.loads((proj / "results" / f"{m['id']}.json").read_text()).get("status") in fc_tasks.FINISHED
+        except (OSError, ValueError):
+            return False
     return {m["id"]: found[m["id"]] for m in tasks if m["id"] in found and not done(m) and (m.get("linear_state") or "").lower() not in fc_tasks.CANCELED}
 
 TEAMMATE_PAUSE = "Paused: {reason}. Stop now, keep what you wrote, and wait for the next prompt."
@@ -152,11 +165,17 @@ TEAMMATE_RELEASE = "Released: carry on. Read your brief again first, it may have
 def steer_teammate(proj, tid, text):
     """Interrupt the task's live test teammate and send it `text`; False when there is none (or outside herdr)."""
     agent = fc_herdr.agent_name(proj.name, f"tests-{tid}")
-    if fc_herdr.herdr("agent", "get", agent) is None:
+    got = fc_herdr.herdr("agent", "get", agent)
+    if got is None or (got.get("agent") or {}).get("agent_status") == "done":
         return False
     fc_herdr.herdr("agent", "send-keys", agent, "esc")
-    fc_herdr.herdr("agent", "prompt", agent, text)
-    return True
+    return fc_herdr.herdr("agent", "prompt", agent, text) is not None
+
+def save_hold(proj, hold):
+    """hold.json, written whole: a run re-reading mid-write never sees a torn file, and two holds never share a temp name."""
+    tmp = proj / "results" / f"hold.json.{os.getpid()}.tmp"
+    fc_core.atomic_write(tmp, json.dumps(hold, indent=2))
+    os.replace(tmp, proj / "results" / "hold.json")
 
 def hold_tasks(proj, ids, reason):
     """Hold the tasks, pausing a running one and its live test teammate; returns the lines to print."""
@@ -168,9 +187,7 @@ def hold_tasks(proj, ids, reason):
             continue
         hold[tid] = {"reason": reason, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
         placed.append(tid)
-    tmp = proj / "results" / "hold.json.tmp"
-    fc_core.atomic_write(tmp, json.dumps(hold, indent=2))
-    os.replace(tmp, proj / "results" / "hold.json")  # atomic: a run re-reading mid-write never sees a torn file; before reading `running`, as run_task writes `running` before it reads the holds
+    save_hold(proj, hold)  # before reading `running`: run_task writes `running` before it reads the holds
     for tid in placed:
         res = proj / "results" / f"{tid}.json"
         running = res.exists() and json.loads(res.read_text()).get("status") == "running" and fc_tasks.run_alive(proj)
@@ -195,9 +212,7 @@ def cmd_hold(a):
             print(f"{tid} released")
             steer_teammate(proj, tid, TEAMMATE_RELEASE.format(issue=(tasks.get(tid) or {}).get("linear", tid)))
             fc_linear.linear_note(tasks.get(tid), "Released")
-        tmp = proj / "results" / "hold.json.tmp"
-        fc_core.atomic_write(tmp, json.dumps(hold, indent=2))
-        os.replace(tmp, proj / "results" / "hold.json")
+        save_hold(proj, hold)
         return
     if not (a.only or a.rests_on) or not a.reason:
         sys.exit('hold needs --only <ids> or --rests-on <refs>, with --reason "<one line>", or --release <ids|all>')

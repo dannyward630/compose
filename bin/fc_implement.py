@@ -252,11 +252,11 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         result = {"id": tid, "title": meta.get("title"), "status": "already_green", "model": meta["model"], "attempts": 0,
                   "seconds": 0.0, "cost": 0.0, "branch": branch, "worktree": str(wt), "diffstat": "", "log": []}
         (proj / "results").mkdir(exist_ok=True)
-        fc_core.atomic_write((proj / "results" / f"{tid}.json"), json.dumps(result, indent=2))
+        fc_core.atomic_write((proj / "results" / f"{tid}{tag}.json"), json.dumps(result, indent=2))
         return result
     if delete:  # the task's own deletions, applied in the clone before any turn
         fc_core.sh(["git", "rm", "-r", "-q", "--"] + delete, wt)
-    res = proj / "results" / f"{tid}.json"
+    res = proj / "results" / f"{tid}{tag}.json"  # a bench run keeps its own file: the real task's result (and its paused record) stays
     last = res.read_text() if res.exists() else None  # the pre-run result, before progress("running") replaces it
     kept = [] if tag or reset_files else fc_pause.carry_over(repo, wt, meta, json.loads(last) if last else {})
     checks, limit = task_checks(fc_core.project_config(proj)), int(meta.get("test_timeout") or fc_models.TEST_TIMEOUT)
@@ -315,7 +315,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     spent = lambda: len({e["attempt"] for e in log if "attempt" in e and not e.get("rate_limited") and "payment_required" not in e and "slept" not in e})
     def progress(state):  # a parked `watch` and the status board read this while the task runs
         (proj / "results").mkdir(exist_ok=True)
-        fc_core.atomic_write((proj / "results" / f"{tid}.json"), json.dumps({"id": tid, "title": meta.get("title"), "status": state, "model": meta["model"],
+        fc_core.atomic_write(res, json.dumps({"id": tid, "title": meta.get("title"), "status": state, "model": meta["model"],
             "attempts": spent(), "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": round(time.time() - started, 1),
             "cost": round(cost, 6), "branch": branch, "base": base_name, "worktree": str(wt), "log": log, **fc_pause.carried(last)}, indent=2))
     progress("running")
@@ -581,7 +581,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
               "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": total, "cost": round(cost, 6),
               "reference_cost": round(reference_cost, 6), "branch": branch, "base": base_name, "worktree": str(wt), "diffstat": diff, "log": log}
     (proj / "results").mkdir(exist_ok=True)
-    fc_core.atomic_write((proj / "results" / f"{tid}.json"), json.dumps(result, indent=2))
+    fc_core.atomic_write(res, json.dumps(result, indent=2))
     if not reset_files and not tag:
         fc_linear.linear_event(proj, meta, status if status in ("passed", "unproven") else "failed", result)
     return result

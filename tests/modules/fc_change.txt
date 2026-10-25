@@ -17,6 +17,7 @@ rests_on
 TEAMMATE_PAUSE
 TEAMMATE_RELEASE
 steer_teammate
+save_hold
 hold_tasks
 cmd_hold
 CHANGE_SYNC_MAX
