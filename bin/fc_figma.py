@@ -1,7 +1,7 @@
 import argparse, json, os, re, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import fc_core, fc_config, fc_steps, fc_tasks, fc_linear, fc_models, fc_herdr, fc_crew, fc_init, fc_figmaplan, fc_figmanodes
+import fc_core, fc_config, fc_steps, fc_tasks, fc_linear, fc_models, fc_herdr, fc_crew, fc_init, fc_figmaplan, fc_figmanodes, fc_figmashots
 
 
 FIGMA_CONNECTOR = ("Figma tools: the authenticated Figma connector, `mcp__claude_ai_Figma__*` or the Figma plugin's `mcp__plugin_figma_figma__*` (the same server; use whichever ToolSearch finds), is for WRITES ONLY: `use_figma`, never a read-only script. Load it in one ToolSearch select call.\n"
@@ -74,7 +74,8 @@ target Figma file is {figma}.
 5. Every plan, story, and task is a Linear issue, never a file. A design task carries `kind: design`, `nodes:` (the page and the top-level frames or component sets it may create or touch, as <page>/<name>,
    one page per task), and `test: compose figma judge --project {slug} --only NNN`.
 6. Start builders with `compose designcrews --project {slug}`; gate each with
-   `compose figma tree --project {slug} --only NNN --node <ids>` then `compose figma judge --project {slug} --only NNN`;
+   `compose figma tree --project {slug} --only NNN --node <ids>` (it saves the tree and screens of the nodes) then
+   `compose figma judge --project {slug} --only NNN` (Jev judges the criteria on both);
    then run a `design-review` teammate that reads trees and images through Framelink, one image per story, never `get_screenshot`.
    Hand-off to code names each screen node on its code task's `figma_nodes:` line (never `get_design_context`, never pasted JSON).
 7. Every open decision goes up as a text card in `needs-user` with a recommendation; Lavish only for a card whose content IS
@@ -204,74 +205,6 @@ def cmd_designcrews(a):
               f"compose designcrews --project {proj.name} --only {ids}")
 
 
-TREE_CHUNK_CHARS = 30000  # one judge request's share of a tree; the whole tree is judged in as many requests as it takes
-
-def hard_split(text, limit):
-    """Last resort for text that has no node boundary left: whole lines, a line longer than the limit cut by characters. Covers every character."""
-    out, cur = [], ""
-    for line in text.splitlines(keepends=True):
-        while len(line) > limit:
-            if cur:
-                out.append(cur); cur = ""
-            out.append(line[:limit]); line = line[limit:]
-        if len(cur) + len(line) > limit:
-            out.append(cur); cur = ""
-        cur += line
-    return out + ([cur] if cur else [])
-
-def split_node(head, node, path, limit):
-    """Pieces of one Framelink node, each under the limit: the node whole, else its own fields followed by one run of pieces per child."""
-    piece = f"{head}\n" + json.dumps({"under": path, "node": node}, indent=2)
-    if len(piece) <= limit:
-        return [piece]
-    kids = node.get("children") if isinstance(node, dict) else None
-    if not kids:
-        return hard_split(piece, limit)
-    own = {k: v for k, v in node.items() if k != "children"}
-    own["children"] = f"{len(kids)} children, each in its own part below"
-    here = path + [str(node.get("name") or node.get("id"))]
-    out = split_node(head, own, path, limit)
-    for kid in kids:
-        out += split_node(head, kid, here, limit)
-    return out
-
-def tree_chunks(text, limit=TREE_CHUNK_CHARS):
-    """The saved tree as texts of at most `limit` characters that together hold all of it, cut along node boundaries: the tree file's
-    sections (NODE ..., WRITE RESULT ...) stay apart, an oversized section becomes its context (metadata, styles) and then each node,
-    and a node too big for one part becomes its own fields and then each child. Adjacent small pieces share a chunk.
-    The WRITE RESULT section (small: the only proof of a variable binding, which Framelink shows as plain hex) rides in every chunk."""
-    if len(text) <= limit:
-        return [text]
-    secs = re.split(r"\n\n(?=NODE |WRITE RESULT)", text.strip("\n"))
-    facts = "\n\n".join(s for s in secs if s.startswith("WRITE RESULT"))
-    if facts and len(facts) <= limit // 2:
-        secs = [s for s in secs if not s.startswith("WRITE RESULT")]
-        return [c + "\n\n" + facts for c in tree_chunks("\n\n".join(secs), limit - len(facts) - 2)]
-    pieces = []
-    for sec in secs:
-        if len(sec) <= limit:
-            pieces.append(sec)
-            continue
-        head, _, body = sec.partition("\n")
-        try:
-            doc = json.loads(body)
-        except ValueError:
-            doc = None
-        if not isinstance(doc, dict):
-            pieces += hard_split(sec, limit)
-            continue
-        ctx = {k: v for k, v in doc.items() if k != "nodes"}
-        pieces += hard_split(f"{head} (context)\n" + json.dumps(ctx, indent=2), limit) if ctx else []
-        for n in doc.get("nodes") or []:
-            pieces += split_node(f"{head} (part of a tree too large for one request)", n, [], limit)
-    chunks = []
-    for piece in pieces:
-        if chunks and len(chunks[-1]) + len(piece) + 2 <= limit:
-            chunks[-1] += "\n\n" + piece
-        else:
-            chunks.append(piece)
-    return chunks
-
 CONFIRM_TREE_CHARS = 120000  # a tree up to this size goes to the confirm call whole, so it sees a node any chunk holds; a larger one goes chunk by chunk
 
 TREE_READING = ("Every field on a node belongs to that node alone: its strokes and strokeWeight are its own outline, never a neighbour's. "
@@ -390,6 +323,10 @@ def figma_tree(a, proj):
             continue
         if isinstance(doc, dict) and isinstance(doc.get("nodes"), list):
             docs[node] = doc
+    try:  # rendered before the tree is written, so a tree on disk always has the screens of the same fetch
+        shots, notes = fc_figmashots.save_screens(key, [node.replace("-", ":") for node, _ in fetched], proj / "results" / f"{a.only}.screens")
+    except RuntimeError as e:
+        sys.exit(f"no screens of {a.only}: {e}")
     absent = fc_figmanodes.self_contained(list(docs.values()))
     parts = [f"NODE {node}\n" + (json.dumps(docs[node], indent=2) if node in docs else text) for node, text in fetched]
     if a.bindings:
@@ -397,7 +334,9 @@ def figma_tree(a, proj):
         parts.append("WRITE RESULT (facts the write script returned: node ids, variable bindings, component keys)\n" + extra.strip())
     out = proj / "results" / f"{a.only}.tree.txt"
     fc_core.atomic_write(out, "\n\n".join(parts) + "\n")
-    print(f"saved {out}")
+    print(f"saved {out}" + (f" and {len(shots)} screen{'s' * (len(shots) != 1)} in {out.parent / (a.only + '.screens')}" if shots else ""))
+    for note in notes:
+        print(note)
     if absent:
         print(f"instances of {', '.join(absent)} show no hidden slots: their main components are not in the tree; add the local ones to --node")
 
@@ -495,13 +434,25 @@ def cmd_figma(a):
         crits_id = crits.get(tid, [])
         if not crits_id:
             sys.exit(f"{tid}: no acceptance criteria to judge")
-        chunks = tree_chunks(text)
+        chunks = fc_figmanodes.tree_chunks(text)
         parted = len(chunks) > 1
         choices, rules = (PART_CHOICES, TREE_RULES + PART_RULES) if parted else (TREE_CHOICES, TREE_RULES)
         questions = {f"c{i}": {"type": "choice", "criteria": choices,
                                "instructions": {"criterion": c, "task": tid, "rules": rules}}
                      for i, c in enumerate(crits_id)}
         outs, chunk_error = figma_judge_chunks(env, cfg, meta["title"], chunks, questions)
+        where = proj / "results" / f"{tid}.screens"
+        shots, missing = fc_figmashots.screens(where)
+        seen, screen_error = None, None
+        if not shots:
+            print(f"{tid}: no screens, judged from the tree alone; `compose figma tree` saves them with the tree")
+        elif not chunk_error:
+            try:
+                seen = fc_figmashots.judge_screens(env, cfg, meta["title"], crits_id, shots, missing, threshold)
+            except fc_models.PaymentRequired:
+                raise
+            except Exception as e:  # noqa: BLE001
+                screen_error = f"the screens could not be judged: {e}"
         rows, failed = [], []
         for i, c in enumerate(crits_id):
             if chunk_error:
@@ -548,7 +499,11 @@ def cmd_figma(a):
                     raise
                 except Exception as e:  # noqa: BLE001
                     row["confirmed"], row["evidence"], row["judge_error"] = False, str(e), True
-            choice = row["choice"] if row.get("judge_error") else figma_reask(env, cfg, meta["title"], chunks, choices, rules, row)  # an error is never re-asked into a pass
+            if not row.get("judge_error"):  # an error is never re-asked into a pass
+                figma_reask(env, cfg, meta["title"], chunks, choices, rules, row)
+            choice = fc_figmashots.apply_screens(row, seen and seen[i], screen_error, where)["choice"]
+            if row.get("by") == "screens" and row.get("confirmed"):
+                failed.append(row)
             print(f"{tid} {choice} p_not_met={p:.2f} {c}")
             rows.append(row)
         prev = {}
@@ -559,7 +514,7 @@ def cmd_figma(a):
             except json.JSONDecodeError:
                 pass
         result = {"id": tid, "title": meta["title"], "status": "blocked" if any(r.get("judge_error") for r in rows) else "passed" if all(r["choice"] == "MET" for r in rows) else "failed", "kind": "design",
-                  "judge_errors": [r for r in rows if r.get("judge_error")], "chunks": len(chunks), "tree_chars": len(text),
+                  "judge_errors": [r for r in rows if r.get("judge_error")], "chunks": len(chunks), "tree_chars": len(text), "screens": [label for label, _ in shots],
                   "criteria": rows, "failed": failed, "unclear": [r for r in rows if r["choice"] != "MET" and not r.get("confirmed")], "attempts": (prev.get("attempts") or 0) + 1, "seconds": 0.0,
                   "cost": 0.0, "model": outs[0].get("model") if outs else None, "branch": f"figma:{meta.get('figma') or stored}",
                   "finished_at": time.strftime("%Y-%m-%d %H:%M:%S")}

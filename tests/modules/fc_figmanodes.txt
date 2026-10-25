@@ -7,3 +7,7 @@ sub_id
 renamed
 restore_hidden
 self_contained
+TREE_CHUNK_CHARS
+hard_split
+split_node
+tree_chunks

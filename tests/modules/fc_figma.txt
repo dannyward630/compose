@@ -8,10 +8,6 @@ cmd_designer
 DESIGN_CONCURRENCY
 design_brief
 cmd_designcrews
-TREE_CHUNK_CHARS
-hard_split
-split_node
-tree_chunks
 CONFIRM_TREE_CHARS
 TREE_READING
 TREE_CHOICES

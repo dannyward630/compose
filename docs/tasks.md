@@ -112,7 +112,8 @@ test: compose figma judge --project my-feature --only 006
 Three rules apply to design tasks.
 Two design tasks never share a page.
 A design task never runs, stacks, or is judged from files.
-The builder saves the node tree as text under `results/`, and the judge reads it.
+The builder saves the node tree as text and screens of its nodes under `results/`, and the judge reads both.
+So a criterion may name what a screen shows (no label cut off, the total aligned with the prices) as well as exact values the tree holds (a token, a component key).
 
 ## Code tasks that build a Figma node
 

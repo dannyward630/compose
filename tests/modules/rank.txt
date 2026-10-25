@@ -65,6 +65,7 @@ fc_setup
 fc_update
 fc_figmaplan
 fc_figmanodes
+fc_figmashots
 fc_figma
 fc_testred
 fc_briefs

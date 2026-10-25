@@ -112,7 +112,7 @@ The team lead starts it for a feature or story whose project it runs, and the en
 2. Before any screen story is built, it writes a visual direction for the surface as a Linear decision, with every rule citing research, a decision, or a measured value.
 3. It files the design-system epic, design stories, and design tasks in Linear, never in the repo.
    Each design task names the Figma page and frames it may touch.
-4. It starts one `design-NNN` builder per design task, each in its own tab, and gates each build with `compose figma tree` and `compose figma judge`.
+4. It starts one `design-NNN` builder per design task, each in its own tab, and gates each build with `compose figma tree` and `compose figma judge`: Jev judges each criterion on the node tree and on screens rendered from the same nodes.
 5. A `design-review` teammate then checks one image per story, and the result is handed to the code tasks as Framelink data.
 
 Every open design decision reaches you as a card with a recommendation, the same way architect's do.

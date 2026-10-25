@@ -39,5 +39,7 @@ BadReply
 fast_object
 ConfirmError
 confirm_call
+Image
+with_assets
 jev_ask
 reask_criterion

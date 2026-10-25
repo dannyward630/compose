@@ -1,6 +1,6 @@
 """Framelink node trees made self-contained for a judge: templates and styles inlined, variant properties named, hidden slots put back.
 Stdlib only, no fc_ module."""
-import copy, re
+import copy, json, re
 
 
 STYLE_KEYS = ("layout", "fills", "strokes", "effects", "textStyle")  # the fields Framelink moves into globalVars.styles
@@ -102,3 +102,72 @@ def self_contained(docs):
         else:
             absent.add(n["componentId"])
     return sorted(absent)
+
+
+TREE_CHUNK_CHARS = 30000  # one judge request's share of a tree; the whole tree is judged in as many requests as it takes
+
+def hard_split(text, limit):
+    """Last resort for text that has no node boundary left: whole lines, a line longer than the limit cut by characters. Covers every character."""
+    out, cur = [], ""
+    for line in text.splitlines(keepends=True):
+        while len(line) > limit:
+            if cur:
+                out.append(cur); cur = ""
+            out.append(line[:limit]); line = line[limit:]
+        if len(cur) + len(line) > limit:
+            out.append(cur); cur = ""
+        cur += line
+    return out + ([cur] if cur else [])
+
+def split_node(head, node, path, limit):
+    """Pieces of one Framelink node, each under the limit: the node whole, else its own fields followed by one run of pieces per child."""
+    piece = f"{head}\n" + json.dumps({"under": path, "node": node}, indent=2)
+    if len(piece) <= limit:
+        return [piece]
+    kids = node.get("children") if isinstance(node, dict) else None
+    if not kids:
+        return hard_split(piece, limit)
+    own = {k: v for k, v in node.items() if k != "children"}
+    own["children"] = f"{len(kids)} children, each in its own part below"
+    here = path + [str(node.get("name") or node.get("id"))]
+    out = split_node(head, own, path, limit)
+    for kid in kids:
+        out += split_node(head, kid, here, limit)
+    return out
+
+def tree_chunks(text, limit=TREE_CHUNK_CHARS):
+    """The saved tree as texts of at most `limit` characters that together hold all of it, cut along node boundaries: the tree file's
+    sections (NODE ..., WRITE RESULT ...) stay apart, an oversized section becomes its context (metadata, styles) and then each node,
+    and a node too big for one part becomes its own fields and then each child. Adjacent small pieces share a chunk.
+    The WRITE RESULT section (small: the only proof of a variable binding, which Framelink shows as plain hex) rides in every chunk."""
+    if len(text) <= limit:
+        return [text]
+    secs = re.split(r"\n\n(?=NODE |WRITE RESULT)", text.strip("\n"))
+    facts = "\n\n".join(s for s in secs if s.startswith("WRITE RESULT"))
+    if facts and len(facts) <= limit // 2:
+        secs = [s for s in secs if not s.startswith("WRITE RESULT")]
+        return [c + "\n\n" + facts for c in tree_chunks("\n\n".join(secs), limit - len(facts) - 2)]
+    pieces = []
+    for sec in secs:
+        if len(sec) <= limit:
+            pieces.append(sec)
+            continue
+        head, _, body = sec.partition("\n")
+        try:
+            doc = json.loads(body)
+        except ValueError:
+            doc = None
+        if not isinstance(doc, dict):
+            pieces += hard_split(sec, limit)
+            continue
+        ctx = {k: v for k, v in doc.items() if k != "nodes"}
+        pieces += hard_split(f"{head} (context)\n" + json.dumps(ctx, indent=2), limit) if ctx else []
+        for n in doc.get("nodes") or []:
+            pieces += split_node(f"{head} (part of a tree too large for one request)", n, [], limit)
+    chunks = []
+    for piece in pieces:
+        if chunks and len(chunks[-1]) + len(piece) + 2 <= limit:
+            chunks[-1] += "\n\n" + piece
+        else:
+            chunks.append(piece)
+    return chunks

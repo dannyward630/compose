@@ -3,7 +3,7 @@ name = "compose-jev"
 version = "0.1.0"
 description = "Jev: the browser agent verify's e2e cases drive, moved here from jev-ultrafast (its library only, no demo)."
 requires-python = ">=3.12"
-dependencies = ["browser-harness==0.1.13", "httpx[http2]>=0.28,<1"]
+dependencies = ["browser-harness==0.1.13", "httpx[http2]>=0.28,<1", "pillow>=12.3,<13"]
 
 [build-system]
 requires = ["hatchling"]
