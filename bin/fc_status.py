@@ -55,6 +55,11 @@ def task_state(repo, proj, meta, trunk_head, facts=None):
     hold = fc_tasks.held(proj).get(tid) or fc_tasks.waiting([meta], (facts or {}).get("released", ())).get(tid)
     if state == "pending" and hold:
         state, note = "held", hold["reason"]
+    if state == "paused" and r.get("paused"):
+        k = r["paused"]
+        note = f"{k.get('reason') or 'paused'}; work kept ({len(k.get('files', []))} files)"
+        if k.get("choice") == "part":
+            note += f"; part kept ({', '.join(k.get('keep') or [])})"
     wf, dp = fc_routecost.route(proj, meta)
     n = fc_routecost.counts(r, fc_routecost.rounds(proj), tid)
     return {"id": tid, "title": meta.get("title", ""), "state": state, "attempts": r.get("attempts", 0), "seconds": r.get("seconds", 0.0),
