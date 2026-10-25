@@ -46,6 +46,16 @@ class RoleModels(unittest.TestCase):
         self.assertEqual(fc.fc_crew.fc_crewpick.crew_model("revert", "small"), "claude:claude-haiku-5-5")
         self.assertEqual(fc.fc_crew.fc_crewpick.crew_model("orchestrator", "claude:claude-x"), "claude:claude-x")
 
+    def test_wayfinder_is_no_longer_a_name_for_the_architect(self):
+        r = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "bin" / "compose.py"), "wayfinder", "--project", "p"],
+                           capture_output=True, text=True)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("invalid choice: 'wayfinder'", r.stderr)
+        self.config({"wayfinder": "claude:claude-haiku-5-5", "default": "claude:claude-sonnet-5-5"})
+        self.assertNotIn("architect", fc.fc_config.CREW_MODELS)
+        self.assertEqual(fc.fc_crew.fc_crewpick.crew_model("architect"), "claude:claude-sonnet-5-5")
+        self.assertFalse(hasattr(fc.fc_config, "OLD_NAMES"))
+
     def test_no_crew_config_keeps_claude_default(self):
         self.config({})
         self.assertEqual(fc.fc_crew.fc_crewpick.crew_model("groundwork"), "claude")

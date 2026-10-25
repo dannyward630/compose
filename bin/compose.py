@@ -368,7 +368,6 @@ def main():
         fc_herdr.herdr_attach()
         ap.print_help(sys.stderr)
         sys.exit(2)
-    sys.argv[1] = next((new for new, olds in fc_config.OLD_NAMES.items() if sys.argv[1] in olds), sys.argv[1])  # `compose wayfinder` is `compose architect`
     a, extra = ap.parse_known_args()
     if a.cmd == "verify" and (a.prove or a.prototype):  # their own flows, with their own reports
         a.fn = fc_prove.cmd_prove if a.prove else fc_prove.cmd_prototype

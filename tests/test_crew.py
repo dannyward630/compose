@@ -130,6 +130,14 @@ class Crew(unittest.TestCase):
             fc.fc_crew.cmd_crew(a)  # goes on to the herdr work, which this fake cannot finish
         self.assertEqual(stop.call_args.args, (True,))
 
+    def test_wayfinder_is_no_longer_a_name_for_the_architect(self):
+        a = type("A", (), {"action": "focus", "role": "wayfinder"})
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_herdr, "project_worktree", return_value=self.proj.parent.parent), \
+                self.assertRaises(SystemExit) as e:
+            fc.fc_crew.cmd_crew(a)
+        self.assertEqual(a.role, "wayfinder")
+        self.assertEqual(str(e.exception), "no teammate shop-wayfinder")
+
     def test_bad_state_refused(self):
         with self.assertRaises(SystemExit):
             self.report("shop-q-1", "finished", "x")
