@@ -632,7 +632,7 @@ class LeanPlannerBrief(unittest.TestCase):
         flat = " ".join(self.brief.split())
         at = -1
         for kw in ("Stories missing", "draft the proposal on the issue", "in ship order",
-                   'report needs-user "stories <issue>: <n> drafted on the issue"', "Then check and cut each story"):
+                   'report needs-user "stories <issue>: <n> drafted on the issue"', "`compose linear create` the stories", "Then check and cut each story"):
             i = flat.find(kw, at + 1)
             self.assertGreater(i, at, f"{kw} missing or out of order")
             at = i
@@ -667,8 +667,8 @@ class TersePlannerBrief(unittest.TestCase):
         '     draft the proposal on the issue, in ship order. Each story is the thinnest slice that works end to end and unblocks',
         '     the next, at most 5 criteria. Split cues: "all", "every", several When/Then pairs, several outside systems. No',
         '     split fits: a time-boxed probe answers the unknown first, then the split. Then `report needs-user "stories <issue>:',
-        "     <n> drafted on the issue\"`; the engineering manager plays it back; create the stories only on the product owner's",
-        '     go. Then check and cut each story.',
+        '     <n> drafted on the issue"`; the engineering manager plays it back; on its go, `compose linear create` the stories.',
+        '     Then check and cut each story.',
     )
 
     def test_the_brief_and_the_module_fit_their_caps(self):

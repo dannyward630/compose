@@ -125,8 +125,8 @@ Cut only this ticket's feature. Teammates you start run in own panes; never do t
      draft the proposal on the issue, in ship order. Each story is the thinnest slice that works end to end and unblocks
      the next, at most 5 criteria. Split cues: "all", "every", several When/Then pairs, several outside systems. No
      split fits: a time-boxed probe answers the unknown first, then the split. Then `report needs-user "stories <issue>:
-     <n> drafted on the issue"`; the engineering manager plays it back; create the stories only on the product owner's
-     go. Then check and cut each story.
+     <n> drafted on the issue"`; the engineering manager plays it back; on its go, `compose linear create` the stories.
+     Then check and cut each story.
    - Story: check and cut this story only.
    A story or epic labeled `deep-dive`: read its `<issue id>: tech doc` before cutting, and
    fold what the tech doc decides into each task brief: implementers never read Linear. None yet: needs-user, stop.

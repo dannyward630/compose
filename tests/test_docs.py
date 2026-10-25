@@ -347,7 +347,7 @@ class PlanWritingRules(unittest.TestCase):
     def test_the_engineering_manager_plays_stories_back_and_records_the_go(self):
         text = read("sections/0h.md")
         self.assertIn("plays it back to the product owner as one chunk of 200 to 300 words ending with what is wrong or missing, never as a card list", text)
-        self.assertIn('compose decide --project <slug> --new "stories <ids> approved" --quote', text)
+        self.assertIn('compose decide --project <slug> --new "stories <issue> approved" --quote', text)
 
     def test_a_task_is_sized_by_its_own_test_and_review(self):
         self.assertEqual(read("sections/1.md").count("A task is the smallest unit that carries its own test and is worth its own review: setup, configuration, and docs fold into the task whose deliverable needs them."), 1)
