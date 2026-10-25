@@ -1008,15 +1008,15 @@ class Night(unittest.TestCase):
         fn.tick(self.repo, self.state, time.time())
         self.read.assert_called_once_with("agent", "read", "sign-in-orchestrator", "--source", "recent-unwrapped", "--lines", "12")
 
-    def race(self, during):
+    def race(self, during, turns=1, **kw):
         """One loop turn while a verb writes the state on disk: what the verb changed must survive the turn's save."""
-        def turn(repo, state, now, **kw):
-            self.verb(during)
+        def turn(repo, state, now, **_):
+            self.verb(during, **kw)
             if state.get("night"):
                 state["night"]["spend"] = 0.5  # the turn's own change to the night
             return []
         self.turn.side_effect = turn
-        f.run_loop(self.repo, turns=1)
+        f.run_loop(self.repo, turns=turns)
         return self.load()
 
     def test_a_night_switched_on_during_a_turn_survives_it(self):
@@ -1033,6 +1033,60 @@ class Night(unittest.TestCase):
         s = self.race("stop")
         self.assertEqual((s["night"]["draining"], s["night"]["stops"], s["night"]["spend"]), ("stopped", 1, 0.5))
 
+
+    def test_a_stop_at_once_during_a_turn_survives_it_and_ends_the_loop(self):
+        self.night_on(); self.verb("stop")
+        s = self.race("stop", turns=2)
+        self.assertEqual((s["night"]["ended"]["state"], s["night"]["stops"], s["night"]["spend"]), ("stopped at once", 2, 0.5))
+        self.assertIsNotNone(s["stopped"]); self.assertEqual(self.turn.call_count, 1)
+
+    def test_a_day_during_the_wake_leaves_no_night_posture_after_the_next_tick(self):
+        self.night_on(); self.state["dispatched"] = {"NEB-10": {"feature": "NEB-9", "project": "sign-in", "kind": "build", "at": 1.0}}
+        fn.CLOCK["at"] = fc_proc.clock(); self.slept.return_value = 60
+        self.after_wake.side_effect = lambda *args: self.verb("day") and []
+        fn.tick(self.repo, self.state, time.time())
+        self.slept.return_value = 0; fn.tick(self.repo, self.load(), time.time())
+        self.assertIsNone(fc.fc_tasks.yolo_state(self.proj("sign-in")))
+
+    def test_no_credit_is_checked_before_the_wake_recovery(self):
+        self.night_on(); self.state["dispatched"] = {"NEB-10": {"feature": "NEB-9", "project": "sign-in", "kind": "build", "at": 1.0}}
+        (self.proj("billing") / "results" / "resume.json").write_text(json.dumps({"provider": "openrouter"}))
+        fn.CLOCK["at"] = fc_proc.clock(); self.slept.return_value = 3600
+        fn.tick(self.repo, self.state, time.time())
+        self.after_wake.assert_not_called(); self.assertEqual(self.state["night"]["ended"]["state"], "no-credit")
+
+    def test_a_graceful_stop_keeps_the_drain_reason_already_set(self):
+        self.night_on(); self.hold_lock(); s = self.load(); s["night"]["draining"] = "budget"; st.save_state(self.repo, s)
+        self.verb("stop")
+        self.assertEqual((self.load()["night"]["draining"], self.load()["night"]["stops"]), ("budget", 1))
+
+    def test_the_night_ended_note_is_written_once_when_a_verb_and_the_tick_both_end_it(self):
+        self.night_on(); self.state["night"]["draining"] = "stopped"
+        self.turn.side_effect = lambda *args, **kw: self.verb("day") and []
+        fn.tick(self.repo, self.state, time.time())
+        self.assertEqual(ns.notes_tail(self.repo).count("night ended"), 1)
+        self.state = self.load(); self.state["night"]["ended"] = None; self.state["mode"] = "night"; st.save_state(self.repo, self.state)
+        self.turn.side_effect = None; self.state["night"]["draining"] = "budget"
+        fn.tick(self.repo, self.state, time.time()); self.verb("day")
+        self.assertEqual(ns.notes_tail(self.repo).count("night ended"), 2)
+
+    def test_posture_off_never_overwrites_an_archive(self):
+        for _ in range(3):
+            fn.posture_on(self.proj("sign-in"), "2026-10-26 22:00:00"); fn.posture_off(self.proj("sign-in"))
+        names = sorted(p.name for p in (self.proj("sign-in") / "results").glob("yolo-*.json"))
+        self.assertEqual(names, ["yolo-2026-10-26T220000-2.json", "yolo-2026-10-26T220000-3.json", "yolo-2026-10-26T220000.json"])
+
+    def test_a_stop_with_no_live_loop_skips_the_graceful_stage(self):
+        self.night_on(); self.save(pid=None)
+        self.assertEqual(self.verb("stop").strip(), "factory: stopped; running work finishes")
+        self.assertIsNone(self.load()["night"]["draining"]); self.assertIsNotNone(self.load()["stopped"])
+
+    def test_stop_hold_at_night_stops_at_once(self):
+        self.night_on(); self.hold_lock(); self.save(pid=self.sleeper.pid, dispatched={"NEB-10": {"feature": "NEB-9", "project": "sign-in", "kind": "build", "at": 1.0}})
+        self.rests_on.return_value = {"002": "under NEB-10"}
+        self.assertEqual(self.verb("stop", hold="rethink sign-in").splitlines(), ["factory: stopped at once; held 1 task, its work is kept on its ref (compose change keep|part|discard settles it)"])
+        self.hold.assert_called_once_with(self.proj("sign-in"), ["002"], "night stopped at once by the product owner: rethink sign-in")
+        self.assertEqual(self.load()["night"]["ended"]["state"], "stopped at once"); self.sleeper.wait(timeout=5)
 
 if __name__ == "__main__":
     unittest.main()

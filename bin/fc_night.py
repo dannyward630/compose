@@ -58,8 +58,16 @@ def posture_off(proj) -> dict | None:
     y = fc_tasks.yolo_state(Path(proj))
     if not y or y["mode"] != "night":
         return None
-    path = _posture_path(proj)
-    os.replace(path, path.with_name(f"yolo-{str(y.get('since') or '').replace(' ', 'T').replace(':', '')}.json"))
+    path, stem = _posture_path(proj), f"yolo-{str(y.get('since') or '').replace(' ', 'T').replace(':', '')}"
+    n = 1
+    while True:  # an archive is never overwritten: a second night posture with the same stamp goes to yolo-<stamp>-2.json
+        archive = path.with_name(f"{stem}{'' if n == 1 else f'-{n}'}.json")
+        try:
+            os.link(path, archive)
+            break
+        except FileExistsError:
+            n += 1
+    path.unlink()
     return y
 
 def stop_met(condition, lines) -> bool | None:
@@ -78,10 +86,24 @@ def _release() -> None:
     if held and held.poll() is None:
         held.terminate()
 
+def _claim(repo, night) -> bool:
+    """Write the night's end to the disk under the lock, so a verb sees it at once; when a verb ended this night there first, take its end
+    instead. True when the end is the tick's to say and note."""
+    with fc_factorystate.edit(repo) as disk:
+        theirs = disk["night"]
+        if not isinstance(theirs, dict) or theirs.get("since") != night["since"]:
+            return True
+        if theirs.get("ended"):
+            night["ended"] = theirs["ended"]
+            return False
+        theirs["ended"] = night["ended"]
+        return True
+
 def _end(repo, night, how, now, out, line=None) -> None:
     night["ended"] = {"state": how, "at": now}
-    out.append(line or f"event factory=night-ended state={how}{ENDED_TAIL}")
-    fc_nightstate.add_note(repo, f"- {_stamp(now)[:16]} night ended: {how}")
+    if _claim(repo, night):
+        out.append(line or f"event factory=night-ended state={how}{ENDED_TAIL}")
+        fc_nightstate.add_note(repo, f"- {_stamp(now)[:16]} night ended: {how}")
     _release()
 
 def _drain(night, why, out) -> None:
@@ -99,6 +121,10 @@ def _before(repo, state, now, out) -> bool:
     """The night's part of a turn before the turn. True when the night ended here, so the turn is skipped and nothing is dispatched."""
     night = state["night"]
     fc_proc.keep_awake()
+    why = fc_nightstate.no_credit(repo, night["since"])
+    if why:
+        _end(repo, night, "no-credit", now, out, f'event factory=night-ended state=no-credit why="{why.replace(chr(34), chr(39))}"{HALT_TAIL}')
+        return True
     projects = _projects(repo, state)
     gap = fc_proc.slept(CLOCK["at"]) if CLOCK["at"] else 0
     if gap:
@@ -107,10 +133,6 @@ def _before(repo, state, now, out) -> bool:
             out += fc_sleep.run_after_wake(repo, proj, (now - gap, now), now)
     for _slug, proj in projects:
         posture_on(proj, _stamp(night["since"]))
-    why = fc_nightstate.no_credit(repo, night["since"])
-    if why:
-        _end(repo, night, "no-credit", now, out, f'event factory=night-ended state=no-credit why="{why.replace(chr(34), chr(39))}"{HALT_TAIL}')
-        return True
     night["spend"] = fc_nightstate.night_spend(repo, night["since"])
     why = fc_nightstate.drain_reason(night, now)
     if why and not night["draining"]:
@@ -122,7 +144,8 @@ def _before(repo, state, now, out) -> bool:
     read = lambda name: fc_herdr.herdr_text("agent", "read", name, "--source", "recent-unwrapped", "--lines", "12")
     out += fc_nightstate.usage_step(night, leads, now, read, fc_factoryturn.prompt_lead)
     if night.get("ended"):  # a billing banner seen twice: usage_step said it
-        fc_nightstate.add_note(repo, f"- {_stamp(now)[:16]} night ended: {night['ended']['state']}")
+        if _claim(repo, night):
+            fc_nightstate.add_note(repo, f"- {_stamp(now)[:16]} night ended: {night['ended']['state']}")
         _release()
         return True
     return False
@@ -149,6 +172,11 @@ def tick(repo, state, now, stopping=None, saved=None) -> list[str]:
     night = live(state)
     if not night:
         _release()  # the night ended by a verb: the loop no longer keeps the Mac awake
+        try:  # and a posture a tick wrote while factory day lifted them is lifted now; away and yolo are left alone
+            for _slug, (_wt, proj) in sorted(fc_core.all_projects(repo).items()):
+                posture_off(proj)
+        except ERRORS:
+            pass
     skip = night and _before(repo, state, now, out)
     lines = [] if skip else fc_factoryturn.turn(repo, state, now, stopping=stopping, saved=saved)
     out += lines
@@ -161,15 +189,15 @@ def tick(repo, state, now, stopping=None, saved=None) -> list[str]:
     CLOCK["at"] = fc_proc.clock()
     return out
 
-def stop_stage(repo, state, now_flag: bool) -> str | None:
-    """The night's stop, on the state the caller saves under the lock. Outside a live night None (plan 4's stop runs). The first stop drains and
-    returns its line; a second, or --now, holds each dispatched story's unfinished tasks (kept on their refs), ends the night, prints that, and
-    returns None so plan 4's stop ends the loop."""
-    if not live(state):
+def stop_stage(repo, state, now_flag: bool, hold=None) -> str | None:
+    """The night's stop, on the state the caller saves under the lock. Outside a live night, or with no live loop to finish a drain, None (plan
+    4's stop runs). The first stop drains and returns its line; a second, --now or --hold holds each dispatched story's unfinished tasks (kept on
+    their refs), ends the night, prints that, and returns None so plan 4's stop ends the loop."""
+    if not live(state) or not _alive(state["pid"]):
         return None
     night = state["night"]
-    if not night["stops"] and not now_flag:
-        night["draining"], night["stops"] = "stopped", 1
+    if not night["stops"] and not now_flag and not hold:
+        night["draining"], night["stops"] = night["draining"] or "stopped", 1
         return GRACEFUL
     held = 0
     for story, record in sorted(state["dispatched"].items()):
@@ -178,7 +206,7 @@ def stop_stage(repo, state, now_flag: bool) -> str | None:
             continue
         rests = fc_change.rests_on(got[2], [story])
         if rests:
-            fc_change.hold_tasks(got[2], list(rests), AT_ONCE)
+            fc_change.hold_tasks(got[2], list(rests), f"{AT_ONCE}: {hold}" if hold else AT_ONCE)
             held += len(rests)
     now = time.time()
     night["stops"] += 1

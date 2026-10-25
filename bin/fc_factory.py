@@ -185,7 +185,7 @@ def verb_start(a, repo):
 def verb_stop(a, repo):
     with fc_factorystate.edit(repo) as state:  # at night the first stop drains, and a second or --now holds the work and ends the night
         live = fc_night.live(state)
-        line = fc_night.stop_stage(repo, state, a.now)
+        line = fc_night.stop_stage(repo, state, a.now, a.hold)
         at_once = live and not fc_night.live(state)
     if line:
         print(line)
@@ -193,7 +193,7 @@ def verb_stop(a, repo):
     held = 0
     with fc_factorystate.edit(repo) as state:
         state["stopped"] = time.time()
-        for ident, record in sorted(state["dispatched"].items()) if a.hold else ():
+        for ident, record in sorted(state["dispatched"].items()) if a.hold and not at_once else ():  # at once held them
             got = fc_factoryturn.project_for(repo, record["feature"])
             if not got:
                 continue
