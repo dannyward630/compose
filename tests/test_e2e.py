@@ -239,6 +239,13 @@ class JevCases(unittest.TestCase):
         time.sleep(0.3)
         self.assertFalse(fc.fc_core.port_listening(int((self.dir / "port").read_text())))
 
+    def test_a_failed_assert_with_the_marker_is_flagged_even_when_its_output_is_cut(self):
+        said = lambda script: self.stage({"assert": script})[1].get("assert_failed")
+        self.assertTrue(said("echo \"ASSERT FAILED (flow):\"; head -c 4000 /dev/zero | tr \"\\0\" x; echo; exit 1"))
+        self.assertFalse(said("echo no button; exit 1"))  # an assert that merely says no
+        self.assertFalse(said("echo \"ASSERT FAILED (flow)\"; exit 0"))
+        self.assertFalse(said("echo \"the ASSERT FAILED marker\"; exit 1"))  # at the start of a line only
+
     def test_ports_expand_in_a_case_env_and_in_e2e_env(self):
         seen = self.dir / "seen"
         ok, r, _, _ = self.stage({"env": {"FAKE_JEV": json.dumps({"seen": str(seen)}), "OWN": "${E2E_PORT}"},

@@ -70,7 +70,12 @@ def prove_case(cfg, case, r):
     if r["exit"] == 0:
         return {**row, "verdict": "passes", "kind": "passes", "why": "it passes without the feature, so it proves nothing: tighten the goal or the assert"}
     found = fc_jev.env_failure(case, r)
-    verdict, kind, why = ("environment", *found) if found else judge_failure(cfg, case, r)
+    if found:
+        verdict, kind, why = "environment", *found
+    elif r.get("assert_failed"):  # the case's own assert said the feature is absent (docs/verify.md): a model's wording must not flip it
+        verdict, kind, why = "feature_missing", "feature", "the case's assert reported the missing feature itself (ASSERT FAILED)"
+    else:
+        verdict, kind, why = judge_failure(cfg, case, r)
     return {**row, "verdict": verdict, "kind": kind, "why": why}
 
 def prove(repo, proj, cfg):

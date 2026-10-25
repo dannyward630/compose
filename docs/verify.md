@@ -85,7 +85,8 @@ None of them fixes anything or reconciles Linear, and none writes `results/verif
 `compose verify --project <name> --prove` runs before `run`, once the acceptance tests are collected.
 It runs every e2e case headless against the project branch as it is before `run` (trunk, the groundwork stubs and the tests, with each case's own setup and seed), once and without the retry.
 Each case must fail, and only because the feature is missing.
-A failure is classified from jev's stop reason, last steps, and final page: rules first (the page did not load, the user landed on a login page, jev skipped the password field, the assert script crashed, the harness failed), then a fast model that reads the rest and must find the app working up to the point the feature should appear.
+A failure is classified from jev's stop reason, last steps, and final page: rules first (the page did not load, the user landed on a login page, jev skipped the password field, the assert script crashed, the harness failed, then the assert's own `ASSERT FAILED` line, which is "feature missing"), then a fast model that reads the rest and must find the app working up to the point the feature should appear.
+A case whose assert prints that line gets the same class on every prove, whatever jev did on the way; the model only judges cases without it.
 A case that fails for the environment (page did not load, login failed, a blocking overlay such as a cookie banner or tour, seed missing, wrong path), one the model cannot tell apart from that, and one that already passes all fail the step with the reason.
 Prove refuses once the stack holds the feature.
 After a re-plan, `--prove --only <ids>` (the tasks to redo) runs the cases on the stack cut below the first of those tasks: the layers under them are the app, and the redone work is what the cases must find missing.
@@ -236,6 +237,10 @@ An e2e case points it at a fake server on `$E2E_PORT` to drive `run` with nothin
 A case without a `driver` runs jev to its `goal`, then runs its `assert`.
 The `assert` runs after every jev run, also one that gave up, crashed, or hit its limit, so an assert that resets the app for the next case always runs.
 It runs while jev's tab is still open, so it can read the page jev left over `BU_CDP_URL`; jev closes the tab once it ends.
+
+An assert checks that the app is in the state the case needs first (signed in, no banner or overlay, seed present).
+When it is and the feature's part is absent, it prints a line starting `ASSERT FAILED` (then one line per missing thing) and exits non-zero; `prove` reads that as "feature missing" without asking a model.
+When the app is not in that state, or the script itself broke, it exits non-zero without that line, so the environment rules and the model decide.
 
 jev never sends a password to a model.
 To log in through a form, name the field's value in `secrets`, keyed by the field's label, and keep the value in the environment, for example in `e2e_env` or `~/.compose/.env`:

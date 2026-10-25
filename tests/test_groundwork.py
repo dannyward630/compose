@@ -1160,6 +1160,9 @@ class ContractSlice(unittest.TestCase):
         self.assertEqual(brief.split("CONTRACT:\n", 1)[1], fc.fc_briefs.contract_slice(self.CONTRACT, "002"))
         self.assertNotIn("## task 001", brief)
 
+    def test_groundwork_brief_defines_the_assert_marker_prove_reads(self):
+        self.assertIn("a line starting `ASSERT FAILED` and exits non-zero", fc.fc_briefs.GROUNDWORK_BRIEF)
+
     def test_groundwork_brief_holds_the_format_line(self):
         line = ("Format: shared sections first (types, stubs, helpers), then one `## task <id>` section per task (e.g. `## task 001`) "
                 "with only that task's test path, names, command, and fixtures; each writer gets the shared sections and its own section.")
@@ -1169,7 +1172,7 @@ class ContractSlice(unittest.TestCase):
 class TerseTemplatesB(unittest.TestCase):
     B = fc.fc_briefs
     META = {"id": "001", "title": "t", "protected": ["tests/test_a.py"], "test": "x", "files": ["a.py"]}
-    SIZES = {"GROUNDWORK_BRIEF": 3000, "ARCHITECT_BRIEF": 5800, "CHANGE_BRIEF": 3900}
+    SIZES = {"GROUNDWORK_BRIEF": 3250, "ARCHITECT_BRIEF": 5800, "CHANGE_BRIEF": 3900}
     PLACEHOLDERS = {"GROUNDWORK_BRIEF": "contract e2e_dir slug stacks trunk verify wt", "ARCHITECT_BRIEF": "feature name page slug wt",
                     "CHANGE_BRIEF": "cid feature name page reflect slug why wt"}
     LAVISH = ["npx -y lavish-axi poll {page} --owner {name} --takeover", "lavish-axi reply {page} --agent-reply", "npx -y lavish-axi end {page}",

@@ -86,6 +86,23 @@ class ProveCase(unittest.TestCase):
             row = fc.fc_prove.prove_case({}, {"name": "c", "url": "http://a/"}, r)
         self.assertEqual((row["verdict"], row["kind"]), ("environment", "login"))
 
+    def test_a_case_whose_assert_says_the_feature_is_absent_is_missing_without_asking_a_model(self):
+        # The same assert output was environment (path) in one prove and feature missing in the next, because jev wandered differently.
+        for history in ([], [{"step": 1, "kind": "scroll", "label": "Scroll down", "page_changed": True}] * 4):
+            r = {"exit": 1, "assert_exit": 1, "assert_failed": True, "stdout": "- no ask call reached the model\n- the planner should still run on a crisis message\n",  # the header is cut off
+                 "run": {"status": "blocked", "stop_reason": "no change", "url": "http://a/features/x", "steps": len(history), "history": history}}
+            with mock.patch.object(fc.fc_models, "fast_object", return_value={"verdict": "environment", "kind": "path", "why": "seed"}) as m:
+                row = fc.fc_prove.prove_case({}, {"name": "c", "url": "http://a/"}, r)
+            self.assertEqual((row["verdict"], row["kind"]), ("feature_missing", "feature"))
+            m.assert_not_called()
+
+    def test_a_crashed_assert_or_a_login_page_is_the_environment_whatever_the_assert_printed(self):
+        r = {"exit": 1, "assert_exit": 1, "assert_failed": True, "stdout": "ASSERT FAILED (c):\nTraceback (most recent call last):",
+             "run": {"status": "done", "stop_reason": "", "url": "http://a/", "steps": 1, "history": []}}
+        self.assertEqual(fc.fc_prove.prove_case({}, {"name": "c", "url": "http://a/"}, r)["kind"], "assert")
+        r = {**r, "stdout": "ASSERT FAILED (c):\n- no button", "run": {**r["run"], "url": "http://a/login"}}
+        self.assertEqual(fc.fc_prove.prove_case({}, {"name": "c", "url": "http://a/"}, r)["kind"], "login")
+
     def test_the_judge_decides_the_rest(self):
         r = {"exit": 1, "run": {"status": "blocked", "stop_reason": "no change", "url": "http://a/", "steps": 2,
                                 "history": [{"step": 1, "kind": "click", "label": "Settings", "page_changed": True}]}}
