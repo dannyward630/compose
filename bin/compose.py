@@ -99,7 +99,7 @@ def main():
                             ("spec-check", fc_spec.cmd_spec_check, "check the synced feature, its stories, and its tasks against the spec; --stdin reads the sync JSON"),
                             ("ready", fc_linear.cmd_ready, "mark the stories and features that can start now with the Ready label in Linear, and print them"),
                             ("delivery", fc_delivery.cmd_delivery, "the product delivery plan across features: seed | order | reconcile | tracks; reconcile makes Linear follow it"),
-                            ("factory", fc_factory.cmd_factory, "the build loop over the repo's Linear project: start | stop | status | watch | pace | plan | decline; it builds ready stories in roadmap order at a day pace and offers what to shape next"),
+                            ("factory", fc_factory.cmd_factory, "the build loop over the repo's Linear project: start | stop | status | watch | pace | plan | decline | night | day | digest; it builds ready stories in roadmap order, by day at a set pace and overnight within your limits"),
                             ("readiness", fc_readiness.cmd_readiness, "judge whether stories are specced well enough to build (Jev, a stronger model for technical ones) and unblocked; what is missing is asked under each story's ## Open questions"),
                             ("projects", fc_status.cmd_projects, "list every project (feature) with its task progress"),
                             ("cost", fc_status.cmd_cost, "tokens per teammate session and per run provider; --json"),
@@ -173,12 +173,19 @@ def main():
             for flag in ("--dry-run", "--json"):
                 s.add_argument(flag, action="store_true")
         if name == "factory":
-            s.add_argument("action", choices=("start", "stop", "status", "watch", "pace", "plan", "decline", "loop"))
+            s.add_argument("action", choices=("start", "stop", "status", "watch", "pace", "plan", "decline", "loop", "night", "day", "digest", "answer", "prep"))
             s.add_argument("target", nargs="?")
             s.add_argument("--hold")
             s.add_argument("--done", action="store_true")
             s.add_argument("--timeout", type=float)
             s.add_argument("--json", action="store_true")
+            s.add_argument("--until", metavar="HH:MM", help="night: when it drains (default factory.night_until)")
+            s.add_argument("--budget", type=float, help="night: dollars of real spend before it drains (default factory.night_budget)")
+            s.add_argument("--stop-when", help="night: drain once a verified story meets these words")
+            s.add_argument("--now", action="store_true", help="stop: at night, stop at once instead of draining")
+            s.add_argument("--at", help=argparse.SUPPRESS)
+            s.add_argument("--nth", type=int, default=0, help=argparse.SUPPRESS)
+            s.add_argument("--ticket", help=argparse.SUPPRESS)
         if name == "cost":
             s.add_argument("--json", action="store_true", help="print the rows and their total as JSON")
         if name == "tier":

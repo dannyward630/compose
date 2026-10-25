@@ -1,8 +1,8 @@
 """`compose factory`: start and stop the build loop process, watch what it does, and set its pace, planning and offers."""
-import contextlib, copy, fcntl, json, os, signal, subprocess, sys, time, traceback
+import copy, fcntl, json, os, signal, subprocess, sys, time, traceback
 from pathlib import Path
 
-import fc_core, fc_config, fc_herdr, fc_change, fc_watch, fc_factorystate, fc_factoryturn
+import fc_core, fc_config, fc_herdr, fc_change, fc_watch, fc_factorystate, fc_factoryturn, fc_night
 
 POLL = 2.0  # seconds between looks at the event log in one watch
 
@@ -50,23 +50,26 @@ def running(repo):
         fcntl.flock(f, fcntl.LOCK_UN)
     return False
 
-@contextlib.contextmanager
-def edit(repo):
-    """The state under a short lock, saved on exit: a verb and the loop's end-of-turn merge never write over each other."""
-    fc_factorystate.state_path(repo).parent.mkdir(parents=True, exist_ok=True)
-    with open(fc_factorystate.state_path(repo).with_name("factory-state.lock"), "a") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
-        state = fc_factorystate.load_state(repo)
-        yield state
-        fc_factorystate.save_state(repo, state)
+HUMAN_KEYS = ("stopped", "day_tickets", "planning", "declined_until", "manager_pane", "mode")  # set by verbs while a turn runs: the disk's value wins
 
-HUMAN_KEYS = ("stopped", "day_tickets", "planning", "declined_until", "manager_pane")  # set by verbs while a turn runs: the disk's value wins
+def _night(turn, before, disk):
+    """The night record both the loop and the verbs write. A night the verbs started, ended or lifted meanwhile (another `since`) is the disk's;
+    else the turn's, with the disk's stop count and any draining or end the disk gained since the turn began."""
+    since = lambda n: n["since"] if isinstance(n, dict) else None
+    if not isinstance(disk, dict) or since(disk) != since(turn):
+        return disk
+    merged = dict(turn, stops=disk["stops"])
+    for k in ("draining", "ended"):
+        if disk[k] and disk[k] != (before or {}).get(k):
+            merged[k] = disk[k]
+    return merged
 
 def _merge(repo, state, before):
     """Save the turn's state, keeping what a verb changed on disk while the turn ran. Returns the merged state."""
-    with edit(repo) as disk:
+    with fc_factorystate.edit(repo) as disk:
         for k in HUMAN_KEYS:
             state[k] = disk[k]
+        state["night"] = _night(state["night"], before["night"], disk["night"])
         gone = set(before["out_of_order"]) - set(state["out_of_order"])
         state["out_of_order"] = [i for i in disk["out_of_order"] if i not in gone] + [i for i in state["out_of_order"] if i not in disk["out_of_order"] and i not in before["out_of_order"]]
         if "offer" in before["said"] and "offer" not in disk["said"] and state["said"].get("offer") == before["said"]["offer"]:
@@ -76,14 +79,14 @@ def _merge(repo, state, before):
 
 def _saved(repo, story, record):
     """Put one dispatch on disk as it happens: a crash later in the turn must not lose it (and start the story again)."""
-    with edit(repo) as disk:
+    with fc_factorystate.edit(repo) as disk:
         disk["dispatched"][story] = record
 
 def _pane(repo):
     """Record the engineering manager's current herdr pane: the loop starts team leads from it, not from the pane that started the loop."""
     pane = os.environ.get("HERDR_PANE_ID")
     if pane and fc_factorystate.load_state(repo)["manager_pane"] != pane:
-        with edit(repo) as state:
+        with fc_factorystate.edit(repo) as state:
             state["manager_pane"] = pane
 
 def run_loop(repo, turns=None):
@@ -101,7 +104,7 @@ def run_loop(repo, turns=None):
     stop = []
     previous = signal.signal(signal.SIGTERM, lambda signum, frame: stop.append(signum))
     try:
-        with edit(repo) as state:
+        with fc_factorystate.edit(repo) as state:
             state["pid"], state["started"] = os.getpid(), time.time()
         done = 0
         while not stop and (turns is None or done < turns):
@@ -109,7 +112,7 @@ def run_loop(repo, turns=None):
                 state = fc_factorystate.load_state(repo)
                 before = copy.deepcopy(state)
                 try:
-                    lines = fc_factoryturn.turn(repo, state, time.time(), stopping=lambda: bool(stop), saved=lambda story, record: _saved(repo, story, record))
+                    lines = fc_night.tick(repo, state, time.time(), stopping=lambda: bool(stop), saved=lambda story, record: _saved(repo, story, record))
                 except Exception as e:  # turn keeps its own lines on a failure; this is the last guard
                     traceback.print_exc()
                     lines = [fc_factorystate.turn_failed(f"{type(e).__name__}: {e}")]
@@ -161,7 +164,7 @@ def verb_start(a, repo):
     state = fc_factorystate.load_state(repo)
     if running(repo):
         sys.exit(f'factory: already running (pid {state["pid"]}); compose factory status shows it')
-    with edit(repo) as state:
+    with fc_factorystate.edit(repo) as state:
         state["stopped"], state["pid"] = None, None  # the old pid would read as a lost loop until the new one takes the lock
         state["manager_pane"] = os.environ.get("HERDR_PANE_ID") or state["manager_pane"]
     pid = spawn_loop(repo)
@@ -180,8 +183,15 @@ def verb_start(a, repo):
     print(f'factory: started (pid {pid}), {p["mode"]} pace {p["cap"]} tickets at once; compose factory watch wakes you on its events')
 
 def verb_stop(a, repo):
+    with fc_factorystate.edit(repo) as state:  # at night the first stop drains, and a second or --now holds the work and ends the night
+        live = fc_night.live(state)
+        line = fc_night.stop_stage(repo, state, a.now)
+        at_once = live and not fc_night.live(state)
+    if line:
+        print(line)
+        return
     held = 0
-    with edit(repo) as state:
+    with fc_factorystate.edit(repo) as state:
         state["stopped"] = time.time()
         for ident, record in sorted(state["dispatched"].items()) if a.hold else ():
             got = fc_factoryturn.project_for(repo, record["feature"])
@@ -194,7 +204,8 @@ def verb_stop(a, repo):
         pid = state["pid"]
     if pid and pid != os.getpid() and alive(pid) and running(repo):
         os.kill(pid, signal.SIGTERM)
-    print(f"factory: stopped; held {held} tasks" if a.hold else "factory: stopped; running work finishes")
+    if not at_once:
+        print(f"factory: stopped; held {held} tasks" if a.hold else "factory: stopped; running work finishes")
 
 def verb_status(a, repo):
     state = fc_factorystate.load_state(repo)
@@ -243,7 +254,7 @@ def verb_watch(a, repo):
         time.sleep(POLL if deadline is None else max(0.0, min(POLL, deadline - time.monotonic())))
 
 def verb_pace(a, repo):
-    with edit(repo) as state:
+    with fc_factorystate.edit(repo) as state:
         p = fc_factorystate.pace(state)
         if a.target is not None and a.target.isdigit() and int(a.target) >= 1:
             state["day_tickets"] = int(a.target)
@@ -256,13 +267,13 @@ def verb_pace(a, repo):
 
 def verb_plan(a, repo):
     if a.done:
-        with edit(repo) as state:
+        with fc_factorystate.edit(repo) as state:
             state["planning"] = None
         print("factory: planning done; offers resume")
         return
     if not a.target:
         sys.exit("factory plan takes the ticket being planned (compose factory plan NEB-30) or --done")
-    with edit(repo) as state:
+    with fc_factorystate.edit(repo) as state:
         state["planning"] = {"id": a.target, "at": time.time()}
         out_of_order = a.target != (state["offer"] or {}).get("id")
         if out_of_order and a.target not in state["out_of_order"]:
@@ -270,7 +281,7 @@ def verb_plan(a, repo):
     print(f"factory: planning {a.target}" + (" (out of order: once it is specced you are asked whether to move it up)" if out_of_order else ""))
 
 def verb_decline(a, repo):
-    with edit(repo) as state:
+    with fc_factorystate.edit(repo) as state:
         state["declined_until"] = time.time() + 60 * fc_config.FACTORY["offer_snooze_minutes"]
         state["said"].pop("offer", None)
     print(f'factory: no planning offers until {clock(state["declined_until"])[:5]}; ready work keeps building')
@@ -279,6 +290,8 @@ def verb_loop(a, repo):
     run_loop(repo)
 
 def cmd_factory(a):
+    if a.action in fc_night.VERBS:
+        return getattr(fc_night, f"verb_{a.action}")(a)
     if a.action in ("start", "loop") and not fc_config.LINEAR_KEY:
         sys.exit(fc_config.needs_linear_key("compose factory"))
     globals()[f"verb_{a.action}"](a, Path(a.repo).resolve())

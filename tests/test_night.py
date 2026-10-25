@@ -807,5 +807,232 @@ class Digest(unittest.TestCase):
         self.assertNotIn(chr(0x2014), text)
 
 
+
+class Night(unittest.TestCase):
+    """The switch, the per-turn tick, and the two-stage stop, through cmd_factory and fc_night.tick."""
+    def setUp(self):
+        global fn
+        import fc_night as fn
+        import argparse, fcntl
+        self.argparse, self.fcntl = argparse, fcntl
+        d = tempfile.TemporaryDirectory(); self.addCleanup(d.cleanup)
+        self.repo = Path(d.name).resolve() / "neb"
+        self.repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        for slug, feature in (("sign-in", "NEB-9"), ("billing", "NEB-20")):
+            self.make(slug, feature)
+        self.sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        self.addCleanup(self.sleeper.wait); self.addCleanup(self.sleeper.kill)
+        mock = unittest.mock
+        self.turn = mock.Mock(return_value=[])
+        self.rests_on, self.hold = mock.Mock(return_value={}), mock.Mock(return_value=[])
+        self.keep_awake, self.slept, self.after_wake = mock.Mock(return_value=None), mock.Mock(return_value=0), mock.Mock(return_value=[])
+        self.jev, self.answer_step, self.refresh = mock.Mock(), mock.Mock(return_value=[]), mock.Mock()
+        self.leads, self.read = mock.Mock(return_value={}), mock.Mock(return_value="")
+        for mod, name, m in ((fn.fc_factoryturn, "turn", self.turn), (fn.fc_reconcile, "live_leads", self.leads), (fn.fc_herdr, "herdr_text", self.read),
+                             (fn.fc_proc, "keep_awake", self.keep_awake), (fn.fc_proc, "slept", self.slept), (fn.fc_sleep, "run_after_wake", self.after_wake),
+                             (fn.fc_models, "jev_ask", self.jev), (fn.fc_change, "rests_on", self.rests_on), (fn.fc_change, "hold_tasks", self.hold),
+                             (fn.fc_answer, "answer_step", self.answer_step), (fn.fc_nightprep, "refresh", self.refresh),
+                             (fd.fc_delivery, "product_plan", mock.Mock(side_effect=RuntimeError("no plan here"))),
+                             (fd.fc_delivery, "last_reconcile", mock.Mock(return_value=None)), (fd.fc_change, "paused_tasks", mock.Mock(return_value={})),
+                             (fd.fc_nightprep, "prep_doc", mock.Mock(side_effect=RuntimeError("no doc here"))),
+                             (fd.fc_yolo, "digest_sections", mock.Mock(return_value=[]))):
+            mock.patch.object(mod, name, m).start()
+        mock.patch.dict(fc_config.FACTORY, {"turn_seconds": 0}).start()
+        mock.patch.dict(fn.CLOCK, {"at": None}).start()
+        self.addCleanup(mock.patch.stopall)
+
+    def make(self, slug, feature):
+        (self.proj(slug) / "results").mkdir(parents=True)
+        (self.proj(slug) / "verify.json").write_text("{}")
+        (self.proj(slug) / "linear.json").write_text(json.dumps({"feature": feature}))
+
+    def proj(self, slug):
+        return self.repo / ".compose" / slug
+
+    def save(self, **kv):
+        s = st.load_state(self.repo); s.update(kv); st.save_state(self.repo, s)
+
+    def load(self):
+        return st.load_state(self.repo)
+
+    def hold_lock(self):
+        """Stand in for a live loop: hold the repo's loop lock until the test ends."""
+        lock = open(f.lock_path(self.repo), "a"); self.fcntl.flock(lock, self.fcntl.LOCK_EX)
+        self.addCleanup(lock.close)
+
+    def posture(self, slug, mode):
+        (self.proj(slug) / "results" / "yolo.json").write_text(json.dumps({"since": "2026-10-26 20:00:00", "decisions": [], "mode": mode}))
+
+    def unposture(self, slug):
+        (self.proj(slug) / "results" / "yolo.json").unlink()
+
+    def result(self, slug, tid, cost, mtime):
+        path = self.proj(slug) / "results" / f"{tid}.json"
+        path.write_text(json.dumps({"cost": cost})); os.utime(path, (mtime, mtime))
+
+    def verb(self, action, **kw):
+        import contextlib, io
+        args = dict(action=action, target=None, hold=None, done=False, timeout=None, json=False, repo=str(self.repo), until=None, budget=None,
+                    stop_when=None, now=False, at=None, nth=0, ticket=None, project=None)
+        args.update(kw)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            f.cmd_factory(self.argparse.Namespace(**args))
+        return out.getvalue()
+
+    def night_on(self, **kw):
+        self.save(pid=os.getpid())
+        self.verb("night", **kw)
+        self.state = self.load()
+
+    def test_night_needs_the_loop_and_no_away_and_says_its_limits(self):
+        with self.assertRaises(SystemExit) as e:
+            self.verb("night")
+        self.assertEqual(e.exception.code, "factory: night needs the loop running: compose factory start first")
+        self.save(pid=os.getpid()); self.posture("billing", "away")
+        with self.assertRaises(SystemExit) as e:
+            self.verb("night")
+        self.assertEqual(e.exception.code, "factory: away is on for billing; end it first (compose away off --project billing), night takes over answering")
+        self.unposture("billing"); out = self.verb("night", until="07:00", budget=12.0, stop_when="sign-in is verified").splitlines()
+        self.assertRegex(out[0], r"^factory: night on until 07:00 \(in \d+h \d+m\), budget \$12\.00 of real spend, stop when: sign-in is verified; up to 6 tickets at once under the load hold$")
+        self.assertEqual(out[1], "questions on approved tickets go to the night answerer (claude:claude-opus-5-5, high); planning and the never-set wait for you")
+        self.assertEqual(out[2], "back: your first message ends it with compose factory day, which prints the morning digest")
+        self.assertEqual((self.load()["mode"], fc.fc_tasks.yolo_state(self.proj("sign-in"))["mode"]), ("night", "night"))
+
+    def test_night_refuses_a_second_night_and_clears_planning_and_declines(self):
+        self.save(planning={"id": "NEB-30", "at": 1.0}, declined_until=time.time() + 600)
+        self.night_on(until="07:00")
+        self.assertEqual((self.state["planning"], self.state["declined_until"]), (None, None))
+        with self.assertRaises(SystemExit) as e:
+            self.verb("night")
+        self.assertRegex(e.exception.code, r"^factory: night is already on since \d\d:\d\d until 07:00; compose factory day ends it$")
+
+    def test_a_tick_drains_at_the_budget_and_ends_when_nothing_dispatched_is_in_flight(self):
+        self.night_on(budget=1.0); self.result("sign-in", "001", 1.5, mtime=time.time())
+        self.state["dispatched"] = {"NEB-10": {"feature": "NEB-9", "project": "sign-in", "kind": "build", "at": 1.0}}
+        lines = fn.tick(self.repo, self.state, time.time())
+        self.assertIn("event factory=draining why=budget spend=1.50 budget=1.00  (nothing new starts; running work finishes; the night ends when nothing is in flight)", lines)
+        self.assertEqual(fc.fc_factorystate.pace(self.state)["cap"], 0); self.assertIsNone(self.state["night"]["ended"])
+        self.state["dispatched"] = {}; lines = fn.tick(self.repo, self.state, time.time())
+        self.assertIn("event factory=night-ended state=budget  (compose factory day prints the morning digest)", lines)
+        self.assertEqual(len([l for l in lines if "draining" in l]), 0)
+
+    def test_stop_is_graceful_first_and_immediate_second_keeping_the_work(self):
+        self.night_on(); self.hold_lock(); self.save(pid=self.sleeper.pid, dispatched={"NEB-10": {"feature": "NEB-9", "project": "sign-in", "kind": "build", "at": 1.0}})
+        self.assertEqual(self.verb("stop").strip(), "factory: stopping gracefully: nothing new starts, running work finishes, and questions are still answered; "
+                                                    "run compose factory stop again to stop at once")
+        self.assertIsNone(self.sleeper.poll()); self.assertEqual(self.load()["night"]["draining"], "stopped")
+        self.rests_on.return_value = {"002": "under NEB-10"}
+        self.assertEqual(self.verb("stop").splitlines()[0], "factory: stopped at once; held 1 task, its work is kept on its ref (compose change keep|part|discard settles it)")
+        self.hold.assert_called_once_with(self.proj("sign-in"), ["002"], "night stopped at once by the product owner")
+        self.assertEqual(self.load()["night"]["ended"]["state"], "stopped at once"); self.sleeper.wait(timeout=5)
+
+    def test_stop_now_stops_at_once_on_the_first_stop(self):
+        self.night_on(); self.hold_lock(); self.save(pid=self.sleeper.pid)
+        self.assertEqual(self.verb("stop", now=True).splitlines()[0], "factory: stopped at once; held 0 tasks, their work is kept on their refs (compose change keep|part|discard settles it)")
+        self.assertEqual(self.load()["night"]["ended"]["state"], "stopped at once"); self.sleeper.wait(timeout=5)
+
+    def test_day_ends_the_night_prints_and_saves_the_digest_and_lifts_the_posture(self):
+        self.night_on(); out = self.verb("day")
+        self.assertTrue(out.startswith(f"morning digest for {self.repo.name}:"))
+        self.assertEqual(self.load()["mode"], "day"); self.assertIsNone(fc.fc_tasks.yolo_state(self.proj("sign-in")))
+        self.assertEqual(len(list((self.repo / ".compose" / "digests").glob("night-*.txt"))), 1)
+        self.assertIn("ended: back", out); self.assertTrue(ns.notes_tail(self.repo).rstrip().endswith("ended: back"))
+        self.assertEqual(len(list((self.proj("sign-in") / "results").glob("yolo-*.json"))), 1)
+        with self.assertRaises(SystemExit) as e:
+            self.verb("day")
+        self.assertEqual(e.exception.code, "factory: night is not on")
+
+    def test_digest_prints_and_changes_nothing(self):
+        self.night_on(); before = self.load()
+        self.assertIn("ended: still on", self.verb("digest"))
+        self.assertEqual(self.load(), before)
+
+    def test_a_tick_keeps_the_mac_awake_and_recovers_runs_after_a_sleep(self):
+        self.night_on(); self.state["dispatched"] = {"NEB-10": {"feature": "NEB-9", "project": "sign-in", "kind": "build", "at": 1.0}}
+        fn.CLOCK["at"] = fc_proc.clock(); self.slept.return_value = 3600
+        now = time.time(); lines = fn.tick(self.repo, self.state, now)
+        self.keep_awake.assert_called_once_with()
+        self.assertTrue(any(l.startswith("event factory=woke slept=") for l in lines))
+        self.after_wake.assert_called_once_with(self.repo, self.proj("sign-in"), (now - 3600, now), now)
+        self.assertIsNotNone(fn.CLOCK["at"])
+
+    def test_the_stop_condition_drains_after_a_verified_story(self):
+        self.night_on(stop_when="sign-in is verified")
+        self.state["dispatched"] = {"NEB-11": {"feature": "NEB-9", "project": "sign-in", "kind": "build", "at": 1.0}}
+        self.turn.return_value = ["event factory=verified story=NEB-10 project=sign-in  (verified)"]
+        self.jev.return_value = {"answers": {"stop": {"choice": "NOT_MET", "probabilities": {"MET": 0.5, "NOT_MET": 0.5}}}}
+        fn.tick(self.repo, self.state, time.time()); self.assertIsNone(self.state["night"]["draining"])
+        self.assertEqual(self.jev.call_args.args[2], {"condition": "sign-in is verified", "verified": self.turn.return_value})
+        self.jev.return_value = {"answers": {"stop": {"choice": "MET", "probabilities": {"MET": 0.8, "NOT_MET": 0.2}}}}
+        lines = fn.tick(self.repo, self.state, time.time())
+        self.assertEqual(self.state["night"]["draining"], "stop-when")
+        self.assertIn("event factory=draining why=stop-when  (nothing new starts; running work finishes; the night ends when nothing is in flight)", lines)
+
+    def test_stop_met_is_none_when_jev_cannot_say(self):
+        self.jev.side_effect = RuntimeError("typesafe down")
+        self.assertIsNone(fn.stop_met("x", ["event factory=verified story=NEB-10"]))
+        self.jev.side_effect = None; self.jev.return_value = {"answers": {}}
+        self.assertIsNone(fn.stop_met("x", ["event factory=verified story=NEB-10"]))
+
+    def test_night_posture_reaches_projects_dispatched_later(self):
+        self.night_on(); self.unposture("billing"); self.make("admin", "NEB-40"); self.posture("admin", "away")
+        self.state["dispatched"] = {"NEB-21": {"feature": "NEB-20", "project": "billing", "kind": "build", "at": 1.0},
+                                    "NEB-41": {"feature": "NEB-40", "project": "admin", "kind": "build", "at": 1.0}}
+        fn.tick(self.repo, self.state, time.time())
+        self.assertEqual(fc.fc_tasks.yolo_state(self.proj("billing"))["mode"], "night")
+        self.assertEqual(fc.fc_tasks.yolo_state(self.proj("admin"))["mode"], "away")
+        self.assertFalse(fn.posture_on(self.proj("admin"), "2026-10-26 22:00:00"))
+        self.assertIsNone(fn.posture_off(self.proj("admin"))); self.assertEqual(fc.fc_tasks.yolo_state(self.proj("admin"))["mode"], "away")
+
+    def test_no_credit_ends_the_night_at_once(self):
+        self.night_on(); caffeinate = unittest.mock.Mock(**{"poll.return_value": None})
+        (self.proj("billing") / "results" / "resume.json").write_text(json.dumps({"provider": "openrouter"}))
+        with unittest.mock.patch.dict(fc_proc.AWAKE, {os.getpid(): caffeinate}):
+            lines = fn.tick(self.repo, self.state, time.time())
+            self.assertNotIn(os.getpid(), fc_proc.AWAKE)
+        self.assertTrue(any("event factory=night-ended state=no-credit" in l for l in lines))
+        caffeinate.terminate.assert_called_once_with(); self.turn.assert_not_called()
+        self.assertEqual(self.state["night"]["ended"]["state"], "no-credit")
+
+    def test_a_day_tick_is_the_turn_then_the_refresh(self):
+        self.state = self.load(); self.state["prep"] = {"NEB-12": {"pid": None, "print": "x", "at": 1.0}}
+        self.turn.return_value = ["event factory=dispatched story=NEB-10"]
+        self.assertEqual(fn.tick(self.repo, self.state, 5.0), ["event factory=dispatched story=NEB-10"])
+        self.keep_awake.assert_not_called(); self.answer_step.assert_not_called()
+        self.assertEqual(self.refresh.call_args.args[:4], (self.repo, self.state, ["event factory=dispatched story=NEB-10"], 5.0))
+
+    def test_the_usage_step_reads_the_live_leads_and_prompts_them(self):
+        self.night_on(); self.leads.return_value = {"sign-in": "sign-in-orchestrator"}
+        fn.tick(self.repo, self.state, time.time())
+        self.read.assert_called_once_with("agent", "read", "sign-in-orchestrator", "--source", "recent-unwrapped", "--lines", "12")
+
+    def race(self, during):
+        """One loop turn while a verb writes the state on disk: what the verb changed must survive the turn's save."""
+        def turn(repo, state, now, **kw):
+            self.verb(during)
+            if state.get("night"):
+                state["night"]["spend"] = 0.5  # the turn's own change to the night
+            return []
+        self.turn.side_effect = turn
+        f.run_loop(self.repo, turns=1)
+        return self.load()
+
+    def test_a_night_switched_on_during_a_turn_survives_it(self):
+        s = self.race("night")
+        self.assertEqual(s["mode"], "night"); self.assertIsNotNone(s["night"]); self.assertEqual(s["night"]["spend"], 0.0)
+
+    def test_a_day_during_a_turn_survives_it(self):
+        self.night_on()
+        s = self.race("day")
+        self.assertEqual((s["mode"], s["night"]["ended"]["state"]), ("day", "back"))
+
+    def test_a_graceful_stop_during_a_turn_survives_it(self):
+        self.night_on()
+        s = self.race("stop")
+        self.assertEqual((s["night"]["draining"], s["night"]["stops"], s["night"]["spend"]), ("stopped", 1, 0.5))
+
+
 if __name__ == "__main__":
     unittest.main()
