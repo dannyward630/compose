@@ -4,7 +4,9 @@ read_stdin
 read_body
 linear_project
 in_scope
+label_ids
 state_and_labels
+label_changes
 PRIORITIES
 priority
 print_body

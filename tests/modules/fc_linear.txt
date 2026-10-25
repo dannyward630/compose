@@ -29,6 +29,7 @@ linear_roll_up
 linear_event
 linear_merged
 linear_reconcile
+NEEDS_SHAPING
 ready_ids
 LINEAR_READY_TREE
 linear_mark_ready

@@ -392,6 +392,9 @@ class ReadyRule(unittest.TestCase):
         self.assertEqual(self.ready(*nodes), ["NEB-9", "NEB-3", "NEB-1", "NEB-7"])
         self.assertEqual(self.ready(), [])
 
+    def test_a_ticket_labeled_needs_shaping_is_never_ready(self):
+        self.assertEqual(self.ready(self.node("NEB-2", "Todo", labels=("Feature", "Needs-Shaping")), self.node("NEB-3", "Todo")), ["NEB-3"])
+
     def test_ready_only_when_every_blocker_is_finished(self):
         done, canceled = ("blocks", "NEB-1", "Done", ()), ("blocks", "NEB-2", "Canceled", ())
         self.assertEqual(self.ready(self.node("NEB-3", "Todo", done, canceled)), ["NEB-3"])
@@ -451,6 +454,13 @@ class MarkReady(unittest.TestCase):
         self.assertCountEqual(self.updates, [{"id": "id-ENG-2", "labels": ["l-bug", "l-area", "l-ready"]},
                                              {"id": "id-ENG-3", "labels": ["l-bug", "l-area"]}, {"id": "id-ENG-6", "labels": ["l-ready"]}])
         self.assertCountEqual(self.said, ["linear ENG-2 -> Ready", "linear ENG-3 -> not Ready", "linear ENG-6 -> Ready"])
+
+    def test_a_child_labeled_needs_shaping_loses_ready_and_keeps_the_label(self):
+        self.team.append({"id": "l-needs-shaping", "name": "needs-shaping"})
+        self.children = [self.node("ENG-2", "Todo", "Ready", "needs-shaping")]
+        self.mark()
+        self.assertEqual(self.updates, [{"id": "id-ENG-2", "labels": ["l-needs-shaping"]}])
+        self.assertEqual(self.said, ["linear ENG-2 -> not Ready"])
 
     def test_a_story_without_a_live_task_is_not_ready(self):
         self.children = [self.node("ENG-2", "Todo", tasks=()), self.node("ENG-3", "Backlog", "Ready", tasks=("Canceled", "canceled")),

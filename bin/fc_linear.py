@@ -360,11 +360,14 @@ def linear_reconcile(proj, verified=False):
         fc_core.say(f"linear {feature}: update failed ({str(e)[:200]})")
 
 
+NEEDS_SHAPING = "needs-shaping"
+
 def ready_ids(issues):
     """The identifiers, in input order, of the issues that can start now: state Todo or Backlog and every `blocks`
-    blocker finished (Done or Canceled, or In Review carrying the Design label)."""
+    blocker finished (Done or Canceled, or In Review carrying the Design label), and none carries the needs-shaping label."""
     return [i["identifier"] for i in issues
             if (i["state"]["name"] or "").lower() in ("todo", "backlog")
+            and NEEDS_SHAPING not in [l["name"].lower() for l in i["labels"]["nodes"]]
             and all(fc_tasks.blocker_finished(r["issue"]["state"]["name"], [l["name"] for l in r["issue"]["labels"]["nodes"]])
                     for r in i["inverseRelations"]["nodes"] if r["type"] == "blocks")]
 

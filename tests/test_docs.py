@@ -607,6 +607,7 @@ class BrainstormShape(unittest.TestCase):
         "Before writing the design, bring the two or three approaches that survived, each with what it changes and costs, and the one you recommend with why, as one question; the choice goes under Decided by the product owner, or under My calls when they hand it to you, and a change small enough to approve in chat skips this.",
         "Outside herdr, give the printed brief to a fresh harness subagent with no conversation context and read its one report.",
         "The product owner approves the tech doc, and that is recorded the same way: `compose decide --project <slug> --issue <id> --new \"the tech doc on <id> is approved\" --quote \"<their words>\"`.",
+        "When the issue carries the `needs-shaping` label, drop it in the same step: `compose linear update <id> --drop-label needs-shaping`.",
     ]
     LOOKUP = [
         "1. the feature issue's Decisions so far and Notes, and the description and comments of the feature, its epic, and the story at hand",
@@ -640,6 +641,7 @@ class BrainstormShape(unittest.TestCase):
         at = self.lines.index
         self.assertLess(at("**How it gets made.**"), at(self.ONCE[17]))
         self.assertLess(at(self.ONCE[17]), at("**Play it back.**"))
+        self.assertEqual(self.lines.index(self.ONCE[-1]), next(n for n, x in enumerate(self.lines) if "the design on <id> is approved" in x) + 1)
         self.assertLess(at(self.ONCE[6]), at(self.ONCE[18]))
         self.assertLess(at(self.ONCE[18]), at("Hand nothing over until it is back."))
         self.assertLess(at(self.ONCE[14]), at(self.ONCE[19]))

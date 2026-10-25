@@ -490,8 +490,19 @@ class LinearUpdate(unittest.TestCase):
         self.assertEqual(self.calls, [])
         self.assertEqual(self.update("## Goal\nnew brief\n", description=True)[0], {"description": "## Goal\nnew brief\n"})
 
+    def test_add_and_drop_label_keep_the_other_labels(self):
+        self.issue["team"]["labels"]["nodes"] += [{"id": "l9", "name": "Ready"}, {"id": "l8", "name": "needs-shaping"}]
+        sent, _, _ = self.update(drop_label=["ready"], add_label=["needs-shaping"])
+        self.assertEqual(sent, {"removedLabelIds": ["l9"], "addedLabelIds": ["l8"]})
+
+    def test_label_and_add_or_drop_together_refuse_and_an_unknown_name_names_the_create_line(self):
+        self.assertEqual(self.fails(fc.fc_linear_cmd.verb_update, self.args("update", "ENG-7", label=["Bug"], drop_label=["Bug"])),
+                         (1, "update takes --label (the whole list) or --add-label/--drop-label, not both"))
+        self.assertEqual(self.fails(fc.fc_linear_cmd.verb_update, self.args("update", "ENG-7", add_label=["deep-dive"])),
+                         (1, "team Engineering has no label 'deep-dive'; compose linear labels --create deep-dive makes it"))
+
     def test_nothing_to_change_refuses_before_reading_the_issue(self):
-        want = (1, "update needs --title, --state, --parent, --label, --priority, --blocked-by, or a body: --section, --append, or --description with --file or stdin")
+        want = (1, "update needs --title, --state, --parent, --label, --add-label, --drop-label, --priority, --blocked-by, or a body: --section, --append, or --description with --file or stdin")
         self.assertEqual(self.fails(fc.fc_linear_cmd.verb_update, self.args("update", "ENG-7")), want)
         self.assertEqual(self.calls, [])
 

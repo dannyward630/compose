@@ -158,7 +158,8 @@ def main():
             s.add_argument("target", nargs="*")
             for flag in ("--body", "--comments", "--json", "--append", "--description", "--any-project", "--fresh"):
                 s.add_argument(flag, action="store_true")
-            s.add_argument("--label", action="append")
+            for flag in ("--label", "--add-label", "--drop-label"):
+                s.add_argument(flag, action="append")
             for flag in ("--parent", "--search", "--state", "--priority", "--title", "--blocked-by", "--file", "--section", "--expect", "--create", "--into"):
                 s.add_argument(flag)
         if name == "cost":
