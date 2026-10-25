@@ -62,7 +62,7 @@ def herdr_pi(cwd, model, prompt, session, task, timeout=None):
             time.sleep(1)
             continue
         break
-    if err and fc_proc.task_paused(meta["id"]):  # the pause hook's esc and pane close ended the wait
+    if fc_proc.task_paused(meta["id"]):  # the pause hook's esc and pane close ended the wait, with an error or without
         raise fc_proc.Paused
     def read_turn():  # what pi wrote to its session file since the last turn, priced and added to the ledger
         if not session.get("sfile"):
@@ -372,6 +372,8 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
                                                                timeout=fc_models.TURN_TIMEOUT)
                 finally:
                     fc_proc.TASK.id = None
+                if fc_proc.task_paused(tid):  # a harness that swallowed the cut: the turn's edits are kept, never tested or committed
+                    raise fc_proc.Paused
         except fc_proc.Paused:
             status = "paused"
             break

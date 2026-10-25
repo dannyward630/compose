@@ -17,7 +17,15 @@ def snapshot(repo, proj, tid, wt, base):
 def paused_result(repo, proj, meta, wt, base, base_name, log, attempts, cost, started, reason):
     """A task a hold stopped mid-flight: its work kept on a ref, its worktree removed, the result written as `paused`
     (the run treats it as pending again). `attempts` is the count spent and `cost` what the turns cost."""
-    ref, files = snapshot(repo, proj, meta["id"], wt, base)
+    try:
+        ref, files = snapshot(repo, proj, meta["id"], wt, base)
+    except RuntimeError as e:  # the edits could not be kept: the clone stays as they are, and the result says why
+        log.append({"error": f"pause snapshot failed: {str(e)[-500:]}"})
+        failed = {"id": meta["id"], "title": meta.get("title"), "status": "failed", "model": meta["model"], "attempts": attempts,
+                  "seconds": round(time.time() - started, 1), "cost": round(cost, 6), "branch": "-", "base": base_name, "worktree": str(wt), "log": log}
+        fc_core.say(f"{meta['id']} ERROR   pause snapshot failed; the clone is kept at {wt}: {str(e)[-200:]}")
+        fc_core.atomic_write(Path(proj) / "results" / f"{meta['id']}.json", json.dumps(failed, indent=2))
+        return failed
     shutil.rmtree(wt, ignore_errors=True)
     fc_readguard.guard_file(wt).unlink(missing_ok=True)  # its read counts go with the clone
     total = round(time.time() - started, 1)

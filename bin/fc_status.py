@@ -58,8 +58,8 @@ def task_state(repo, proj, meta, trunk_head, facts=None):
     if state == "paused" and r.get("paused"):
         k = r["paused"]
         note = f"{k.get('reason') or 'paused'}; work kept ({len(k.get('files', []))} files)"
-        if (k.get("choice") or r.get("choice")) == "part":
-            note += f"; part kept ({', '.join(k.get('keep') or r.get('keep') or [])})"
+        if k.get("choice") == "part":
+            note += f"; part kept ({', '.join(k.get('keep') or [])})"
     wf, dp = fc_routecost.route(proj, meta)
     n = fc_routecost.counts(r, fc_routecost.rounds(proj), tid)
     return {"id": tid, "title": meta.get("title", ""), "state": state, "attempts": r.get("attempts", 0), "seconds": r.get("seconds", 0.0),

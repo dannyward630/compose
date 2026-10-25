@@ -58,6 +58,48 @@ class PauseRunningTask(unittest.TestCase):
         self.assertEqual((r["status"], len(turns)), ("paused", 1))
 
 
+    def test_a_turn_that_returns_after_the_pause_never_reaches_its_test(self):
+        tests, turned = [], []  # the base is tested once before the turn; only a test after it counts
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            turned.append(1)
+            fc.fc_proc.pause_task("001")  # the cut did not end the turn with an error: it came back with the answer written
+            (Path(cwd) / "a.txt").write_text("yes\n")
+            return "s", "", 1, {"cost": 0.0}
+        with mock.patch.object(fc.fc_implement, "run_test", lambda *a: (tests.append(1) if turned else None) or mock.Mock(returncode=1, stdout="", stderr="")):
+            r, repo, _ = self.go(impl)
+        self.assertEqual((r["status"], tests), ("paused", []))
+        self.assertEqual([e for _, e in self.linear_events], ["dispatched"])
+        self.assertEqual(git(repo, "branch", "--list", "task-*"), "")  # nothing committed to a task branch
+
+    def test_a_snapshot_that_fails_reports_an_error_and_keeps_the_clone(self):
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            (Path(cwd) / "b.txt").write_text("new\n")
+            fc.fc_proc.pause_task("001")
+            return "s", "", 1, {"cost": 0.0}
+        with mock.patch.object(fc.fc_implement.fc_pause, "snapshot", side_effect=RuntimeError("git broke")):
+            r, _, proj = self.go(impl, reason="D2 changed")
+        self.assertEqual(r["status"], "failed")
+        self.assertIn("pause snapshot failed", json.dumps(r["log"]))
+        self.assertTrue((proj / "worktrees" / "001" / "b.txt").exists())
+        self.assertEqual(json.loads((proj / "results" / "001.json").read_text())["status"], "failed")
+
+
+class HerdrPiPause(unittest.TestCase):
+    def turn(self, answer):
+        proj = Path(tempfile.mkdtemp()) / "hw"
+        task = {"proj": proj, "meta": {"id": "001", "title": "t"}, "space": "s"}
+        session = {"name": "hw-001", "pane": "p1", "sfile": None, "seen": 0}
+        self.addCleanup(fc.fc_proc.resume_task, "001")
+        fc.fc_proc.pause_task("001")
+        with mock.patch.object(fc.fc_herdr, "herdr_error", return_value=answer), mock.patch.object(fc.fc_herdr, "herdr", return_value={}):
+            fc.fc_implement.herdr_pi(tempfile.mkdtemp(), "x/y", "hi", session, task)
+
+    def test_a_paused_task_raises_paused_whether_or_not_herdr_reported_an_error(self):
+        for answer in (({"ok": 1}, None), (None, "agent_error")):
+            with self.subTest(answer=answer), self.assertRaises(fc.fc_proc.Paused):
+                self.turn(answer)
+
+
 class RunLoopPauses(unittest.TestCase):
     def setUp(self):
         self.proj = project()
@@ -78,6 +120,25 @@ class RunLoopPauses(unittest.TestCase):
         self.assertEqual(calls.count("002"), 1)  # not restarted while held
         self.assertIn("002 held    D2 changed", out)
         self.assertFalse(fc.fc_proc.task_paused("002"))  # cleared when its result came back
+
+    def test_a_hold_that_vanishes_between_reads_does_not_stop_the_loop(self):
+        gone = []
+        real = fc.fc_tasks.held
+        def held(proj):  # the hold shows for two reads once 002 runs, then a release lands
+            if len(gone) >= 2 or not seen:
+                return {}
+            gone.append(1)
+            return {"002": {"reason": "D2 changed", "at": "x"}}
+        seen = []
+        def during(tid):
+            if tid == "002":
+                seen.append(1)
+                end = time.time() + 3
+                while time.time() < end and len(gone) < 2:
+                    time.sleep(0.05)
+        with mock.patch.object(fc.fc_tasks, "held", held):
+            _, out, _ = run_all(self.proj, during=during, parallel=2)
+        self.assertIn("run done", out)
 
 
 if __name__ == "__main__":
