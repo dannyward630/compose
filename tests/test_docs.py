@@ -1698,7 +1698,7 @@ REPLAN = [
     "3. The 3b gate applies unchanged: a list that matches what the product owner just settled dispatches at once, and anything past it goes back up.",
     "4. Settle each task `compose status` shows paused: `compose change keep|part|discard <id> [--files a,b]`; keep when its work still fits the new brief, part for the files that still do, discard when what it rested on is gone.",
     "5. Sync, then `compose change done`: it comments the change on the feature, and refuses while a paused task is unsettled.",
-    "6. `compose hold --release <ids>`, then `compose run --only <new and redone ids> --redo` for the layers built on the old line.",
+    "6. `compose hold --release <ids>`, then `compose run --only <new and redone ids> --redo` for the layers built on the old line, adding the paused tasks you kept, part kept or discarded when the run has ended (a live run restarts them on release).",
 ]
 
 

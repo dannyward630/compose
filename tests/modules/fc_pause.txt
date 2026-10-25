@@ -1,4 +1,6 @@
 snapshot
+ends_paused
+clear_clone
 paused_result
 CARRY_NOTE
 carry_note

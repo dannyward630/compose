@@ -19,6 +19,7 @@ TEAMMATE_RELEASE
 steer_teammate
 save_hold
 hold_tasks
+false_alarm
 cmd_hold
 CHANGE_SYNC_MAX
 CHANGE_CONTENT

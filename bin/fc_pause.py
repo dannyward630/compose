@@ -1,18 +1,42 @@
 import json, shutil, subprocess, time
 from pathlib import Path
-import fc_core, fc_readguard
+import fc_core, fc_proc, fc_readguard
 
 def snapshot(repo, proj, tid, wt, base):
     """Commit the whole state of a task's worktree (tracked, new and deleted files) on top of `base` and fetch it into `repo` as
-    refs/compose/<project>/paused/<id>. Returns (that ref, the files the state changes against `base`)."""
+    refs/compose/<project>/paused/<id>. An earlier pause's commit on that ref becomes a second parent, so the files a settle or
+    a carry-over left out of this state stay on the ref. Returns (that ref, the files the state changes against `base`)."""
     ident = ["-c", "user.name=compose", "-c", "user.email=compose@localhost"]
+    ref = f"refs/compose/{Path(proj).name}/paused/{tid}"
     fc_core.sh(["git", "add", "-A"], wt)
     tree = fc_core.sh(["git", "write-tree"], wt).stdout.strip()
-    commit = fc_core.sh(["git", *ident, "commit-tree", tree, "-p", base, "-m", f"paused {tid}"], wt).stdout.strip()
+    prev = fc_core.sh(["git", "rev-parse", "-q", "--verify", ref + "^{commit}"], repo, check=False).stdout.strip()
+    if prev:  # the clone may not hold that commit: fetch it by its ref, never by sha
+        fc_core.sh(["git", "fetch", "-q", str(repo), f"+{ref}:refs/compose/before/{tid}"], wt)
+    commit = fc_core.sh(["git", *ident, "commit-tree", tree, "-p", base, *(["-p", prev] if prev else []), "-m", f"paused {tid}"], wt).stdout.strip()
     fc_core.sh(["git", "update-ref", f"refs/compose/paused/{tid}", commit], wt)
-    ref = f"refs/compose/{Path(proj).name}/paused/{tid}"
     fc_core.sh(["git", "fetch", "-q", str(wt), f"+refs/compose/paused/{tid}:{ref}"], repo)
     return ref, fc_core.sh(["git", "diff", "--name-only", base, commit], wt).stdout.split()
+
+def ends_paused(status, tid):
+    """Whether a task's attempts end `paused`: the loop broke on the pause, or a hold landed while the last test or checks ran
+    and they did not pass (a pass that came first stays passed)."""
+    return status == "paused" or (status != "passed" and fc_proc.task_paused(tid))
+
+def clear_clone(proj, tid, wt):
+    """Remove a task's previous clone before a fresh start; one a failed pause snapshot left with its edits is moved aside, and said."""
+    if not wt.exists():
+        return
+    try:
+        last = json.loads((Path(proj) / "results" / f"{tid}.json").read_text())
+    except (OSError, ValueError):
+        last = {}
+    if last.get("snapshot_failed") and last.get("worktree") == str(wt):
+        aside = wt.with_name(f"{wt.name}-unsaved-{time.strftime('%Y%m%d-%H%M%S')}")
+        shutil.move(str(wt), str(aside))
+        fc_core.say(f"{tid} note    the clone a failed pause snapshot kept is moved to {aside}; rescue its edits from there")
+        return
+    shutil.rmtree(wt)
 
 def paused_result(repo, proj, meta, wt, base, base_name, log, attempts, cost, started, reason):
     """A task a hold stopped mid-flight: its work kept on a ref, its worktree removed, the result written as `paused`
@@ -22,20 +46,22 @@ def paused_result(repo, proj, meta, wt, base, base_name, log, attempts, cost, st
     except RuntimeError as e:  # the edits could not be kept: the clone stays as they are, and the result says why
         log.append({"error": f"pause snapshot failed: {str(e)[-500:]}"})
         failed = {"id": meta["id"], "title": meta.get("title"), "status": "failed", "model": meta["model"], "attempts": attempts,
-                  "seconds": round(time.time() - started, 1), "cost": round(cost, 6), "branch": "-", "base": base_name, "worktree": str(wt), "log": log}
-        fc_core.say(f"{meta['id']} ERROR   pause snapshot failed; the clone is kept at {wt}: {str(e)[-200:]}")
+                  "seconds": round(time.time() - started, 1), "cost": round(cost, 6), "branch": "-", "base": base_name, "worktree": str(wt),
+                  "snapshot_failed": True, "log": log}
+        fc_core.say(f"{meta['id']} ERROR   pause snapshot failed; the clone is kept at {wt}: rescue it before the task runs again,"
+                    f" which moves it aside: {str(e)[-200:]}")
         fc_core.atomic_write(Path(proj) / "results" / f"{meta['id']}.json", json.dumps(failed, indent=2))
         return failed
-    shutil.rmtree(wt, ignore_errors=True)
-    fc_readguard.guard_file(wt).unlink(missing_ok=True)  # its read counts go with the clone
     total = round(time.time() - started, 1)
-    fc_core.say(f"{meta['id']} paused  {reason}; work kept on {ref} ({len(files)} files)")
     result = {"id": meta["id"], "title": meta.get("title"), "status": "paused", "model": meta["model"], "attempts": attempts,
               "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started)), "seconds": total, "cost": round(cost, 6),
               "branch": "-", "base": base_name, "log": log,
               "paused": {"ref": ref, "base": base, "files": files, "at": time.strftime("%Y-%m-%d %H:%M:%S"), "reason": reason}}
     (Path(proj) / "results").mkdir(exist_ok=True)
-    fc_core.atomic_write(Path(proj) / "results" / f"{meta['id']}.json", json.dumps(result, indent=2))
+    fc_core.atomic_write(Path(proj) / "results" / f"{meta['id']}.json", json.dumps(result, indent=2))  # first: a crash after it loses no record
+    shutil.rmtree(wt, ignore_errors=True)
+    fc_readguard.guard_file(wt).unlink(missing_ok=True)  # its read counts go with the clone
+    fc_core.say(f"{meta['id']} paused  {reason}; work kept on {ref} ({len(files)} files)")
     return result
 
 CARRY_NOTE = "WORK KEPT FROM BEFORE A PLAN CHANGE: {files} already hold edits made under the old brief. Keep what still fits the brief below and change what does not.\n\n"

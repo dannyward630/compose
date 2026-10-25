@@ -85,6 +85,98 @@ class PauseRunningTask(unittest.TestCase):
         self.assertTrue((proj / "worktrees" / "001" / "b.txt").exists())
         self.assertEqual(json.loads((proj / "results" / "001.json").read_text())["status"], "failed")
 
+    def test_a_hold_during_the_last_attempts_test_that_fails_ends_paused_with_its_work(self):
+        turns = []
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            turns.append(1)
+            (Path(cwd) / "a.txt").write_text("half\n")
+            return "s", "", 1, {"cost": 0.0}
+        real = fc.fc_implement.run_test
+        def run_test(meta, wt):
+            if len(turns) == 3:  # the hold lands while the last attempt's test runs, and that test fails
+                fc.fc_proc.pause_task("001")
+            return real(meta, wt)
+        with mock.patch.object(fc.fc_implement, "run_test", run_test):
+            r, repo, proj = self.go(impl, reason="D2 changed")
+        self.assertEqual((r["status"], len(turns)), ("paused", 3))
+        self.assertEqual(git(repo, "show", f"{r['paused']['ref']}:a.txt"), "half\n")
+        self.assertEqual(json.loads((proj / "results" / "001.json").read_text())["status"], "paused")
+        self.assertEqual([e for _, e in self.linear_events], ["dispatched"])  # no failed event
+
+    def test_a_pass_before_the_hold_landed_stays_passed(self):
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            (Path(cwd) / "a.txt").write_text("yes\n")
+            return "s", "", 1, {"cost": 0.0}
+        real = fc.fc_implement.run_test
+        def run_test(meta, wt):
+            out = real(meta, wt)
+            if not out.returncode:
+                fc.fc_proc.pause_task("001")
+            return out
+        with mock.patch.object(fc.fc_implement, "run_test", run_test):
+            r, _, _ = self.go(impl)
+        self.assertEqual(r["status"], "passed")
+
+    def test_the_paused_result_is_written_before_the_clone_is_removed(self):
+        seen = []
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            (Path(cwd) / "a.txt").write_text("half\n")
+            fc.fc_proc.pause_task("001")
+            return "s", "", 1, {"cost": 0.0}
+        real = fc.fc_implement.fc_pause.shutil.rmtree
+        def rmtree(path, *a, **kw):
+            res = Path(path).parent.parent / "results" / "001.json"
+            seen.append(json.loads(res.read_text()).get("status") if res.exists() else None)
+            return real(path, *a, **kw)
+        with mock.patch.object(fc.fc_implement.fc_pause.shutil, "rmtree", rmtree):
+            self.go(impl)
+        self.assertEqual(seen[-1], "paused")
+
+    def test_a_failed_snapshot_says_to_rescue_the_clone_and_the_next_run_moves_it_aside(self):
+        said = []
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            (Path(cwd) / "b.txt").write_text("new\n")
+            fc.fc_proc.pause_task("001")
+            return "s", "", 1, {"cost": 0.0}
+        with mock.patch.object(fc.fc_implement.fc_pause, "snapshot", side_effect=RuntimeError("git broke")), \
+                mock.patch.object(fc.fc_core, "say", lambda m, *a, **k: said.append(m)):
+            r, repo, proj = self.go(impl, reason="D2 changed")
+        self.assertIn("rescue it before the task runs again", " ".join(said))
+        fc.fc_proc.resume_task("001")
+        (proj / "results" / "hold.json").unlink()
+        said.clear()
+        meta = {"id": "001", "title": "answer", "files": ["a.txt", "b.txt"], "protected": [], "test": "grep -q yes a.txt",
+                "model": "pi:p/primary", "after": "", "linear": "ENG-1", "body": "## Goal\nWrite yes."}
+        def fix(cwd, model, prompt, session=None, task=None, timeout=None):
+            (Path(cwd) / "a.txt").write_text("yes\n")
+            return "s", "", 1, {"cost": 0.0}
+        with mock.patch.object(fc.fc_implement, "implementer", fix), mock.patch.object(fc.fc_implement.fc_trailpack, "trail_pack", return_value=""), \
+                mock.patch.object(fc.fc_config, "TEST_READER", None), mock.patch.dict(os.environ, ENV), \
+                mock.patch.object(fc.fc_linear, "linear_event", lambda *a: None), mock.patch.object(fc.fc_core, "say", lambda m, *a, **k: said.append(m)):
+            fc.fc_implement.run_task(repo, proj, meta, 3)
+        aside = [p for p in (proj / "worktrees").iterdir() if p.name.startswith("001-unsaved-")]
+        self.assertEqual(len(aside), 1)
+        self.assertEqual((aside[0] / "b.txt").read_text(), "new\n")
+        self.assertIn(f"moved to {aside[0]}", " ".join(said))
+
+    def test_a_second_pause_keeps_the_first_pauses_commit_reachable_from_the_ref(self):
+        def impl(cwd, model, prompt, session=None, task=None, timeout=None):
+            (Path(cwd) / "a.txt").write_text("half\n"); (Path(cwd) / "b.txt").write_text("new\n")
+            fc.fc_proc.pause_task("001")
+            return "s", "", 1, {"cost": 0.0}
+        r, repo, proj = self.go(impl)
+        ref, base = r["paused"]["ref"], r["paused"]["base"]
+        first = git(repo, "rev-parse", ref).strip()
+        wt = proj / "worktrees" / "again"
+        git(repo, "clone", "-q", "--shared", str(repo), str(wt))
+        git(wt, "checkout", "-q", base)
+        (wt / "a.txt").write_text("again\n")
+        got, files = fc.fc_implement.fc_pause.snapshot(repo, proj, "001", wt, base)
+        self.assertEqual((got, files), (ref, ["a.txt"]))
+        subprocess.run(["git", "merge-base", "--is-ancestor", first, ref], cwd=repo, check=True)
+        self.assertEqual(git(repo, "show", f"{ref}:a.txt"), "again\n")
+        self.assertEqual(git(repo, "show", f"{ref}^2:b.txt"), "new\n")  # the file the second state left out stays on the ref
+
 
 class HerdrPiPause(unittest.TestCase):
     def turn(self, answer):
@@ -142,6 +234,44 @@ class RunLoopPauses(unittest.TestCase):
             _, out, _ = run_all(self.proj, during=during, parallel=2)
         self.assertIn("run done", out)
 
+
+
+    def test_a_regression_writer_and_a_finished_task_are_not_paused(self):
+        paused = []
+        real_pause = fc.fc_proc.pause_task
+        def pause(tid, hook=None):
+            paused.append(tid)
+            return real_pause(tid, hook)
+        def hold(tid):
+            f = self.proj / "results" / "hold.json"
+            f.write_text(json.dumps({**(json.loads(f.read_text()) if f.exists() else {}), tid: {"reason": "D2 changed", "at": "x"}}))
+        def regress(repo, proj, meta, prior, attempts):
+            end = time.time() + 3
+            while time.time() < end and not dropped:  # one writer of hold.json at a time
+                time.sleep(0.02)
+            hold("002")
+            end = time.time() + 1.5  # long enough for the loop to go round with the hold in place
+            while time.time() < end and not fc.fc_proc.task_paused("002"):
+                time.sleep(0.05)
+            return {"id": "002", "title": "task 002", "status": "passed", "attempts": 1, "seconds": 0.0, "cost": 0.0, "branch": "-", "log": [], "proof": {}}
+        import concurrent.futures as cf
+        real_wait, dropped = cf.wait, []
+        def wait(fs, timeout=None, return_when=None):  # 001 ends done but is left in `running` for one pass, as a pass that missed it would
+            done, rest = real_wait(fs, timeout=timeout, return_when=return_when)
+            late = {f for f in done if not dropped and f.result()["id"] == "001"}
+            if late:
+                hold("001")
+                dropped.append(1)
+            return done - late, rest | late
+        self.addCleanup(fc.fc_proc.resume_task, "001")
+        prior = lambda proj, tid: {"branch": "task-002"} if tid == "002" else None
+        with mock.patch.object(fc.fc_proc, "pause_task", pause), mock.patch.object(fc.fc_run.fc_unproven, "restartable", prior), \
+                mock.patch.object(fc.fc_run.fc_regress, "regress", regress), mock.patch.object(cf, "wait", wait):
+            calls, out, _ = run_all(self.proj, parallel=2)
+        self.assertEqual(dropped, [1])
+        self.assertEqual(paused, [])
+        self.assertNotIn("002 paused", out)
+        self.assertNotIn("001 paused", out)
 
 
 class CarryOver(unittest.TestCase):
@@ -380,28 +510,50 @@ class TeammateSteer(HoldCase):
         self.proj = project()
         with_tasks(self.proj, [task("001"), task("002", "001"), task("003", "002")])
         self.fake()
-        self.calls, self.live = [], set()
+        self.calls, self.live = [], {}  # agent -> its herdr status
         def herdr(*args, **kw):
             if args[:2] == ("agent", "get"):
-                return {} if args[2] in self.live else None
+                return {"agent": {"agent_status": self.live[args[2]]}} if args[2] in self.live else None
             self.calls.append(args)
+            if args[:2] == ("agent", "prompt") and args[3].startswith("Paused"):
+                self.live[args[2]] = "done"  # the teammate answers the pause in one short turn and goes idle
             return {}
         p = mock.patch.object(fc.fc_herdr, "herdr", herdr); p.start(); self.addCleanup(p.stop)
 
     def test_a_hold_pauses_a_live_test_teammate_and_a_release_sends_it_back_to_its_brief(self):
         agent = fc.fc_herdr.agent_name(self.proj.name, "tests-002")
-        self.live = {agent}
+        self.live = {agent: "working"}
         out = self.hold(only="002,003", reason="D2 changed")
         self.assertEqual(self.calls[:2], [("agent", "send-keys", agent, "esc"),
                                           ("agent", "prompt", agent, "Paused: D2 changed. Stop now, keep what you wrote, and wait for the next prompt.")])
         self.assertIn("002 held  D2 changed; its test teammate is paused", out)
         self.assertIn("003 held  D2 changed\n", out)
+        self.assertTrue(fc.fc_tasks.held(self.proj)["002"]["teammate"])
+        self.assertEqual(self.live[agent], "done")
+        self.calls.clear()
         self.hold(release="002")
+        self.assertEqual([c[:3] for c in self.calls], [("agent", "prompt", agent)])  # idle and waiting: prompted, not interrupted
         self.assertIn("compose linear get ENG-2 --body", self.calls[-1][3])
+
+    def test_a_release_leaves_a_teammate_the_hold_did_not_pause_alone(self):
+        agent = fc.fc_herdr.agent_name(self.proj.name, "tests-003")
+        self.hold(only="003", reason="D2 changed")  # no teammate yet
+        self.live = {agent: "working"}  # one started after the hold, mid-turn now
+        self.calls.clear()
+        self.hold(release="003")
+        self.assertEqual(self.calls, [])
+
+    def test_a_hold_does_not_stop_a_regression_writer(self):
+        agent = fc.fc_herdr.agent_name(self.proj.name, "tests-002")
+        self.live = {agent: "working"}
+        (self.proj / "results" / "002.json").write_text(json.dumps({"id": "002", "status": "unproven"}))
+        out = self.hold(only="002", reason="D2 changed")
+        self.assertEqual(self.calls, [])
+        self.assertNotIn("teammate", out)
 
     def test_a_teammate_that_is_done_or_does_not_take_the_prompt_is_not_called_paused(self):
         agent = fc.fc_herdr.agent_name(self.proj.name, "tests-002")
-        self.live = {agent}
+        self.live = {agent: "working"}
         with mock.patch.object(fc.fc_herdr, "herdr", lambda *a, **k: {"agent": {"agent_status": "done"}} if a[1] == "get" else {}):
             self.assertNotIn("teammate", self.hold(only="002", reason="x"))
         self.hold(release="002")

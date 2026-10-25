@@ -818,6 +818,30 @@ class SettlePaused(unittest.TestCase):
         self.assertIn("006 ran since C1; its paused work stays on refs/compose/", out)
 
 
+    def release(self, ids):
+        if not (self.proj / "results" / "hold.json").exists():
+            (self.proj / "results" / "hold.json").write_text(json.dumps({t: {"reason": "D2?", "at": "x"} for t in ("004", "005", "006")}))
+        out = io.StringIO()
+        with mock.patch.object(fc.fc_core, "project_dir", lambda a: self.proj), mock.patch.object(fc.fc_herdr, "herdr", lambda *a, **k: None), \
+                mock.patch.object(fc.fc_linear, "linear_note", lambda *a: None), redirect_stdout(out):
+            fc.fc_change.cmd_hold(SimpleNamespace(only=None, rests_on=None, reason=None, release=ids))
+
+    def test_a_task_released_with_no_change_open_does_not_block_done(self):
+        self.release("004")  # a false alarm: released before any change opened, it keeps all its work
+        change(self.proj, self.repo, "start", why="unrelated")
+        self.release("005")  # released while a change is open: that change settles it
+        synced(self.proj, MAP, {f"ENG-{n}": issue(t, "Goal.") for n, t in ((4, "004"), (5, "005"), (6, "006"))}, ahead=2)
+        with self.assertRaises(SystemExit) as e:
+            change(self.proj, self.repo, "done")
+        self.assertIn("paused and not settled: 005, 006:", str(e.exception))
+
+    def test_settle_writes_the_result_before_the_change_record(self):
+        change(self.proj, self.repo, "start", why="D2 changed")
+        with mock.patch.object(fc.fc_change, "write_change", side_effect=OSError("disk full")), self.assertRaises(OSError):
+            fc.fc_change.settle(self.proj, "006", "discard")
+        self.assertEqual(self.result("006")["paused"]["choice"], "discard")  # the rerun never keeps what was discarded
+
+
 class LinearIssues:
     """Linear's GraphQL API in memory, enough for undo: issues with a description, a state, and their blockers."""
     def __init__(self, issues, feature_description):

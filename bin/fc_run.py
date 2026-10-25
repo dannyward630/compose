@@ -260,7 +260,7 @@ def run_tasks(repo, proj, tasks, a):
     from concurrent.futures import wait, FIRST_COMPLETED
     queue = proj / "results" / QUEUE
     with ThreadPoolExecutor(max_workers=a.parallel) as ex:
-        running = {}
+        running, proving = {}, set()  # proving: the futures that are a fast fix's regression proof round, not a task's turns
         def adopt():
             """The tasks `compose run --only` queued on this run join it, and start once their `after` tasks have passed. Whether any did."""
             joined = False
@@ -290,7 +290,8 @@ def run_tasks(repo, proj, tasks, a):
                 write_marker()
             held = fc_tasks.held(proj)  # one read per pass: a release landing mid-pass cannot split it
             hold = {**waits, **held}  # re-read every pass: a hold or a release lands while the run goes on
-            for p in [p for p in running.values() if p in held and not fc_proc.task_paused(p)]:  # a hold on a task that runs: pause it, keep its work
+            # a hold on a task that runs: pause it, keep its work. Not a regression writer's proof round (no turn to cut) nor one already ended.
+            for p in [p for f, p in running.items() if p in held and f not in proving and not f.done() and not fc_proc.task_paused(p)]:
                 fc_proc.pause_task(p, fc_herdr.agent_name(proj.name, p))
                 fc_core.say(f"{p} paused  {held[p].get('reason', '')}")
             st = None if fc_load.off(getattr(a, "force", False)) else fc_load.update()  # the machine-wide load hold, re-read every pass
@@ -313,7 +314,9 @@ def run_tasks(repo, proj, tasks, a):
                 prior = None if getattr(a, "redo", False) else fc_unproven.restartable(proj, metas[p]["id"])
                 if prior:
                     fc_core.say(f"{p} regress  fix kept on {prior['branch']}; restarting its regression test writer")
-                    running[ex.submit(fc_regress.regress, repo, proj, metas[p], prior, a.attempts)] = p
+                    proof = ex.submit(fc_regress.regress, repo, proj, metas[p], prior, a.attempts)
+                    running[proof] = p
+                    proving.add(proof)
                 else:
                     running[ex.submit(fc_implement.run_task, repo, proj, metas[p], a.attempts)] = p
             if halt and not running:
@@ -341,6 +344,7 @@ def run_tasks(repo, proj, tasks, a):
                 os._exit(130)
             for f in finished:
                 p = running.pop(f)
+                proving.discard(f)
                 try:
                     r = f.result()
                 except RuntimeError as e:  # a chain that no longer rebases: the task never started; one line with the commands, and the run goes on
@@ -378,7 +382,9 @@ def run_tasks(repo, proj, tasks, a):
                 for q in pending:
                     pending[q] = [d for d in pending[q] if d != tid or d in failed_ids or d in unproven]
                 if fc_regress.fast_fix(proj, metas[p], r):
-                    running[ex.submit(fc_regress.regress, repo, proj, metas[p], r, a.attempts)] = p
+                    proof = ex.submit(fc_regress.regress, repo, proj, metas[p], r, a.attempts)
+                    running[proof] = p
+                    proving.add(proof)
     live["open"] = []
     write_marker(closed=True)  # then a task queued in the instant before is told, never lost
     for f in queue.glob("*.json"):

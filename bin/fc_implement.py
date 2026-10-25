@@ -219,7 +219,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
     wt = proj / "worktrees" / (tid + tag)
     # A separate clone, not a git worktree: opencode links worktrees to the main checkout as "project copies" and
     # resolves edits of existing files there. A clone has its own .git, so nothing can leak. Shared objects keep it cheap.
-    if wt.exists(): shutil.rmtree(wt)
+    fc_pause.clear_clone(proj, tid, wt)  # a clone a failed pause snapshot kept is moved aside, never deleted
     fc_core.sh(["git", "worktree", "prune"], repo, check=False)
     why = not tag and fc_tasks.task_finished(proj, meta, redo=bool(os.environ.get("COMPOSE_REDO")))
     if why:
@@ -547,7 +547,7 @@ def run_task(repo, proj, task, attempts, model=None, reset_files=False, tag=""):
         log.append({"leak_reverted": mine})
     if others:
         fc_core.say(f"{tid} note: main checkout has other uncommitted changes (left alone): {', '.join(others)[:160]}")
-    if status == "paused":
+    if fc_pause.ends_paused(status, tid):  # a hold during the last test or checks that did not pass pauses too
         return fc_pause.paused_result(repo, proj, meta, wt, base, base_name, log, spent(), cost, started, fc_tasks.held(proj).get(tid, {}).get("reason", ""))
     if status == "passed":
         fc_core.sh(["git", "add", "-A"], wt)

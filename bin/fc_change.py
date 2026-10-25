@@ -162,13 +162,15 @@ def rests_on(proj, refs):
 TEAMMATE_PAUSE = "Paused: {reason}. Stop now, keep what you wrote, and wait for the next prompt."
 TEAMMATE_RELEASE = "Released: carry on. Read your brief again first, it may have changed: compose linear get {issue} --body."
 
-def steer_teammate(proj, tid, text):
-    """Interrupt the task's live test teammate and send it `text`; False when there is none (or outside herdr)."""
+def steer_teammate(proj, tid, text, release=False):
+    """Interrupt the task's live test teammate and send it `text`; False when there is none (or outside herdr) or, unless it is
+    a `release`, when its turn is over. A release only prompts: the teammate the pause stopped is idle (`done`), waiting for it."""
     agent = fc_herdr.agent_name(proj.name, f"tests-{tid}")
     got = fc_herdr.herdr("agent", "get", agent)
-    if got is None or (got.get("agent") or {}).get("agent_status") == "done":
+    if got is None or (not release and (got.get("agent") or {}).get("agent_status") == "done"):
         return False
-    fc_herdr.herdr("agent", "send-keys", agent, "esc")
+    if not release:
+        fc_herdr.herdr("agent", "send-keys", agent, "esc")
     return fc_herdr.herdr("agent", "prompt", agent, text) is not None
 
 def save_hold(proj, hold):
@@ -190,12 +192,28 @@ def hold_tasks(proj, ids, reason):
     save_hold(proj, hold)  # before reading `running`: run_task writes `running` before it reads the holds
     for tid in placed:
         res = proj / "results" / f"{tid}.json"
-        running = res.exists() and json.loads(res.read_text()).get("status") == "running" and fc_tasks.run_alive(proj)
-        late = "; it is running now: the run pauses it within seconds and keeps its work" if running else ""
-        late += "; its test teammate is paused" if steer_teammate(proj, tid, TEAMMATE_PAUSE.format(reason=reason)) else ""
+        status = json.loads(res.read_text()).get("status") if res.exists() else None
+        late = "; it is running now: the run pauses it within seconds and keeps its work" if status == "running" and fc_tasks.run_alive(proj) else ""
+        # an unproven fix's tests-<id> is its regression writer, which the hold leaves to finish its proof
+        if status != "unproven" and steer_teammate(proj, tid, TEAMMATE_PAUSE.format(reason=reason)):
+            hold[tid]["teammate"] = True  # the release prompts exactly the teammates a hold paused
+            late += "; its test teammate is paused"
         lines.append(f"{tid} held  {reason}{late}")
         fc_linear.linear_note(tasks[tid], f"Held: {reason}{late}")
+    if any(hold[t].get("teammate") for t in placed):
+        save_hold(proj, hold)
     return lines
+
+def false_alarm(proj, tid):
+    """Mark a paused task released with no change open: it keeps all its work, and no change waits on its settle."""
+    res = proj / "results" / f"{tid}.json"
+    try:
+        data = json.loads(res.read_text())
+    except (OSError, ValueError):
+        return
+    if data.get("status") == "paused" and isinstance(data.get("paused"), dict) and not data["paused"].get("choice"):
+        data["paused"]["released"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        fc_core.atomic_write(res, json.dumps(data, indent=2))
 
 def cmd_hold(a):
     """Hold tasks back from dispatch while the plan they rest on is in question, or release them. A running task is paused
@@ -204,13 +222,17 @@ def cmd_hold(a):
     proj = fc_core.project_dir(a)
     if a.release:
         tasks = {m["id"]: m for m in fc_tasks.load_tasks(proj, required=True)}
-        hold = fc_tasks.held(proj)
+        hold, no_change = fc_tasks.held(proj), not open_change(proj)
         for tid in (list(hold) if a.release == "all" else [x.strip() for x in a.release.split(",") if x.strip()]):
-            if hold.pop(tid, None) is None:
+            entry = hold.pop(tid, None)
+            if entry is None:
                 print(f"{tid} was not held")
                 continue
             print(f"{tid} released")
-            steer_teammate(proj, tid, TEAMMATE_RELEASE.format(issue=(tasks.get(tid) or {}).get("linear", tid)))
+            if entry.get("teammate"):  # only a teammate this hold paused: one that started since is mid-turn and left alone
+                steer_teammate(proj, tid, TEAMMATE_RELEASE.format(issue=(tasks.get(tid) or {}).get("linear", tid)), release=True)
+            if no_change:
+                false_alarm(proj, tid)
             fc_linear.linear_note(tasks.get(tid), "Released")
         save_hold(proj, hold)
         return
@@ -332,7 +354,10 @@ def change_done(a, proj, repo):
         sys.exit('no change is open; `compose change start --why "<one line>"` opens one')
     rec, cache = load_change(proj, cid), fc_tasks.linear_cache(proj)
     # a block that already carries a choice was settled by an earlier change: it waits for its next run, not for this change
-    open_ids = sorted(t for t, b in paused_tasks(proj).items() if not b.get("choice") and t not in rec.get("settled", {}))
+    # a task released with no change open was a false alarm: it keeps all, unless a hold placed since asks again
+    held = fc_tasks.held(proj)
+    open_ids = sorted(t for t, b in paused_tasks(proj).items() if not b.get("choice") and t not in rec.get("settled", {})
+                      and not (b.get("released") and t not in held))
     if open_ids:
         sys.exit(f"paused and not settled: {', '.join(open_ids)}: compose change keep|part|discard <id>")
     if (cache.get("synced_at") or "") <= rec["started_at"]:
@@ -454,11 +479,11 @@ def settle(proj, tid, choice, files=()):
     keep = list(block["files"]) if choice == "keep" else list(files) if choice == "part" else []
     rec = load_change(proj, cid)
     original = {k: v for k, v in block.items() if k not in SETTLE_KEYS}
-    rec.setdefault("settled", {})[tid] = {"choice": choice, "keep": keep, "paused": original}
-    write_change(proj, rec)
-    data = json.loads(res.read_text())
+    data = json.loads(res.read_text())  # the result first: the rerun reads the choice there, and a crash before the record never keeps a discard
     data["paused"] = {**original, "choice": choice, "keep": keep, "change": cid}
     fc_core.atomic_write(res, json.dumps(data, indent=2))
+    rec.setdefault("settled", {})[tid] = {"choice": choice, "keep": keep, "paused": original}
+    write_change(proj, rec)
     return f"{tid} {choice}  " + {"keep": f"{len(keep)} files", "part": ", ".join(keep),
                                    "discard": f"its work stays on {block['ref']} until clean"}[choice]
 
