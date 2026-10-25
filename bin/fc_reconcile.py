@@ -219,6 +219,15 @@ def read_stored(project):
 def verb_list(a):
     print(render_tree(inventory(a.repo)[1]))
 
+def landed(stored):
+    """What a half-applied action already wrote to Linear, for the refusal: '; NEB-4:merge has its comment and relation written'."""
+    by_act = {}
+    for k in stored.get("steps", {}):
+        act, _, x = k.rpartition(":")
+        if act not in stored["applied"]:
+            by_act.setdefault(act, []).append(x)
+    return "".join(f"; {act} has its {' and '.join(xs)} written" for act, xs in by_act.items())
+
 def verb_check(a):
     if not a.file:
         sys.exit("reconcile check needs --file <sheet>")
@@ -227,7 +236,7 @@ def verb_check(a):
     stored = read_stored(project)
     started = stored and (stored["applied"] or stored.get("steps"))  # a comment or relation that landed is Linear written too
     if started and any(a["key"] not in stored["applied"] and a["key"] not in stored.get("skipped", {}) for a in actions(stored)):
-        sys.exit(f"a reconcile is half applied ({len(stored['applied'])} of {len(actions(stored))}): "
+        sys.exit(f"a reconcile is half applied ({len(stored['applied'])} of {len(actions(stored))} done{landed(stored)}): "
                  f'finish it with compose reconcile apply --go "<their words>" first')
     problems = check_sheet(sheet, issues)
     if problems:
@@ -323,6 +332,9 @@ def do_action(stored, act, team, today, path):
         why = stale(issue, by_id[act["id"]]["state"])
         if why:
             return why
+        into = fc_linear.linear_issue(act["into"]) if act.get("into") else None
+        if into and into["state"]["type"] == "canceled":
+            return f"{into['identifier']} is {into['state']['name']} now; sort it again"
         done = tuple(x for x in ("comment", "relation") if f"{act['key']}:{x}" in stored["steps"])
         fc_linear.linear_cancel(act["id"], comment_for(stored, act, today), act.get("into"), done, lambda x: step(stored, path, f"{act['key']}:{x}"))
         return None

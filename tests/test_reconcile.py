@@ -256,7 +256,7 @@ class Reconcile(unittest.TestCase):
         path = fc.fc_reconcile.sheet_path("p1")
         stored = json.loads(path.read_text()); stored["applied"] = {"NEB-2": "x"}; path.write_text(json.dumps(stored))
         code, msg = self.fails("check", file=self.sheet())
-        self.assertTrue(msg.startswith("a reconcile is half applied (1 of 4): finish it with compose reconcile apply --go"), msg)
+        self.assertTrue(msg.startswith("a reconcile is half applied (1 of 4 done): finish it with compose reconcile apply --go"), msg)
 
     def test_show_without_a_stored_sheet_says_how_to_get_one(self):
         self.assertEqual(self.fails("show"), (1, "no checked reconcile for Shop: compose reconcile check --file <sheet> first"))
@@ -404,11 +404,19 @@ class Reconcile(unittest.TestCase):
         self.linear.fail_on = None
         raw["tickets"][0]["into"] = "NEB-5"
         code, msg = self.fails("check", file=self.sheet(raw))
-        self.assertTrue(msg.startswith("a reconcile is half applied (0 of 1): finish it with compose reconcile apply --go"), msg)
+        self.assertTrue(msg.startswith("a reconcile is half applied (0 of 1 done; NEB-4:merge has its comment and relation written): finish it with compose reconcile apply --go"), msg)
         self.attempt("apply", go="yes")
         self.assertEqual([m[2]["o"] for m in self.linear.mutations if m[0] == "issueRelationCreate"], ["NEB-3"])
         self.assertEqual((self.linear.comments_on("NEB-4"), "NEB-4" in self.linear.canceled), (1, True))
         self.assertIn("merged into NEB-3", self.linear.comment("NEB-4"))
+
+    def test_a_merge_whose_target_was_canceled_since_the_check_is_skipped_and_allows_a_recheck(self):
+        self.checked()
+        self.linear.issues["NEB-3"]["state"] = {"name": "Canceled", "type": "canceled"}
+        out = self.attempt("apply", go="yes")
+        self.assertIn("NEB-4:merge skipped: NEB-3 is Canceled now; sort it again", out)
+        self.assertNotIn("NEB-4", self.linear.canceled)
+        self.assertTrue(self.out("check", file=self.sheet({**self.raw, "keep": self.raw["keep"] + ["NEB-101"]}))[-1].startswith("checked: "))
 
     def test_a_recheck_is_allowed_when_only_skipped_actions_are_left_however_many_tickets_are_kept(self):
         self.checked(extra=10)
@@ -421,7 +429,7 @@ class Reconcile(unittest.TestCase):
         self.linear.fail_on = ("commentCreate", "NEB-2")
         self.attempt("apply", go="yes")
         code, msg = self.fails("check", file=self.sheet(self.raw))
-        self.assertTrue(msg.startswith("a reconcile is half applied (6 of 7): finish it with compose reconcile apply --go"), msg)
+        self.assertTrue(msg.startswith("a reconcile is half applied (6 of 7 done): finish it with compose reconcile apply --go"), msg)
 
     def test_a_cancel_that_fails_after_its_comment_comments_once_in_total(self):
         self.checked()

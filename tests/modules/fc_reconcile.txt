@@ -23,6 +23,7 @@ grouped
 render_proposal
 read_stored
 verb_list
+landed
 verb_check
 carry_done
 verb_show
