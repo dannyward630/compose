@@ -23,6 +23,7 @@ render_proposal
 read_stored
 verb_list
 verb_check
+carry_done
 verb_show
 depth
 actions
@@ -32,6 +33,7 @@ stale
 do_action
 create_ticket
 apply_sheet
+step
 save
 under_posture
 verb_apply

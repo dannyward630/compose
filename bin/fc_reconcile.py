@@ -219,17 +219,29 @@ def verb_check(a):
     project, issues = inventory(a.repo)
     sheet = load_sheet(a.file)
     stored = read_stored(project)
-    if stored and 0 < len(stored["applied"]) < len(expand(stored, stored["issues"])):
-        sys.exit(f"a reconcile is half applied ({len(stored['applied'])} of {len(expand(stored, stored['issues']))}): "
+    if stored and stored["applied"] and any(a["key"] not in stored["applied"] and a["key"] not in stored.get("skipped", {}) for a in actions(stored)):
+        sys.exit(f"a reconcile is half applied ({len(stored['applied'])} of {len(actions(stored))}): "
                  f'finish it with compose reconcile apply --go "<their words>" first')
     problems = check_sheet(sheet, issues)
     if problems:
         sys.exit("\n".join(problems))
     path = sheet_path(project["id"])
     path.parent.mkdir(parents=True, exist_ok=True)
-    fc_core.atomic_write(path, json.dumps({**sheet, "project": {"id": project["id"], "name": project["name"], "team": project["team"]["id"]}, "checked_at": fc_core.now(),
-                                           "issues": issues, "go": [], "applied": {}, "created": {}}, indent=1))
+    fresh = {**sheet, "project": {"id": project["id"], "name": project["name"], "team": project["team"]["id"]}, "checked_at": fc_core.now(),
+             "issues": issues, "go": [], "applied": {}, "steps": {}, "skipped": {}, "created": {}}
+    if stored:
+        carry_done(stored, fresh)
+    save(path, fresh)
     print(f"checked: {summary(expand(sheet, issues), sheet)}; compose reconcile show prints the proposal")
+
+def carry_done(old, fresh):
+    """A re-check keeps what the last apply already wrote: each applied action the new sheet still holds unchanged, its finished steps, and the tickets it filed."""
+    was = {a["key"]: a for a in actions(old)}
+    for a in actions(fresh):
+        if a["key"] in old["applied"] and was.get(a["key"]) == a:
+            fresh["applied"][a["key"]] = old["applied"][a["key"]]
+    fresh["steps"] = {k: v for k, v in old.get("steps", {}).items() if k.rsplit(":", 1)[0] in {a["key"] for a in actions(fresh)} - set(fresh["applied"])}
+    fresh["created"] = {k: v for k, v in old["created"].items() if k in {n["key"] for n in fresh["new"]}}
 
 def verb_show(a):
     project = fc_linear_cmd.linear_project(a.repo)
@@ -286,7 +298,7 @@ def stale(issue, was):
     if issue["state"]["name"] != was:
         return f"it is {issue['state']['name']} now, not {was} as at the check; sort it again"
 
-def do_action(stored, act, team, today):
+def do_action(stored, act, team, today, path):
     """Write one action to Linear; returns why it was skipped, or None when done."""
     if act["do"] == "create":
         return create_ticket(stored, act["new"], team)
@@ -296,7 +308,8 @@ def do_action(stored, act, team, today):
         why = stale(issue, by_id[act["id"]]["state"])
         if why:
             return why
-        fc_linear.linear_cancel(act["id"], comment_for(stored, act, today), act.get("into"))
+        done = tuple(x for x in ("comment", "relation") if f"{act['key']}:{x}" in stored["steps"])
+        fc_linear.linear_cancel(act["id"], comment_for(stored, act, today), act.get("into"), done, lambda x: step(stored, path, f"{act['key']}:{x}"))
         return None
     if act["do"] == "title":
         fc_linear.linear_gql(UPDATE_ISSUE, {"id": issue["id"], "in": {"title": act["title"]}})
@@ -328,29 +341,37 @@ def apply_sheet(stored, path, quote):
         return []
     stored["go"].append({"quote": quote, "at": datetime.datetime.now().isoformat(timespec="seconds")})
     save(path, stored)
+    stored["skipped"], stored["steps"] = {}, stored.get("steps", {})
     team, today, lines = Team(stored["project"]["team"]), datetime.date.today().isoformat(), []
     for act in acts:
         try:
-            why = do_action(stored, act, team, today)
-        except (RuntimeError, OSError) as e:
+            why = do_action(stored, act, team, today, path)
+        except Exception as e:  # one action's failure is reported, never the end of the others
             lines.append(f"{act['key']} FAILED: {e}")
             continue
         if why:
             lines.append(f"{act['key']} skipped: {why}")
+            stored["skipped"][act["key"]] = why
             continue
         stored["applied"][act["key"]] = datetime.datetime.now().isoformat(timespec="seconds")
         save(path, stored)
         lines.append(f"{act['key']} done")
+    save(path, stored)
     return lines
+
+def step(stored, path, key):
+    """Record a finished sub-step of an action, so a retry after a failure does not write it again."""
+    stored["steps"][key] = datetime.datetime.now().isoformat(timespec="seconds")
+    save(path, stored)
 
 def save(path, stored):
     fc_core.atomic_write(path, json.dumps(stored, indent=1))
 
 def under_posture(a):
-    """The name and mode of a project under away or yolo, or None."""
+    """The name and mode of a compose project of the repo under away or yolo, or None; --project does not narrow it, as a reconcile writes the repo's one Linear project."""
     projects = fc_core.all_projects(Path(a.repo).resolve())
     for name, (_, proj) in sorted(projects.items()):
-        if getattr(a, "project", None) in (None, name) and (y := fc_tasks.yolo_state(proj)):
+        if y := fc_tasks.yolo_state(proj):
             return name, y["mode"]
 
 def verb_apply(a):

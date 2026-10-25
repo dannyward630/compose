@@ -1,6 +1,6 @@
 import json, os, sys, threading, time, urllib.error, urllib.request
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 import fc_core, fc_config, fc_plan, fc_tasks
 
 
@@ -165,25 +165,29 @@ def linear_comment(issue, body):
 
 MERGED = "Merged into {id} ({title})."
 
-def linear_cancel(ident: str, comment: str, into: Optional[str] = None) -> bool:
+def linear_cancel(ident: str, comment: str, into: Optional[str] = None, done: tuple = (), on_step: Optional[Callable] = None) -> bool:
     """Cancel an issue with a reason. The comment goes first, then the duplicate relation when `into` is given, and the move to the
-    team's canceled state goes last. False, nothing written, when it is already canceled; a finished or reasonless cancel raises."""
+    team's canceled state goes last. False, nothing written, when it is already canceled; a finished or reasonless cancel raises.
+    A caller resuming after a failure names the steps already written in `done` ("comment", "relation"); `on_step` hears each step as it lands."""
     issue = linear_issue(ident)
     state = issue["state"]
     if state["type"] == "canceled":
         return False
     if state["type"] == "completed":
         raise RuntimeError(f"{issue['identifier']} is {state['name']}: a finished ticket is never canceled")
-    if not (comment or "").strip():
+    if "comment" not in done and not (comment or "").strip():
         raise RuntimeError("a cancel needs a reason comment")
     target = [n for n in issue["team"]["states"]["nodes"] if n["type"] == "canceled" and (n["name"] or "").lower() in fc_tasks.CANCELED]
     if not target:
         raise RuntimeError(f"{issue['identifier']}: the team has no canceled state")
     other = linear_issue(into) if into else None
-    linear_comment(issue, comment.strip())
-    if other:
+    if "comment" not in done:
+        linear_comment(issue, comment.strip())
+        on_step and on_step("comment")
+    if other and "relation" not in done:
         linear_gql("mutation($id: String!, $o: String!) { issueRelationCreate(input: {issueId: $id, relatedIssueId: $o, type: duplicate}) { success } }",
                    {"id": issue["id"], "o": other["id"]})
+        on_step and on_step("relation")
     linear_gql("mutation($id: String!, $s: String!) { issueUpdate(id: $id, input: {stateId: $s}) { success } }",
                {"id": issue["id"], "s": target[0]["id"]})
     return True

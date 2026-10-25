@@ -32,7 +32,7 @@ def sheet(keep=(), verify=(), cancel_subtree=None, tickets=(), reasons=None, new
 class FakeLinear:
     def __init__(self):
         self.pages, self.queries, self.mutations = [], [], []
-        self.issues, self.canceled, self.created, self.comments, self.labels_made, self.fail_on = {}, [], [], {}, [], None
+        self.issues, self.canceled, self.created, self.comments, self.labels_made, self.fail_on, self.fail_exc = {}, [], [], {}, [], None, RuntimeError
         self.labels = [{"id": f"l-{n}", "name": n} for n in ("Epic", "Feature", "Story", "Ready", "needs-shaping", "deep-dive")]
 
     def seed(self, issues):
@@ -62,7 +62,7 @@ class FakeLinear:
     def mutate(self, name, v):
         ident = v.get("id")
         if self.fail_on == (name, ident):
-            raise RuntimeError(f"{name} failed")
+            raise self.fail_exc(f"{name} failed")
         self.mutations.append((name, ident, v))
         change = v.get("in") or {"stateId": v.get("s")}  # issueUpdate sends its input whole, or just the state
         if name == "commentCreate":
@@ -103,7 +103,7 @@ class Reconcile(unittest.TestCase):
         p = mock.patch.object(Path, "home", return_value=self.tmp); p.start(); self.addCleanup(p.stop)
 
     def args(self, action, **kw):
-        return SimpleNamespace(repo=str(self.repo), action=action, file=kw.get("file"), go=kw.get("go"), project=None)
+        return SimpleNamespace(repo=str(self.repo), action=action, file=kw.get("file"), go=kw.get("go"), project=kw.get("project"))
 
     def out(self, action, **kw):
         out = io.StringIO()
@@ -124,23 +124,26 @@ class Reconcile(unittest.TestCase):
         (d / "verify.json").write_text("{}")
         return d
 
-    def attempt(self, action, go=None):
+    def attempt(self, action, go=None, project=None):
         out = io.StringIO()
         with redirect_stdout(out), redirect_stderr(io.StringIO()):
             try:
-                fc.fc_reconcile.cmd_reconcile(SimpleNamespace(repo=str(self.repo), action=action, file=None, go=go, project=None))
+                fc.fc_reconcile.cmd_reconcile(SimpleNamespace(repo=str(self.repo), action=action, file=None, go=go, project=project))
             except SystemExit:
                 pass
         return out.getvalue().splitlines()
 
-    def checked(self):
+    def checked(self, extra=0):
         """A sheet that renames and relabels NEB-3, merges NEB-4 into it, cancels NEB-2 with its subtree, files one new ticket: 9 actions."""
+        self.issues += [issue(f"NEB-{n}", parent="NEB-1") for n in range(10, 10 + extra)]
+        self.linear.pages = [self.issues]
         self.linear.seed(self.issues)
-        raw = {"keep": ["NEB-1"], "verify": [], "reasons": {"appux": self.write("appux.md", "App UI and UX was a mistake."), "dup": self.write("dup.md", "Same slice.")},
+        raw = {"keep": ["NEB-1"] + [f"NEB-{n}" for n in range(10, 10 + extra)], "verify": [], "reasons": {"appux": self.write("appux.md", "App UI and UX was a mistake."), "dup": self.write("dup.md", "Same slice.")},
                "tickets": [{"id": "NEB-3", "sort": "keep", "title": "RS1. Chat with the Guide", "drop_ready": True, "deep_dive": True, "reason": "dup"},
                            {"id": "NEB-4", "sort": "merge", "into": "NEB-3", "reason": "dup"}, {"id": "NEB-2", "sort": "cancel", "reason": "appux", "subtree": True}],
                "new": [{"key": "N1", "title": "So far: the draft report", "parent": "NEB-1", "label": "Feature", "body": self.write("b.md", "Body.")}]}
         self.linear.issues["NEB-5"]["title"] = "NEB-5 title"
+        self.raw = raw
         self.out("check", file=self.sheet(raw))
 
     def write(self, name, text):
@@ -239,7 +242,7 @@ class Reconcile(unittest.TestCase):
         path = fc.fc_reconcile.sheet_path("p1")
         stored = json.loads(path.read_text()); stored["applied"] = {"NEB-2": "x"}; path.write_text(json.dumps(stored))
         code, msg = self.fails("check", file=self.sheet())
-        self.assertTrue(msg.startswith("a reconcile is half applied (1 of 5): finish it with compose reconcile apply --go"), msg)
+        self.assertTrue(msg.startswith("a reconcile is half applied (1 of 4): finish it with compose reconcile apply --go"), msg)
 
     def test_show_without_a_stored_sheet_says_how_to_get_one(self):
         self.assertEqual(self.fails("show"), (1, "no checked reconcile for Shop: compose reconcile check --file <sheet> first"))
@@ -312,6 +315,60 @@ class Reconcile(unittest.TestCase):
         path.write_text(json.dumps(stored))
         self.attempt("apply", go="yes")
         self.assertEqual((self.linear.created[1]["parentId"], self.linear.created[1]["labelIds"]), ("NEB-101", ["l-Story", "l-needs-shaping", "l-deep-dive"]))
+
+    def test_apply_refuses_while_any_project_is_under_away_whatever_project_is_named(self):
+        self.checked()
+        self.project_dir("other")
+        (self.project_dir("shop") / "results" / "yolo.json").write_text('{"mode": "yolo"}')
+        for name in ("other", "shpo"):
+            self.assertEqual(self.fails("apply", go="yes", project=name)[1], "shop is under yolo: a reconcile changes Linear only on the product owner's own go; apply it once yolo is off")
+        self.assertEqual(self.linear.mutations, [])
+
+    def test_a_recheck_after_a_skipped_cancel_never_files_a_new_ticket_twice(self):
+        self.checked()
+        self.linear.issues["NEB-5"]["state"] = {"name": "Done", "type": "completed"}
+        self.attempt("apply", go="yes")
+        self.out("check", file=self.sheet(self.raw))
+        self.attempt("apply", go="yes")
+        self.assertEqual(len(self.linear.created), 1)
+        self.assertEqual(self.linear.comments_on("NEB-3"), 2)  # the rename and the Ready drop, once each
+
+    def test_a_recheck_is_allowed_when_only_skipped_actions_are_left_however_many_tickets_are_kept(self):
+        self.checked(extra=10)
+        self.linear.issues["NEB-5"]["state"] = {"name": "Done", "type": "completed"}
+        self.attempt("apply", go="yes")
+        self.assertTrue(self.out("check", file=self.sheet(self.raw))[-1].startswith("checked: "))
+
+    def test_a_recheck_is_refused_while_a_failed_action_is_pending(self):
+        self.checked()
+        self.linear.fail_on = ("commentCreate", "NEB-2")
+        self.attempt("apply", go="yes")
+        code, msg = self.fails("check", file=self.sheet(self.raw))
+        self.assertTrue(msg.startswith("a reconcile is half applied (6 of 7): finish it with compose reconcile apply --go"), msg)
+
+    def test_a_cancel_that_fails_after_its_comment_comments_once_in_total(self):
+        self.checked()
+        self.linear.fail_on = ("issueUpdate", "NEB-2")
+        self.attempt("apply", go="yes")
+        self.linear.fail_on = None
+        self.attempt("apply", go="yes")
+        self.assertEqual((self.linear.comments_on("NEB-2"), "NEB-2" in self.linear.canceled), (1, True))
+
+    def test_a_merge_that_fails_after_its_relation_neither_comments_nor_relates_again(self):
+        self.checked()
+        self.linear.fail_on = ("issueUpdate", "NEB-4")
+        self.attempt("apply", go="yes")
+        self.linear.fail_on = None
+        self.attempt("apply", go="yes")
+        self.assertEqual((self.linear.comments_on("NEB-4"), [m[0] for m in self.linear.mutations].count("issueRelationCreate")), (1, 1))
+
+    def test_an_unexpected_error_in_one_action_is_recorded_and_the_rest_go_on(self):
+        self.checked()
+        self.linear.fail_on, self.linear.fail_exc = ("issueUpdate", "NEB-3"), KeyError
+        out = self.attempt("apply", go="yes")
+        self.assertTrue(any(l.startswith("NEB-3:title FAILED: ") for l in out), out)
+        self.assertEqual(len(self.linear.created), 1)
+        self.assertTrue(out[-1].endswith("compose reconcile notices lists what each team lead must hear"))
 
     def test_show_prints_the_stored_proposal(self):
         self.out("check", file=self.sheet())
