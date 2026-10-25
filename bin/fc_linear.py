@@ -343,7 +343,8 @@ def ready_ids(issues):
                     for r in i["inverseRelations"]["nodes"] if r["type"] == "blocks")]
 
 LINEAR_READY_TREE = """query($id: String!) { issue(id: $id) { team { labels { nodes { id name } } }
-  children { nodes { ...ReadyNode } } parent { children { nodes { ...ReadyNode } } } } }
+  children { nodes { ...ReadyNode } } parent { children { nodes { ...ReadyNode } } }
+  inverseRelations(first: 50) { nodes { type issue { identifier state { name } labels { nodes { name } } } } } } }
 fragment ReadyNode on Issue { id identifier title state { name } labels { nodes { id name } } children { nodes { state { name } } }
   inverseRelations(first: 250) { nodes { type issue { identifier state { name } labels { nodes { name } } } } } }"""
 
@@ -351,17 +352,19 @@ def linear_mark_ready(feature):
     """Set the team's Ready label on the feature's children that can start now and take it off the rest, the same for the
     epic's children when the feature has one; one read, then one update per issue whose labels change. A story with no task
     that is not Canceled has nothing to start, so it is not ready; a feature needs no story. Returns the ready issues, the
-    feature's children first."""
+    feature's children first. No story is ready while a feature that blocks this one is not built yet."""
     tree = linear_gql(LINEAR_READY_TREE, {"id": feature})["issue"]
     ready_label = next((l["id"] for l in tree["team"]["labels"]["nodes"] if l["name"].lower() == "ready"), None)
     if not ready_label:
         raise RuntimeError("team has no label 'Ready'; compose linear labels --create Ready makes it")
     update = "mutation($id: String!, $labels: [String!]!) { issueUpdate(id: $id, input: {labelIds: $labels}) { success } }"
     out = []
+    waiting = any(r["type"] == "blocks" and not fc_plan.base_built(r["issue"]["state"]["name"] or "", [l["name"] for l in r["issue"]["labels"]["nodes"]])
+                  for r in tree["inverseRelations"]["nodes"])
     groups = [(tree["children"]["nodes"], True), *([(tree["parent"]["children"]["nodes"], False)] if tree["parent"] else [])]
     for group, stories in groups:
         cut = {n["identifier"] for n in group if any((c["state"]["name"] or "").lower() != "canceled" for c in n["children"]["nodes"])}
-        ready = {i for i in ready_ids(group) if i in cut or not stories}
+        ready = {i for i in ready_ids(group) if (i in cut or not stories) and not (stories and waiting)}
         for n in group:
             have = [l["id"] for l in n["labels"]["nodes"]]
             if n["identifier"] in ready:
