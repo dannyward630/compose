@@ -148,6 +148,10 @@ class Groundwork(unittest.TestCase):
         self.assertNotIn("\u2014", text)
         self.assertIn("NEB-9", brief())  # default: the project's feature
         self.assertTrue(brief(extra="Mind the API.").rstrip().endswith("Mind the API."))
+        reports = [l.strip() for l in text.splitlines() if "compose report" in l]
+        self.assertEqual(len(reports), 2)
+        for line in reports:
+            self.assertIn("`compose report --project p --as p-builder-check done ", line)
 
     def test_planner_is_a_command_with_issue_and_extra(self):
         def help(*argv):

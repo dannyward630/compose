@@ -333,6 +333,36 @@ class Decide(unittest.TestCase):
         self.assertNotIn("~~", body)
         self.assertIn(f'- W1: A. keep it as is (C2; product owner, {TODAY}; said: "keep stripe")', body)
 
+    def test_a_multi_line_quote_records_one_line_and_replaces_strikes_it_cleanly(self):
+        self.recorded('- D1: one store (product owner, 2026-10-20; said: "ok")')
+        self.decide(new=["two stores"], quote='two,\nand "soon"\r\n  please')
+        said = f'(product owner, {TODAY}; said: "two, and \'soon\' please")'
+        self.assertIn(f"- D2: two stores {said}\n", self.linear.body)
+        self.decide(new=["three stores"], replaces="D2", quote="three\nnow")
+        dec = fc.fc_change.map_section(self.linear.body, "Decisions so far").splitlines()
+        self.assertEqual(dec[1:], [f"- ~~D2: two stores {said}~~ (replaced by D3)", f'- D3: three stores (product owner, {TODAY}; said: "three now")'])
+
+    def test_canceled_children_do_not_block_replaces(self):
+        self.recorded('- D1: one store (product owner, 2026-10-20; said: "ok")')
+        self.linear.children = [{"identifier": "NEB-2", "state": {"name": "Canceled"}}, {"identifier": "NEB-3", "state": {"name": "cancelled"}}]
+        self.decide(new=["two stores"], replaces="D1", quote="two")
+        self.assertIn("(replaced by D2)", self.linear.body)
+        self.linear.children.append({"identifier": "NEB-4", "state": {"name": "Todo"}})
+        self.linear.writes = []
+        self.refuses("already has stories or tasks", new=["three stores"], replaces="D2", quote="three")
+
+    def test_the_wake_up_note_names_both_go_lines(self):
+        out = self.decide(new=["one store"], quote="one")
+        note = ("recorded on NEB-1: D1; read Decisions so far. While shaping, wait for `shaped <id>`; a `stories <id> approved` line is "
+                "the planner's go (tell the planner, or the change architect, if live)")
+        self.assertIn(f'tell the team lead: herdr agent prompt shop-orchestrator "{note}"', out)
+
+    def test_a_new_decision_alone_says_nothing_about_open_cards(self):
+        out = self.decide(new=["one store"], quote="one")
+        self.assertNotIn("Not yet specified", out)
+        self.assertNotIn("card(s) still open", out)
+        self.assertIn("1 card(s) still open on NEB-1", self.decide("Q1: A", new=["x"], quote="A"))
+
     def test_yolo_tag_is_the_shared_one(self):
         self.assertIs(fc.fc_yolo.YOLO_TAG, fc.fc_decide.UNCONFIRMED)
 

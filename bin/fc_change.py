@@ -81,7 +81,8 @@ def reflect(proj, trigger, evidence, against=()):
                          for i, l in enumerate(lines)}
             with REFLECT_LOCK:
                 seen = evidence_since(proj)
-            out = fc_models.jev_ask(env, cfg, {"destination": map_section(desc, "Destination"), "evidence": seen}, questions, "Jev reflect")
+            aim = map_section(desc, "Destination") or map_section(desc, "Intent")  # a brainstormed design states its aim as Intent
+            out = fc_models.jev_ask(env, cfg, {"destination": aim, "evidence": seen}, questions, "Jev reflect")
             for i, l in enumerate(lines):
                 a = out.get("answers", {}).get(f"d{i}") or {}
                 p = a.get("probabilities", {})

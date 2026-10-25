@@ -275,10 +275,10 @@ def main():
             s.add_argument("--clear-words", action="store_true", help="empty the words, keeping since, push, and the decisions")
             s.add_argument("words", nargs="*", help="what pre-answers questions, verbatim; or `decided <q>: <a>`; or `digest`; or `off`")
         if name in ("decisions", "decide"):
-            s.add_argument("--issue", help="the map to read (default: the project's feature issue)")
+            s.add_argument("--issue", help="the issue to read (default: the project's feature issue)")
         if name == "decide":
             s.add_argument("answers", nargs="*", help='"<card id>: <letter or answer>", one per card, e.g. "Q1: A" "Q2: own JWT"; a bare id ("Q3", "D2") confirms the line already recorded')
-            s.add_argument("--new", action="append", default=[], help="a decision reached in conversation, with no card: recorded as the map's next D<n>; repeat for more")
+            s.add_argument("--new", action="append", default=[], help="a decision reached in conversation, with no card: recorded as the issue's next D<n> under Decisions so far; repeat for more")
             s.add_argument("--replaces", help="with exactly one --new: the live D<n> decision it replaces; the old line is struck through, (replaced by D<m>)")
             s.add_argument("--quote", help="the product owner's words, verbatim: the decision is recorded only with them")
             s.add_argument("--accept-all", action="store_true", help="record every open card's recommendation (answers given win)")

@@ -195,7 +195,7 @@ def cmd_decide(a):
             sys.exit(f"not recorded: {replaces} is not a live decision on {ident}; --replaces names a D line that is not struck through")
         if getattr(a, "change", None):
             sys.exit("not recorded: --replaces does not go with --change; a change of course strikes through the card's Supersedes: line")
-        if fc_linear.linear_children(ident):
+        if [c for c in fc_linear.linear_children(ident) if ((c.get("state") or {}).get("name") or "").lower() not in fc_tasks.CANCELED]:
             sys.exit(f"not recorded: {ident} already has stories or tasks, so {replaces} changes through a change of course: compose change start")
         if not quote and "unconfirmed" not in old:
             sys.exit(f'not recorded: {replaces} is confirmed; replacing it needs the product owner\'s words: add --quote "<their message, verbatim>"')
@@ -230,9 +230,12 @@ def cmd_decide(a):
     for l in lines:
         print(f"recorded on {ident}: {l}")
     left = len(cards) - len([cid for cid, ans in answers if cid in cards and ans is not None])
-    print(f"{left} card(s) still open on {ident}" if left else f"Not yet specified on {ident} is empty")
+    if answers:  # only a card answer moves cards; a --new decision alone leaves them as they were
+        print(f"{left} card(s) still open on {ident}" if left else f"Not yet specified on {ident} is empty")
     lead = fc_herdr.agent_name(proj.name, "orchestrator")
-    note = f"decided on {ident}: {', '.join([cid for cid, _ in answers] + [l.split(':')[0] for l in lines[len(answers):]])}; read the map's Decisions so far and continue (tell the architect, if one is live)"
+    ids = ", ".join([cid for cid, _ in answers] + [l.split(":")[0] for l in lines[len(answers):]])
+    note = (f"recorded on {ident}: {ids}; read Decisions so far. While shaping, wait for `shaped <id>`; a `stories <id> approved` line is "
+            "the planner's go (tell the planner, or the change architect, if live)")
     if fc_herdr.herdr_env() and fc_herdr.herdr("agent", "prompt", lead, note) is not None:
         print(f"told {lead}")
     else:

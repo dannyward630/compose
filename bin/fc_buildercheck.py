@@ -12,8 +12,8 @@ BUILDER_CHECK_BRIEF = """You are the builder check for project {slug}, a talente
 4. Keep only the questions you would still need answered where a wrong guess would change what gets built. For each, say why the guess matters. Rank them by importance, most important first.
 5. Skip what the artifact rightly leaves to the builder, and wording nitpicks.
 6. You never write Linear and never write files. Report once, then stop:
-   `compose report --as {name} done "<n> questions: 1. <question> - <why>; 2. ..."`
-   or, when the artifact is enough to build from, `compose report --as {name} done "nothing important left"`.
+   `compose report --project {slug} --as {name} done "<n> questions: 1. <question> - <why>; 2. ..."`
+   or, when the artifact is enough to build from, `compose report --project {slug} --as {name} done "nothing important left"`.
 """
 
 def cmd_buildercheck(a):
