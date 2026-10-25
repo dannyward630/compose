@@ -1155,7 +1155,7 @@ class ReadinessDocs(unittest.TestCase):
 
 
 class ReadyDocs(unittest.TestCase):
-    TASKS = ["sync", "linear <verb>", "tasks", "route", "quick <id>...", "run", "done", "triage", "resume", "reflect", "hold", "change start\\|done\\|undo", "spec-check", "ready", "delivery", "readiness", "bench"]
+    TASKS = ["sync", "linear <verb>", "tasks", "route", "quick <id>...", "run", "done", "triage", "resume", "reflect", "hold", "change start\\|done\\|undo", "spec-check", "ready", "delivery", "factory", "readiness", "bench"]
 
     def tasks_rows(self):
         sec = read("docs/cli.md").split("### Tasks\n", 1)[1].split("### Verify and stack", 1)[0]
@@ -2437,6 +2437,65 @@ class ProductDeliveryPlan(unittest.TestCase):
         for rel in ("sections/0p.md", "commands/delivery.md", "sections/8.md", "docs/cli.md", "docs/how-it-works.md"):
             self.assertNotIn("\u2014", read(rel), rel)
         for rel in ("sections/0p.md", "commands/delivery.md"):
+            for line in self.body(rel)[1 if rel.startswith("sections") else 0:]:
+                self.assertNotRegex(line, r"[.!?] [A-Z]", line)
+
+
+class FactoryLoop(unittest.TestCase):
+    SECTION = [
+        "### 0f. The factory builds what is ready and offers what to plan",
+        "The engineering manager starts the factory with `compose factory start` inside herdr, then keeps `compose factory watch` running in the background, as 0h runs `compose watch`.",
+        "Each turn it makes Linear follow the product delivery plan, then hands ready stories to their features' team leads in delivery plan order, never more at once than the day pace.",
+        "Tell the product owner the day pace in one line when the factory starts; `compose factory pace <n>` changes it when they say.",
+        "On `event factory=bootstrap`, plan the product delivery plan with the product owner from `compose delivery seed` (sections/0p.md); nothing is built before it exists.",
+        "On `event factory=offer`, offer that ticket in one line with its why, and say they may plan another ticket of their choosing or do something else.",
+        "On a yes, run `compose factory plan <id>` with the ticket they chose, plan it here as commands/planner.md says, and run `compose factory plan --done` when it is approved or they stop; on a no, run `compose factory decline`.",
+        "On `event factory=move-up`, ask the product owner whether to move that ticket up; on yes, write the new tracks with their words (sections/0p.md), and on no, the delivery plan's order stands.",
+        "On `event factory=held`, re-plan the paused work with the product owner and settle each held task with `compose change keep|part|discard` (step 8).",
+        "`compose factory stop` stops dispatch and offers and lets running work finish; `compose factory stop --hold \"<why>\"` pauses it too.",
+        "A team lead the factory starts reads this section too: a `factory: build story ...` prompt means build that story only, and report done when it passes verify.",
+    ]
+    COMMAND = [
+        "Invoke the compose skill, resolve the repo by its steps 0 and 0j, and follow sections/0f.md.",
+        "When `$ARGUMENTS` is `stop`, `status`, or `pace <n>`, run `compose factory $ARGUMENTS` and show its output as is.",
+        "In this session, never write code, stories, or tasks yourself.",
+    ]
+    HOW = "The factory (`/compose:factory`) runs in the background: it builds every ready story in delivery plan order at a day pace you set, pauses work a plan change rests on, and offers the next thing to plan when nothing is ready."
+
+    def body(self, rel):
+        text = read(rel)
+        return text.split("---\n", 2)[2].splitlines() if text.startswith("---\n") else text.splitlines()
+
+    def test_section_holds_each_line_once(self):
+        lines = read("sections/0f.md").splitlines()
+        self.assertEqual(lines[0], self.SECTION[0])
+        for line in self.SECTION:
+            self.assertEqual(lines.count(line), 1, line)
+        text = read("sections/0f.md")
+        for need in ("dispatched", "proposed", "loop-lost", "compose watch --project", "/compose:reconcile", "sections/0k.md", "yolo", "away"):
+            self.assertIn(need, text)
+
+    def test_command_file(self):
+        text = read("commands/factory.md")
+        head = text.split("---\n", 2)[1].splitlines()
+        self.assertEqual(head, ["description: Start the factory - it builds ready stories in delivery plan order at a day pace and offers planning when nothing is ready",
+                                'argument-hint: "[stop [--hold <why>] | status | pace <n>]"',
+                                "allowed-tools: Bash(compose:*), Bash(herdr:*)"])
+        body = self.body("commands/factory.md")
+        for line in self.COMMAND:
+            self.assertEqual(body.count(line), 1, line)
+
+    def test_cli_row_and_how_it_works(self):
+        rows = [l for l in read("docs/cli.md").splitlines() if l.startswith("| `factory` |")]
+        self.assertEqual(len(rows), 1)
+        for word in ("start", "stop", "--hold", "status", "watch", "pace", "plan", "--done", "decline"):
+            self.assertIn(word, rows[0])
+        self.assertEqual(read("docs/how-it-works.md").splitlines().count(self.HOW), 1)
+
+    def test_house_rules(self):
+        for rel in ("sections/0f.md", "commands/factory.md", "docs/cli.md", "docs/how-it-works.md"):
+            self.assertNotIn("\u2014", read(rel), rel)
+        for rel in ("sections/0f.md", "commands/factory.md"):
             for line in self.body(rel)[1 if rel.startswith("sections") else 0:]:
                 self.assertNotRegex(line, r"[.!?] [A-Z]", line)
 
