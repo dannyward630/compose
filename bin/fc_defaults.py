@@ -17,6 +17,7 @@ DEFAULT_MODELS = {
         "architect": {"model": "claude:claude-fable-5-1", "effort": "high",
                       "fallback": [{"model": "pi:openai/gpt-6-astra", "effort": "high"},
                                    {"model": "claude:claude-opus-5-5", "effort": "high"}]},
+        "builder-check": {"model": "claude:claude-opus-5-5", "effort": "high"},
         **{role: {"model": "claude:claude-opus-5-5", "effort": "high"}
            for role in ("orchestrator", "designer", "designer-plan", "explore", "research", "perf", "toolsmith")},
     },

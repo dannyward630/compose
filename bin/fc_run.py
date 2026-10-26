@@ -48,7 +48,7 @@ def triage(repo, proj, ids):
 def cmd_triage(a):
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     ids = [x.strip() for x in a.only.split(",")] if a.only else sorted(
-        f.stem for f in (proj / "results").glob("[0-9]*.json") if json.loads(f.read_text()).get("status") == "passed")
+        f.stem for f in (proj / "results").glob("[0-9]*.json") if f.stem.isdigit() and json.loads(f.read_text()).get("status") == "passed")
     if not triage(repo, proj, ids):
         sys.exit("no fast-model key (TEXT_MODEL_API_KEY) or no passed tasks: nothing triaged")
 
@@ -260,7 +260,7 @@ def run_tasks(repo, proj, tasks, a):
     from concurrent.futures import wait, FIRST_COMPLETED
     queue = proj / "results" / QUEUE
     with ThreadPoolExecutor(max_workers=a.parallel) as ex:
-        running = {}
+        running, proving = {}, set()  # proving: the futures that are a fast fix's regression proof round, not a task's turns
         def adopt():
             """The tasks `compose run --only` queued on this run join it, and start once their `after` tasks have passed. Whether any did."""
             joined = False
@@ -288,7 +288,12 @@ def run_tasks(repo, proj, tasks, a):
             if live["open"] != sorted(set(pending) | set(running.values())):
                 live["open"] = sorted(set(pending) | set(running.values()))
                 write_marker()
-            hold = {**waits, **fc_tasks.held(proj)}  # re-read every pass: a hold or a release lands while the run goes on
+            held = fc_tasks.held(proj)  # one read per pass: a release landing mid-pass cannot split it
+            hold = {**waits, **held}  # re-read every pass: a hold or a release lands while the run goes on
+            # a hold on a task that runs: pause it, keep its work. Not a regression writer's proof round (no turn to cut) nor one already ended.
+            for p in [p for f, p in running.items() if p in held and f not in proving and not f.done() and not fc_proc.task_paused(p)]:
+                fc_proc.pause_task(p, fc_herdr.agent_name(proj.name, p))
+                fc_core.say(f"{p} paused  {held[p].get('reason', '')}")
             st = None if fc_load.off(getattr(a, "force", False)) else fc_load.update()  # the machine-wide load hold, re-read every pass
             ready = [] if halt else [p for p, d in pending.items() if not d and p not in running.values() and p not in hold]
             free = 0 if st and st["held"] else a.parallel - len(running)  # held: no slot opens; running tasks go on
@@ -309,7 +314,9 @@ def run_tasks(repo, proj, tasks, a):
                 prior = None if getattr(a, "redo", False) else fc_unproven.restartable(proj, metas[p]["id"])
                 if prior:
                     fc_core.say(f"{p} regress  fix kept on {prior['branch']}; restarting its regression test writer")
-                    running[ex.submit(fc_regress.regress, repo, proj, metas[p], prior, a.attempts)] = p
+                    proof = ex.submit(fc_regress.regress, repo, proj, metas[p], prior, a.attempts)
+                    running[proof] = p
+                    proving.add(proof)
                 else:
                     running[ex.submit(fc_implement.run_task, repo, proj, metas[p], a.attempts)] = p
             if halt and not running:
@@ -337,6 +344,7 @@ def run_tasks(repo, proj, tasks, a):
                 os._exit(130)
             for f in finished:
                 p = running.pop(f)
+                proving.discard(f)
                 try:
                     r = f.result()
                 except RuntimeError as e:  # a chain that no longer rebases: the task never started; one line with the commands, and the run goes on
@@ -344,7 +352,8 @@ def run_tasks(repo, proj, tasks, a):
                     r = {"id": metas[p]["id"], "title": metas[p].get("title"), "status": "unchained", "attempts": 0, "seconds": 0.0, "cost": 0.0,
                          "branch": "-", "log": [{"stop": str(e)}]}
                     fc_core.atomic_write((proj / "results" / f"{p}.json"), json.dumps(r, indent=2))
-                if r["status"] == "held":  # held while it was prepared, before its first turn: pending again, the next pass reads the hold
+                fc_proc.resume_task(p)
+                if r["status"] in ("held", "paused"):  # held before its first turn, or paused mid-turn with its work kept: pending again, the next pass reads the hold
                     pending[p] = []
                     continue
                 if "proof" in r:  # a proof round's result replaces the task's row
@@ -373,7 +382,9 @@ def run_tasks(repo, proj, tasks, a):
                 for q in pending:
                     pending[q] = [d for d in pending[q] if d != tid or d in failed_ids or d in unproven]
                 if fc_regress.fast_fix(proj, metas[p], r):
-                    running[ex.submit(fc_regress.regress, repo, proj, metas[p], r, a.attempts)] = p
+                    proof = ex.submit(fc_regress.regress, repo, proj, metas[p], r, a.attempts)
+                    running[proof] = p
+                    proving.add(proof)
     live["open"] = []
     write_marker(closed=True)  # then a task queued in the instant before is told, never lost
     for f in queue.glob("*.json"):

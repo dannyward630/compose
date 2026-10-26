@@ -1,4 +1,4 @@
-import json, os, re, sys, time
+import json, os, re, sys, threading, time
 import fc_core, fc_config, fc_tiers
 
 
@@ -122,6 +122,23 @@ def sync_tasks(proj, data):
 def linear_cache(proj):
     path = proj / "results" / "tasks.json"
     return json.loads(path.read_text()) if path.exists() else {"feature": {}, "tasks": []}
+
+_cache_lock = threading.Lock()
+
+def set_cached_state(proj, tid, state):
+    """Record in the stored tasks that Linear now holds task `tid` in `state`, before the next sync would say so. Returns the
+    state it held, else None when the task is not stored."""
+    path = proj / "results" / "tasks.json"
+    with _cache_lock:  # parallel builder starts each read and write the whole file
+        cache = linear_cache(proj)
+        meta = next((m for m in cache["tasks"] if m["id"] == tid), None)
+        if not meta:
+            return None
+        before, meta["linear_state"] = meta.get("linear_state"), state
+        if meta.get("linear") in cache.get("issues", {}):
+            cache["issues"][meta["linear"]]["status"] = state
+        fc_core.atomic_write(path, json.dumps(cache, indent=2))
+    return before
 
 def load_tasks(proj, required=False, hint=""):
     """The tasks as the team lead last synced them from Linear. Commands that act on tasks require a sync."""

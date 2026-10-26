@@ -15,6 +15,9 @@ route
 quick
 spec-check
 ready
+delivery
+factory
+readiness
 projects
 cost
 status
@@ -29,6 +32,7 @@ explore
 trail
 architect
 planner
+buildercheck
 testcrews
 designer
 designcrews
@@ -40,6 +44,7 @@ yolo
 change
 decisions
 decide
+reconcile
 crew
 report
 tool-bug

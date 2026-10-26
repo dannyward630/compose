@@ -127,6 +127,20 @@ class LocallyMergedLayers(unittest.TestCase):
         self.assertEqual(linear.states("ENG-3", "ENG-4", "ENG-2", "ENG-1"), ["Done", "Done", "Done", "Done"])
 
 
+class UnsavedClone(unittest.TestCase):
+    def test_clean_names_a_clone_a_failed_pause_snapshot_kept_before_it_removes_it(self):
+        r, run = repo()
+        subprocess.run([CLI, "init", "--project", "p", "--repo", str(r)], check=True, capture_output=True, env={**os.environ, **ENV})
+        wt = r.parent / "compose-p"; proj = wt / ".compose" / "p"
+        aside = proj / "worktrees" / "001-unsaved-20261026-101010"
+        aside.mkdir(parents=True); (aside / "a.txt").write_text("half\n")
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, ENV), mock.patch("sys.stdout", out):
+            fc.fc_clean.clean_project(r, "p", wt, proj, explicit=True)
+        self.assertIn(f"clean  p: removing {aside}, the clone a failed pause snapshot kept with unsaved edits", out.getvalue())
+        self.assertFalse(aside.exists())
+
+
 class SquashMergedLayers(unittest.TestCase):
     """Layers are squash-merged by PR: task branches were never PRs and ancestry is rewritten, so the merged layer that held a task proves it."""
     @classmethod

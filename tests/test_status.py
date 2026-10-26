@@ -77,6 +77,17 @@ class TaskState(unittest.TestCase):
         self.assertEqual([self.state("already_green", {"task-021"}, {"task-021"}), self.state("already_green", set(), set())], ["already_green"] * 2)
 
 
+    def test_a_paused_task_shows_its_reason_and_the_work_it_kept(self):
+        def row(**extra):
+            proj = Path(tempfile.mkdtemp()) / "feat"
+            (proj / "results").mkdir(parents=True)
+            paused = {"files": ["a.txt", "b.txt"], "reason": "D2 changed", "ref": "refs/compose/p/paused/001", **extra}
+            (proj / "results" / "021.json").write_text(json.dumps({"status": "paused", "paused": paused}))
+            return fc.fc_status.task_state(proj, proj, {"id": "021", "title": "a"}, "", {"prefix": "task-", "have": set(), "merged": set()})
+        self.assertEqual((row()["state"], row()["note"]), ("paused", "D2 changed; work kept (2 files)"))
+        self.assertEqual(row(choice="part", keep=["a.txt"])["note"], "D2 changed; work kept (2 files); part kept (a.txt)")
+
+
 class TestTiers(unittest.TestCase):
     """`status` prints the tier pins and the spend per tier right after the route cost lines."""
 

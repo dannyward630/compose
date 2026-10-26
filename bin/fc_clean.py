@@ -160,6 +160,8 @@ def clean_project(main_repo, name, wt, proj, delete_unmerged=False, explicit=Fal
         fc_worktree.release_slot(repo, held)
     fc_worktree.slots(proj, {r: None for r in fc_worktree.slots(proj)})
     for w in list((proj / "worktrees").iterdir()) if (proj / "worktrees").exists() else []:  # iterdir: .stackroot is a dotfile
+        if fc_worktree.UNSAVED_CLONE in w.name:
+            print(f"clean  {name}: removing {w}, the clone a failed pause snapshot kept with unsaved edits")
         fc_core.sh(["git", "worktree", "remove", "--force", str(w)], repo, check=False)
         if w.exists():
             shutil.rmtree(w, ignore_errors=True)

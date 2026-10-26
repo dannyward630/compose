@@ -45,12 +45,15 @@ class FakeLinear:
     def __init__(self, body):
         self.body = body
         self.writes = []
+        self.children = []
 
     def gql(self, query, variables):
         if "issueUpdate" in query:
             self.writes.append(variables["in"]["description"])
             self.body = variables["in"]["description"]
             return {"issueUpdate": {"success": True}}
+        if "children" in query:
+            return {"issue": {"children": {"nodes": self.children, "pageInfo": {"hasNextPage": False, "endCursor": None}}}}
         return {"issue": {"id": "uuid-1", "identifier": "NEB-1", "description": self.body}}
 
 
@@ -61,9 +64,9 @@ class Decide(unittest.TestCase):
         (self.proj / "linear.json").write_text(json.dumps({"feature": "NEB-1"}))
         self.linear = FakeLinear(MAP)
 
-    def run_cmd(self, fn, *answers, quote=None, accept_all=False, issue=None, change=None):
+    def run_cmd(self, fn, *answers, quote=None, accept_all=False, issue=None, change=None, new=None, replaces=None):
         out = io.StringIO()
-        a = SimpleNamespace(repo=".", project="shop", answers=list(answers), quote=quote, accept_all=accept_all, issue=issue, change=change)
+        a = SimpleNamespace(repo=".", project="shop", answers=list(answers), quote=quote, accept_all=accept_all, issue=issue, change=change, new=new or [], replaces=replaces)
         with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_linear, "linear_gql", self.linear.gql), \
                 mock.patch.object(fc.fc_linear_cmd, "SETTLE_SECONDS", 0), contextlib.redirect_stdout(out):
             fn(a)
@@ -153,6 +156,141 @@ class Decide(unittest.TestCase):
         logged = json.loads((self.proj / "results" / "yolo.json").read_text())["decisions"]
         self.assertEqual([d["text"].split(" (")[0] for d in logged], ["Q1: A. Clerk", "Q2: B. SQLite"])
         self.assertIn("recorded on NEB-1: Q1: A. Clerk (away recommendation", out)
+        (self.proj / "results" / "yolo.json").write_text(json.dumps({**y, "mode": "yolo", "decisions": []}))
+        self.decide(new=["x"])
+        self.assertIn(f"- D1: x (yolo recommendation, unconfirmed, {TODAY})", self.linear.body)
+        logged = json.loads((self.proj / "results" / "yolo.json").read_text())["decisions"]
+        self.assertEqual([d["text"].split(" (")[0] for d in logged], ["D1: x"])
+
+    def test_a_decision_from_conversation_lands_with_the_next_free_d_id(self):
+        self.linear.body = MAP.replace("- Q0: Stripe", "- D1: one plan\n- ~~D2: old~~ (C1)\n- Q0: Stripe")
+        out = self.decide(new=["billing waits for auth", "day pace is capped"], quote="auth first, and cap the day")
+        self.assertIn(f'- D3: billing waits for auth (product owner, {TODAY}; said: "auth first, and cap the day")', self.linear.body)
+        self.assertIn("- D4: day pace is capped (product owner,", self.linear.body)
+        self.assertIn("Q1. Which auth?", self.linear.body)  # open cards untouched
+        self.assertIn("recorded on NEB-1: D3: billing waits for auth", out)
+
+    def test_the_next_d_id_ignores_d_numbers_inside_a_quote_and_flattens_newlines(self):
+        self.linear.body = MAP.replace("- Q0: Stripe", '- D1: x (product owner, 2026-10-01; said: "like D12")\n- Q0: Stripe')
+        self.decide(new=["two\nlines"], quote="ok")
+        self.assertIn("- D2: two lines (product owner,", self.linear.body)
+
+    def test_new_decisions_need_the_quote_unless_away_or_yolo(self):
+        with self.assertRaises(SystemExit) as e:
+            self.decide(new=["x"])
+        self.assertIn("--quote", str(e.exception.code))
+        self.assertEqual(self.linear.writes, [])
+
+    def test_new_and_card_answers_land_together_under_one_tag(self):
+        self.decide("Q1: A", new=["keep sessions 30 days"], quote="A, and 30 days")
+        body = self.linear.body
+        self.assertIn("- Q1: A. Clerk (product owner,", body)
+        self.assertIn("- D1: keep sessions 30 days (product owner,", body)
+        self.assertLess(body.index("- Q1: A. Clerk"), body.index("- D1: keep"))
+
+    def test_new_on_a_map_without_decisions_so_far_creates_the_section(self):
+        self.linear.body = "## Destination\n\nA shop.\n"
+        self.decide(new=["one store"], quote="one store")
+        self.assertIn("## Decisions so far\n\n- D1: one store (product owner,", self.linear.body)
+
+    def recorded(self, *lines):
+        self.linear.body = "## Destination\n\nA shop.\n\n## Decisions so far\n\n" + "\n".join(lines) + "\n\n## Not yet specified\n\n## Out of scope\n"
+
+    def test_a_quote_confirms_a_recorded_unconfirmed_card(self):
+        self.recorded("- Q3: A. dark (yolo recommendation, unconfirmed, 2026-10-21)")
+        self.decide("Q3", quote="dark is fine")
+        self.assertIn(f'- Q3: A. dark (product owner, {TODAY}; said: "dark is fine")', self.linear.body)
+        self.assertNotIn("unconfirmed", self.linear.body)
+
+    def test_a_card_answer_replaces_the_text_of_a_recorded_unconfirmed_card(self):
+        self.recorded("- Q3: A. dark (yolo recommendation, unconfirmed, 2026-10-21)")
+        self.decide("Q3: light after all", quote="light")
+        self.assertIn(f'- Q3: light after all (product owner, {TODAY}; said: "light")', self.linear.body)
+
+    def test_a_quote_confirms_an_unconfirmed_d_line(self):
+        self.recorded("- D1: sessions last 30 days (product owner, 2026-10-20; said: \"ok\")", "- D2: one store (yolo recommendation, unconfirmed, 2026-10-21)")
+        self.decide("D2", quote="yes")
+        self.assertIn(f'- D2: one store (product owner, {TODAY}; said: "yes")', self.linear.body)
+        self.assertIn("- D1: sessions last 30 days", self.linear.body)
+
+    def test_confirming_a_confirmed_line_refuses(self):
+        self.recorded('- D2: one store (product owner, 2026-10-20; said: "ok")')
+        before = self.linear.body
+        with self.assertRaises(SystemExit) as e:
+            self.decide("D2", quote="yes")
+        self.assertIn("already decided", str(e.exception.code))
+        self.assertIn("compose change start", str(e.exception.code))
+        self.assertEqual((self.linear.writes, self.linear.body), ([], before))
+
+    def test_a_bare_id_with_nothing_recorded_refuses(self):
+        with self.assertRaises(SystemExit) as e:
+            self.decide("Q9", quote="yes")
+        self.assertIn("Q9", str(e.exception.code))
+        self.assertEqual(self.linear.writes, [])
+
+    def test_replaces_strikes_the_old_d_line_and_adds_the_next(self):
+        self.recorded('- D1: one store (product owner, 2026-10-20; said: "ok")', '- D2: dark (product owner, 2026-10-20; said: "ok")')
+        self.decide(new=["two stores"], replaces="D1", quote="two")
+        body = self.linear.body
+        self.assertIn('- ~~D1: one store (product owner, 2026-10-20; said: "ok")~~ (replaced by D3)', body)
+        self.assertIn(f'- D3: two stores (product owner, {TODAY}; said: "two")', body)
+        self.assertIn("- D2: dark", body)
+
+    def yolo(self):
+        (self.proj / "results" / "yolo.json").write_text(json.dumps({"mode": "yolo", "since": "2026-10-24 08:00:00", "decisions": [], "words": "", "push": False}))
+
+    def refuses(self, want, *a, **kw):
+        before = self.linear.body
+        with self.assertRaises(SystemExit) as e:
+            self.decide(*a, **kw)
+        self.assertIn(want, str(e.exception.code))
+        self.assertEqual((self.linear.writes, self.linear.body), ([], before))
+
+    def test_replaces_refuses_once_the_feature_has_children(self):
+        self.recorded('- D1: one store (product owner, 2026-10-20; said: "ok")')
+        self.linear.children = [{"id": "c1"}]
+        self.refuses("NEB-1 already has stories or tasks, so D1 changes through a change of course: compose change start", new=["x"], replaces="D1", quote="q")
+
+    def test_replacing_a_confirmed_line_needs_a_quote_under_yolo(self):
+        self.recorded('- D1: one store (product owner, 2026-10-20; said: "ok")')
+        self.yolo()
+        self.refuses("--quote", new=["x"], replaces="D1")
+
+    def test_a_bare_id_without_a_quote_refuses_under_yolo(self):
+        self.recorded("- D1: one store (yolo recommendation, unconfirmed, 2026-10-21)")
+        self.yolo()
+        self.refuses("--quote", "D1")
+
+    def test_a_bare_id_naming_an_open_card_says_to_give_an_answer(self):
+        self.refuses("give one", "Q1", quote="yes")
+
+    def test_replaces_does_not_go_with_change(self):
+        self.recorded('- D1: one store (product owner, 2026-10-20; said: "ok")')
+        self.refuses("--change", new=["x"], replaces="D1", quote="q", change="C1")
+
+    def test_a_replaced_id_is_not_reused(self):
+        self.recorded('- D1: one store (product owner, 2026-10-20; said: "ok")')
+        self.decide(new=["two stores"], replaces="D1", quote="two")
+        self.decide(new=["three stores"], replaces="D2", quote="three")
+        self.assertIn("(replaced by D2)", self.linear.body)
+        self.assertIn("(replaced by D3)", self.linear.body)
+        self.assertIn("- D3: three stores", self.linear.body)
+
+    def test_replaces_needs_a_live_d_line_and_one_new(self):
+        self.recorded('- ~~D1: old (product owner, 2026-10-20; said: "ok")~~ (replaced by D2)', '- D2: one store (product owner, 2026-10-20; said: "ok")')
+        before = self.linear.body
+        for kw in ({"new": ["x"], "replaces": "D9"}, {"new": ["x"], "replaces": "D1"}, {"new": [], "replaces": "D2"}, {"new": ["x", "y"], "replaces": "D2"}):
+            with self.assertRaises(SystemExit, msg=str(kw)):
+                self.decide(quote="q", **kw)
+        self.assertEqual((self.linear.writes, self.linear.body), ([], before))
+
+    def test_replaces_under_yolo_without_a_quote_is_unconfirmed_and_logged(self):
+        self.recorded("- D1: one store (yolo recommendation, unconfirmed, 2026-10-21)")
+        (self.proj / "results" / "yolo.json").write_text(json.dumps({"mode": "yolo", "decisions": []}))
+        self.decide(new=["two stores"], replaces="D1")
+        self.assertIn("- D2: two stores (yolo recommendation, unconfirmed,", self.linear.body)
+        self.assertIn("(replaced by D2)", self.linear.body)
+        self.assertEqual(len(json.loads((self.proj / "results" / "yolo.json").read_text())["decisions"]), 1)
 
     def test_a_quote_confirms_an_unconfirmed_line_and_a_confirmed_one_refuses(self):
         self.linear.body = MAP.replace("## Not yet specified\n", "## Not yet specified\n\nQ3. Theme?\nA. dark - affects: tokens\nB. light - affects: tokens\nRecommendation: A\n", 1)
@@ -194,6 +332,36 @@ class Decide(unittest.TestCase):
         self.assertIn('- Q0: Stripe (product owner, 2026-10-20; said: "stripe")\n', body)
         self.assertNotIn("~~", body)
         self.assertIn(f'- W1: A. keep it as is (C2; product owner, {TODAY}; said: "keep stripe")', body)
+
+    def test_a_multi_line_quote_records_one_line_and_replaces_strikes_it_cleanly(self):
+        self.recorded('- D1: one store (product owner, 2026-10-20; said: "ok")')
+        self.decide(new=["two stores"], quote='two,\nand "soon"\r\n  please')
+        said = f'(product owner, {TODAY}; said: "two, and \'soon\' please")'
+        self.assertIn(f"- D2: two stores {said}\n", self.linear.body)
+        self.decide(new=["three stores"], replaces="D2", quote="three\nnow")
+        dec = fc.fc_change.map_section(self.linear.body, "Decisions so far").splitlines()
+        self.assertEqual(dec[1:], [f"- ~~D2: two stores {said}~~ (replaced by D3)", f'- D3: three stores (product owner, {TODAY}; said: "three now")'])
+
+    def test_canceled_children_do_not_block_replaces(self):
+        self.recorded('- D1: one store (product owner, 2026-10-20; said: "ok")')
+        self.linear.children = [{"identifier": "NEB-2", "state": {"name": "Canceled"}}, {"identifier": "NEB-3", "state": {"name": "cancelled"}}]
+        self.decide(new=["two stores"], replaces="D1", quote="two")
+        self.assertIn("(replaced by D2)", self.linear.body)
+        self.linear.children.append({"identifier": "NEB-4", "state": {"name": "Todo"}})
+        self.linear.writes = []
+        self.refuses("already has stories or tasks", new=["three stores"], replaces="D2", quote="three")
+
+    def test_the_wake_up_note_names_both_go_lines(self):
+        out = self.decide(new=["one store"], quote="one")
+        note = ("recorded on NEB-1: D1; read Decisions so far. While shaping, wait for `shaped <id>`; a `stories <id> approved` line is "
+                "the planner's go (tell the planner, or the change architect, if live)")
+        self.assertIn(f'tell the team lead: herdr agent prompt shop-orchestrator "{note}"', out)
+
+    def test_a_new_decision_alone_says_nothing_about_open_cards(self):
+        out = self.decide(new=["one store"], quote="one")
+        self.assertNotIn("Not yet specified", out)
+        self.assertNotIn("card(s) still open", out)
+        self.assertIn("1 card(s) still open on NEB-1", self.decide("Q1: A", new=["x"], quote="A"))
 
     def test_yolo_tag_is_the_shared_one(self):
         self.assertIs(fc.fc_yolo.YOLO_TAG, fc.fc_decide.UNCONFIRMED)

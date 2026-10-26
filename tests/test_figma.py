@@ -1,5 +1,5 @@
 import hermetic  # first: no test sees the real home
-import importlib.machinery, importlib.util, io, json, os, subprocess, sys, tempfile, unittest
+import importlib.machinery, importlib.util, io, json, os, shutil, subprocess, sys, tempfile, unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -123,9 +123,26 @@ class FigmaTree(unittest.TestCase):
     def tree(self, **kw):
         ns = dict(repo=".", project="p", action="tree", figma=None, only="001", node="1:2,3-4", depth=None, bindings=None)
         out = io.StringIO()
-        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("sys.stdout", out):
+        shots = getattr(self, "shots", mock.Mock(return_value=([], [])))
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch("sys.stdout", out), \
+                mock.patch.object(fc.fc_figma.fc_figmashots, "save_screens", shots):
             fc.fc_figma.cmd_figma(SimpleNamespace(**{**ns, **kw}))
         return out.getvalue()
+
+    def test_renders_a_screen_of_each_node_with_the_tree(self):
+        self.shots = mock.Mock(return_value=([("1:2", self.proj / "a.png"), ("3:4", self.proj / "b.png")], ["no screen of 5:6: Figma rendered nothing for it"]))
+        with mock.patch.object(fc.fc_figma, "framelink_fetch", side_effect=lambda key, node=None, depth=None: f"TREE {node}"):
+            out = self.tree()
+        self.assertEqual(self.shots.call_args.args, ("AbCdEf123456", ["1:2", "3:4"], self.proj / "results" / "001.screens"))
+        self.assertIn("and 2 screens in", out)
+        self.assertIn("no screen of 5:6", out)
+
+    def test_a_render_that_fails_saves_no_tree(self):
+        self.shots = mock.Mock(side_effect=RuntimeError("figma api /images failed: HTTP 500"))
+        with mock.patch.object(fc.fc_figma, "framelink_fetch", side_effect=lambda key, node=None, depth=None: f"TREE {node}"), self.assertRaises(SystemExit) as e:
+            self.tree()
+        self.assertEqual(str(e.exception), "no screens of 001: figma api /images failed: HTTP 500")
+        self.assertFalse((self.proj / "results" / "001.tree.txt").exists())
 
     def test_saves_each_nodes_framelink_tree_then_the_write_results(self):
         (self.proj / "bind.txt").write_text('{"bound": "color/bg"}\n')
@@ -136,6 +153,27 @@ class FigmaTree(unittest.TestCase):
         self.assertEqual([c.args[0] for c in fetch.call_args_list], ["AbCdEf123456"] * 2)
         self.assertEqual(fetch.call_args.kwargs, {"node": "3:4", "depth": 3})
         self.assertIn("001.tree.txt", out)
+
+    def test_every_node_inside_an_instance_is_marked_as_part_of_it(self):
+        """A judge reading `built only from instances` took an instance's own text, icon, and fill for hand-drawn nodes: the
+        tree must say which nodes are an instance's contents, on each node, since a chunk holds a node without its ancestors."""
+        doc = {"metadata": {}, "nodes": [{"id": "1:2", "name": "Light", "type": "FRAME", "children": [
+            {"id": "5:1", "name": "Card", "type": "INSTANCE", "componentId": "9:9", "children": [
+                {"id": "I5:1;7:1", "type": "TEXT", "text": "Walk"},
+                {"id": "I5:1;7:2", "name": "Pill", "type": "INSTANCE", "children": [{"id": "I5:1;7:2;8:1", "type": "RECTANGLE"}]}]},
+            {"id": "1:3", "type": "RECTANGLE"}]}]}
+        with mock.patch.object(fc.fc_figma, "framelink_fetch", side_effect=lambda key, node=None, depth=None: json.dumps(doc)):
+            self.tree(node="1:2")
+        saved = json.loads((self.proj / "results" / "001.tree.txt").read_text().split("\n", 1)[1])
+        light = saved["nodes"][0]
+        card, loose = light["children"]
+        text, pill = card["children"]
+        self.assertEqual([n.get("inInstance") for n in (light, card, loose)], [None, None, None])
+        self.assertEqual([n.get("inInstance") for n in (text, pill, pill["children"][0])], ["5:1", "5:1", "I5:1;7:2"])
+
+    def test_the_judge_is_told_an_instances_contents_are_not_hand_drawn(self):
+        for rules in (fc.fc_figma.TREE_READING, fc.fc_figma.CONFIRM):
+            self.assertIn("inInstance", rules)
 
     def test_refuses_a_missing_id_node_non_design_task_and_a_failed_fetch(self):
         for kw, msg in ((dict(only=None), "needs --only"), (dict(node=None), "needs --only"), (dict(only="002"), "002 is not a design task")):
@@ -247,6 +285,24 @@ class FigmaJudge(unittest.TestCase):
         res = self.judge("001", {"Cart page": [("MET", 0.95)]})
         self.assertEqual(res["branch"], "figma:LibKey123456789")
 
+    def test_a_violation_shown_only_by_a_node_inside_an_instance_is_no_violation_of_built_from_instances(self):
+        """Design 107: the confirm step quoted a RECTANGLE inside an instance as hand-drawn although the saved tree marks it inInstance."""
+        crit = "Built only from component instances plus layout frames"
+        fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [
+            judge_task("ENG-6", "004", "Pay", [crit, "Has a card field"])]})
+        doc = {"nodes": [{"id": "1:2", "type": "FRAME", "children": [
+            {"id": "5:1", "type": "INSTANCE", "children": [{"id": "I5:1;7:2", "type": "RECTANGLE", "inInstance": "5:1"}]},
+            {"id": "1:3", "type": "RECTANGLE"}]}]}
+        (self.proj / "results" / "004.tree.txt").write_text("NODE 1:2\n" + json.dumps(doc, indent=2) + "\n")
+        inside, loose = ({"violated": True, "evidence": f"Node {i} is type RECTANGLE, not INSTANCE or FRAME"} for i in ("I5:1;7:2", "1:3"))
+        res = self.judge("004", {"Pay": [("NOT_MET", 0.9), ("NOT_MET", 0.9)]}, confirm=inside, reask="MET", blocks=True)
+        first, second = res["criteria"]
+        self.assertEqual((first["confirmed"], first["choice"], [r["criterion"] for r in res["failed"]]), (False, "MET", ["Has a card field"]))
+        self.assertIn("only nodes inside a component instance", first["evidence"])
+        self.assertTrue(second["confirmed"])  # a criterion that is not about instances keeps the verdict
+        res = self.judge("004", {"Pay": [("NOT_MET", 0.9), ("MET", 0.9)]}, confirm=loose, blocks=True)
+        self.assertEqual((res["criteria"][0]["confirmed"], res["status"]), (True, "failed"))
+
     def test_a_confirm_error_blocks_with_no_re_ask(self):
         res = self.judge("004", {"Pay": [("NOT_MET", 0.9)]}, fail=RuntimeError("down"), reask="MET", blocks=True)
         self.assertEqual((res["status"], res["criteria"][0]["choice"], self.ask.call_count), ("blocked", "NOT_MET", 1))
@@ -328,22 +384,22 @@ class FigmaJudge(unittest.TestCase):
 
     def test_chunks_hold_every_node_and_stay_under_the_limit(self):
         text = big_tree()
-        chunks = fc.fc_figma.tree_chunks(text)
+        chunks = fc.fc_figma.fc_figmanodes.tree_chunks(text)
         self.assertGreater(len(chunks), 4)
-        self.assertTrue(all(len(c) <= fc.fc_figma.TREE_CHUNK_CHARS for c in chunks))
+        self.assertTrue(all(len(c) <= fc.fc_figma.fc_figmanodes.TREE_CHUNK_CHARS for c in chunks))
         joined = "\n".join(chunks)
         for i in range(15):
             self.assertIn(f'"id": "1:{i}"', joined)
             self.assertIn(f'"id": "2:{i}"', joined)
-        self.assertEqual(fc.fc_figma.tree_chunks("small tree\n"), ["small tree\n"])
+        self.assertEqual(fc.fc_figma.fc_figmanodes.tree_chunks("small tree\n"), ["small tree\n"])
 
     def test_every_chunk_carries_the_write_results_binding_facts(self):
         """Framelink shows a variable-bound fill as its hex, so the judge proves a binding only from the WRITE RESULT; a part that
         holds the hex fills but not that section made it call bound fills raw hex."""
         facts = "WRITE RESULT (facts the write script returned: node ids, variable bindings, component keys)\n" + json.dumps({"bound": "color/bg"})
-        chunks = fc.fc_figma.tree_chunks(big_tree() + "\n" + facts + "\n")
+        chunks = fc.fc_figma.fc_figmanodes.tree_chunks(big_tree() + "\n" + facts + "\n")
         self.assertGreater(len(chunks), 4)
-        self.assertTrue(all(len(c) <= fc.fc_figma.TREE_CHUNK_CHARS for c in chunks))
+        self.assertTrue(all(len(c) <= fc.fc_figma.fc_figmanodes.TREE_CHUNK_CHARS for c in chunks))
         self.assertTrue(all(c.count(facts) == 1 for c in chunks))
         self.assertEqual("\n".join(chunks).count('"id": "2:14"'), 1)
 
@@ -354,16 +410,16 @@ class FigmaJudge(unittest.TestCase):
 
     def test_a_node_with_no_children_or_a_plain_text_tree_is_still_covered(self):
         blob = "NODE 1:1\n" + "".join(f"line {i} " + "y" * 200 + "\n" for i in range(500))
-        chunks = fc.fc_figma.tree_chunks(blob)
-        self.assertTrue(all(len(c) <= fc.fc_figma.TREE_CHUNK_CHARS for c in chunks))
+        chunks = fc.fc_figma.fc_figmanodes.tree_chunks(blob)
+        self.assertTrue(all(len(c) <= fc.fc_figma.fc_figmanodes.TREE_CHUNK_CHARS for c in chunks))
         self.assertEqual("".join(chunks).count("line "), 500)
-        self.assertEqual("".join(fc.fc_figma.tree_chunks("z" * 70000 + "\n")).count("z"), 70000)
+        self.assertEqual("".join(fc.fc_figma.fc_figmanodes.tree_chunks("z" * 70000 + "\n")).count("z"), 70000)
 
     def test_a_big_tree_is_judged_whole_and_the_result_counts_the_chunks(self):
         res = self.judge_big(lambda t: ("MET", 0.0) if '"id": "2:7"' in t else ("UNCLEAR", 0.0))
         self.assertEqual((res["status"], res["chunks"], len(self.states)), ("passed", len(self.states), res["chunks"]))
         self.assertGreater(res["chunks"], 1)
-        self.assertTrue(all(len(s["tree"]) <= fc.fc_figma.TREE_CHUNK_CHARS for s in self.states))
+        self.assertTrue(all(len(s["tree"]) <= fc.fc_figma.fc_figmanodes.TREE_CHUNK_CHARS for s in self.states))
         self.assertEqual([s["tree_part"] for s in self.states][:2], [f"1 of {res['chunks']}", f"2 of {res['chunks']}"])
 
     def test_a_confirmed_violation_in_one_chunk_fails_the_criterion_whatever_the_others_say(self):
@@ -381,7 +437,7 @@ class FigmaJudge(unittest.TestCase):
             with self.subTest(absent=absent):
                 res = self.judge_big(lambda t: ("MET", 0.0) if has(t) else absent, confirm=confirm, text=text, criterion="The last variant has its Tint (2:4)")
                 row = res["criteria"][0]
-                self.assertEqual((res["status"], row["choice"], res["failed"], res["chunks"]), ("passed", "MET", [], len(fc.fc_figma.tree_chunks(text))))
+                self.assertEqual((res["status"], row["choice"], res["failed"], res["chunks"]), ("passed", "MET", [], len(fc.fc_figma.fc_figmanodes.tree_chunks(text))))
                 self.assertEqual((res["chunks"] > 2, row["parts"].count("MET"), row["parts"].count(absent[0])), (True, 1, res["chunks"] - 1))
                 self.assertEqual({c.args[2].split("TREE:\n", 1)[1] for c in self.confirm.call_args_list}, {text} if absent[0] == "NOT_MET" else set())
 
@@ -402,10 +458,10 @@ class FigmaJudge(unittest.TestCase):
             system, user = call.args[1:3]
             self.assertIn("never a violation", system)
             self.assertRegex(user, rf"TREE \(part \d+ of {res['chunks']}\)")
-            self.assertLessEqual(len(user), fc.fc_figma.TREE_CHUNK_CHARS + 500)
+            self.assertLessEqual(len(user), fc.fc_figma.fc_figmanodes.TREE_CHUNK_CHARS + 500)
 
     def test_no_chunk_showing_met_leaves_the_criterion_unmet(self):
-        res = self.judge_big(lambda t: ("UNCLEAR", 0.0))
+        res = self.judge_big(lambda t: ("UNCLEAR", 0.0), confirm={"confirmed": False, "evidence": "the tree does not show it"})
         self.assertEqual((res["status"], res["criteria"][0]["choice"]), ("failed", "UNCLEAR"))
 
     def test_a_criterion_whose_nodes_sit_in_different_chunks_is_settled_on_the_whole_tree(self):
@@ -413,7 +469,7 @@ class FigmaJudge(unittest.TestCase):
         which is asked once whether it meets every part; its yes passes the criterion, its no leaves the re-ask as before, and a
         call that fails is a judge error."""
         text, crit = big_tree(5), "The first and last variants have their Tint (2:0 and 2:4)"
-        self.assertGreater(len(fc.fc_figma.tree_chunks(text)), 2)
+        self.assertGreater(len(fc.fc_figma.fc_figmanodes.tree_chunks(text)), 2)
         both = lambda user: '"id": "2:0"' in user and '"id": "2:4"' in user
         for met, status, choice in ((True, "passed", "MET"), (False, "failed", "UNCLEAR")):
             with self.subTest(met=met):
@@ -429,6 +485,21 @@ class FigmaJudge(unittest.TestCase):
         self.assertEqual((res["status"], res["criteria"][0]["choice"]), ("blocked", "UNCLEAR"))
         self.assertIn("confirm call failed", res["judge_errors"][0]["evidence"])
         self.assertNotIn("reask", res["criteria"][0])  # the chunks' re-ask could still turn it MET
+
+    def test_a_tree_over_the_confirm_size_is_still_settled_on_the_whole_tree_when_it_fits_one_call(self):
+        """Task 059 had 186695 characters in 8 chunks, every chunk UNCLEAR on "24 variants, each 44 or 48 high", and the whole-tree
+        call that says so was never made. Only a tree beyond SETTLE_TREE_CHARS stays with the chunks."""
+        text, crit = big_tree(), "The first and last variants have their Tint (2:0 and 2:14)"
+        self.assertTrue(fc.fc_figma.CONFIRM_TREE_CHARS < len(text) <= fc.fc_figma.SETTLE_TREE_CHARS)
+        for met, status in ((True, "passed"), (False, "failed")):
+            with self.subTest(met=met):
+                res = self.judge_big(lambda t: ("UNCLEAR", 0.0), text=text, criterion=crit, confirm={"confirmed": met, "evidence": "both hold a Tint"})
+                self.assertEqual((res["status"], self.confirm.call_count, res["criteria"][0]["whole_tree"]["met"]), (status, 1, met))
+                self.assertEqual(self.confirm.call_args.args[2].split("TREE:\n", 1)[1], text)
+        huge = big_tree(40)
+        self.assertGreater(len(huge), fc.fc_figma.SETTLE_TREE_CHARS)
+        res = self.judge_big(lambda t: ("UNCLEAR", 0.0), text=huge, criterion=crit, confirm={"confirmed": True, "evidence": "x"})
+        self.assertEqual((res["status"], self.confirm.call_count, "whole_tree" in res["criteria"][0]), ("failed", 0, False))
 
     def test_a_chunk_that_errors_blocks_and_is_never_a_pass(self):
         def jev(env, cfg, state, q, label):
@@ -670,6 +741,203 @@ class FigmaPublish(unittest.TestCase):
         self.assertIn("HTTP 403 (the token needs the library_content:read scope)", str(e.exception))
         self.assertNotIn("figd_secret_token", str(e.exception))
         self.assertNotIn("x=1", str(e.exception))
+
+
+def png(w, h, rgb=(255, 255, 255)):
+    """A plain PNG of w x h pixels, stdlib only."""
+    import struct, zlib
+    raw = b"".join(b"\x00" + bytes(rgb) * w for _ in range(h))
+    chunk = lambda t, d: struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d))
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+
+
+class FigmaScreens(unittest.TestCase):
+    """save_screens with jev's tiles tool faked as `tile`: two tiles for a render over 2000 pixels tall, else one."""
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.shots = fc.fc_figma.fc_figmashots
+        self.tiled = []
+        def tile(src, out_dir, stem, tiles_max):
+            self.tiled.append((stem, tiles_max))
+            n = min(tiles_max, 2 if src.read_bytes() == b"tall" else 1)
+            names = [f"{stem}.png"] if n == 1 else [f"{stem}.{k}.png" for k in range(1, n + 1)]
+            for name in names:
+                (out_dir / name).write_bytes(b"png")
+            return [out_dir / name for name in names]
+        p = mock.patch.object(self.shots, "tile", side_effect=tile); p.start(); self.addCleanup(p.stop)
+
+    def test_saves_labelled_screens_retries_a_big_node_at_scale_1_and_empties_old_screens(self):
+        calls = []
+        def api(path):
+            calls.append(path)
+            big = "scale=2" in path
+            return {"err": None, "images": {"1:2": "u12" if big else None, "3:4": None if big else "u34", "5:6": None}}
+        out = self.dir / "001.screens"
+        out.mkdir()
+        (out / "old.png").write_bytes(b"old")
+        shots, notes = self.shots.save_screens("K", ["1:2", "3:4", "5:6"], out, api=api, fetch=lambda u: b"tall" if u == "u34" else b"x")
+        self.assertEqual(calls, ["/images/K?ids=1:2,3:4,5:6&format=png&scale=2", "/images/K?ids=3:4,5:6&format=png&scale=1"])
+        self.assertEqual([label for label, _ in shots], ["1:2", "3:4 (1 of 2, top to bottom)", "3:4 (2 of 2, top to bottom)"])
+        self.assertEqual(notes, ["no screen of 5:6: Figma rendered nothing for it"])
+        self.assertEqual(self.shots.screens(out), (shots, ["5:6"]))
+        self.assertEqual(sorted(p.name for p in out.iterdir()), sorted(["screens.json"] + [p.name for _, p in shots]))
+
+    def test_the_budget_caps_the_screens_and_tall_frames_share_it(self):
+        nodes = [f"1:{i}" for i in range(self.shots.SCREEN_BUDGET + 2)]
+        shots, notes = self.shots.save_screens("K", nodes, self.dir / "s", api=lambda p: {"images": {n: "u" for n in nodes}}, fetch=lambda u: b"tall")
+        self.assertEqual([m for _, m in self.tiled], [1] * self.shots.SCREEN_BUDGET)  # each shown node keeps one tile
+        self.assertEqual(len(shots), self.shots.SCREEN_BUDGET)
+        self.assertIn(", ".join(nodes[-2:]), notes[0])
+        self.assertEqual(self.shots.screens(self.dir / "s")[1], nodes[-2:])
+        self.tiled.clear()
+        self.shots.save_screens("K", ["1:2", "3:4"], self.dir / "s", api=lambda p: {"images": {"1:2": "u", "3:4": "u"}}, fetch=lambda u: b"tall")
+        self.assertEqual(self.tiled, [("1-2", self.shots.TILES_MAX), ("3-4", self.shots.TILES_MAX)])
+
+    def test_a_figma_error_raises_and_no_manifest_means_no_screens(self):
+        with self.assertRaises(RuntimeError) as e:
+            self.shots.save_screens("K", ["1:2"], self.dir / "s", api=lambda p: {"err": "Invalid node"}, fetch=None)
+        self.assertIn("Invalid node", str(e.exception))
+        self.assertEqual(self.shots.screens(self.dir / "s"), ([], []))
+
+
+class FigmaTiles(unittest.TestCase):
+    def test_tile_runs_jevs_tiles_tool_in_its_uv_project_and_reads_its_names(self):
+        shots = fc.fc_figma.fc_figmashots
+        done = subprocess.CompletedProcess([], 0, stdout='["1-2.1.png", "1-2.2.png"]\n', stderr="")
+        with mock.patch.object(shots.subprocess, "run", return_value=done) as run:
+            self.assertEqual(shots.tile(Path("/r/raw.png"), Path("/o"), "1-2", 4), [Path("/o/1-2.1.png"), Path("/o/1-2.2.png")])
+        self.assertEqual(run.call_args.args[0], ["uv", "run", "--quiet", "--project", str(fc.fc_config.JEV_DIR), "python", "-m", "jev_ultrafast.tiles", "/r/raw.png", "/o", "1-2", "4"])
+        with mock.patch.object(shots.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, stdout="", stderr="PIL.UnidentifiedImageError")), self.assertRaises(RuntimeError) as e:
+            shots.tile(Path("/r/raw.png"), Path("/o"), "1-2", 4)
+        self.assertIn("UnidentifiedImageError", str(e.exception))
+
+
+class JevImages(unittest.TestCase):
+    def ask(self, state):
+        sent = {}
+        def http(req, provider, timeout=90):
+            sent.update(body=json.loads(req.data), headers=dict(req.header_items()), timeout=timeout)
+            return {"answers": {}}
+        with mock.patch.object(fc.fc_models, "http_json", side_effect=http), mock.patch.object(fc.fc_config, "typesafe_key", return_value="k"):
+            fc.fc_models.jev_ask({}, {}, state, {"c0": {"type": "choice"}}, "t")
+        return sent
+
+    def test_an_image_goes_once_as_an_asset_with_the_images_header(self):
+        p = Path(tempfile.mkdtemp()) / "a.png"
+        p.write_bytes(png(300, 300))
+        image = fc.fc_models.Image(p)
+        sent = self.ask({"tree": "T", "screens": {"1:2": image, "again": fc.fc_models.Image(p)}})
+        ref = sent["body"]["state"]["screens"]["1:2"]
+        self.assertEqual(sent["body"]["state"]["screens"]["again"], ref)
+        self.assertEqual(sent["body"]["assets"], {ref: {"type": "image", "format": "png", "data_base64": __import__("base64").b64encode(p.read_bytes()).decode()}})
+        self.assertEqual(sent["headers"].get("Typesafe-danger-zone-images"), "true")
+        self.assertEqual(sent["timeout"], 180)
+
+    def test_a_text_state_sends_no_assets_and_no_images_header(self):
+        sent = self.ask({"tree": "T"})
+        self.assertNotIn("assets", sent["body"])
+        self.assertNotIn("Typesafe-danger-zone-images", sent["headers"])
+
+
+class FigmaJudgeScreens(unittest.TestCase):
+    def setUp(self):
+        self.proj = Path(tempfile.mkdtemp()).resolve() / ".compose" / "p"
+        shots = self.proj / "results" / "001.screens"
+        shots.mkdir(parents=True)
+        (shots / "1-2.png").write_bytes(png(300, 300))
+        (shots / "screens.json").write_text(json.dumps({"screens": [["1:2", "1-2.png"]], "missing": []}))
+        (self.proj / "results" / "001.tree.txt").write_text("FRAME 001\n")
+        (self.proj / "linear.json").write_text(json.dumps({"feature": "ENG-1", "figma": "AbCdEf123456"}))
+        (self.proj / "verify.json").write_text(json.dumps({"acceptance_threshold": 0.7}))
+        fc.fc_tasks.sync_tasks(self.proj, {"feature": {"id": "ENG-1", "title": "F", "description": ""}, "issues": [judge_task("ENG-3", "001", "Cart page", ["Shows the total"])]})
+        for mod, name, value in ((fc.fc_config, "ENV_FILE", self.proj / "none.env"), (fc.fc_core, "say", lambda m: None)):
+            p = mock.patch.object(mod, name, value); p.start(); self.addCleanup(p.stop)
+
+    def judge(self, tree, screens, confirm=None, tree_reask="UNCLEAR", look="LOOK"):
+        """tree: the tree verdict (choice, p); screens: the screen verdicts in order (first ask, then the re-ask), or an exception;
+        look: whether a picture can decide the criterion (LOOK or STRUCTURE), or an exception."""
+        screens = list(screens) if isinstance(screens, list) else screens
+        self.screen_states, self.look_asks = [], []
+        def jev(env, cfg, state, q, label):
+            if label == "figma judge looks":
+                self.look_asks.append((state, q))
+                if isinstance(look, Exception):
+                    raise look
+                choice, p = look if isinstance(look, tuple) else (look, 0.95)
+                return {"answers": {"c0": {"choice": choice, "probabilities": {choice: p}}}}
+            if label == "figma judge screens":
+                self.screen_states.append((state, q))
+                if isinstance(screens, Exception):
+                    raise screens
+                c, p = screens.pop(0)
+                return {"answers": {"c0": {"choice": c, "probabilities": {c: 0.9, "NOT_MET": p}}}}
+            if label.endswith("re-ask"):
+                return reask_reply(tree_reask)
+            return {"model": "jev-test", "answers": {"c0": {"choice": tree[0], "probabilities": {tree[0]: 0.9, "NOT_MET": tree[1]}}}}
+        self.out = io.StringIO()
+        with mock.patch.object(fc.fc_core, "project_dir", return_value=self.proj), mock.patch.object(fc.fc_models, "jev_ask", side_effect=jev), \
+                mock.patch.object(fc.fc_models, "fast_json", return_value=confirm), mock.patch.object(fc.fc_linear, "linear_event"), mock.patch("sys.stdout", self.out):
+            try:
+                fc.fc_figma.cmd_figma(SimpleNamespace(repo=".", project="p", action="judge", figma=None, only="001", force=False))
+            except SystemExit as e:
+                self.assertEqual(e.code, 1)
+        return json.loads((self.proj / "results" / "001.json").read_text())
+
+    def test_jev_sees_every_screen_by_its_node_label(self):
+        res = self.judge(("MET", 0.0), [("MET", 0.0)])
+        state, q = self.screen_states[0]
+        self.assertEqual(list(state["screens"]), ["1:2"])
+        self.assertIsInstance(state["screens"]["1:2"], fc.fc_models.Image)
+        self.assertEqual(q["c0"]["criteria"], fc.fc_figma.fc_figmashots.SCREEN_CHOICES)
+        self.assertEqual((res["status"], res["screens"]), ("passed", ["1:2"]))
+
+    def test_a_violation_the_screens_show_twice_fails_a_criterion_the_tree_passed(self):
+        res = self.judge(("MET", 0.0), [("NOT_MET", 0.9), ("NOT_MET", 0.8)])
+        row = res["criteria"][0]
+        self.assertEqual((res["status"], row["choice"], row["by"], len(res["failed"])), ("failed", "NOT_MET", "screens", 1))
+        self.assertIn("001.screens", row["evidence"])
+
+    def test_a_screen_violation_jev_does_not_repeat_or_below_the_threshold_passes(self):
+        for screens in ([("NOT_MET", 0.9), ("MET", 0.1)], [("NOT_MET", 0.5)]):
+            with self.subTest(screens=screens):
+                res = self.judge(("MET", 0.0), screens)
+                self.assertEqual((res["status"], res["criteria"][0]["choice"]), ("passed", "MET"))
+
+    def test_the_screens_settle_a_criterion_the_tree_left_unclear_but_never_lift_a_confirmed_violation(self):
+        res = self.judge(("UNCLEAR", 0.0), [("MET", 0.0)])
+        self.assertEqual((res["status"], res["criteria"][0]["by"]), ("passed", "screens"))
+        res = self.judge(("NOT_MET", 0.9), [("MET", 0.0)], confirm={"violated": True, "evidence": "no total"})
+        self.assertEqual((res["status"], res["criteria"][0]["choice"]), ("failed", "NOT_MET"))
+        res = self.judge(("UNCLEAR", 0.0), [("UNCLEAR", 0.0)])
+        self.assertEqual(res["status"], "failed")
+
+    def test_screens_that_cannot_be_judged_block_and_none_saved_judges_the_tree_alone(self):
+        res = self.judge(("MET", 0.0), RuntimeError("typesafe: HTTP 400"))
+        self.assertEqual(res["status"], "blocked")
+        self.assertIn("HTTP 400", res["judge_errors"][0]["evidence"])
+        (self.proj / "results" / "001.screens" / "screens.json").unlink()
+        res = self.judge(("MET", 0.0), [])
+        self.assertEqual((res["status"], res["screens"], self.screen_states), ("passed", [], []))
+        self.assertIn("no screens, judged from the tree alone", self.out.getvalue())
+
+    def test_a_criterion_only_the_tree_can_decide_is_never_shown_the_screens(self):
+        res = self.judge(("MET", 0.0), [("NOT_MET", 0.9), ("NOT_MET", 0.9)], look="STRUCTURE")
+        self.assertEqual((res["status"], res["criteria"][0]["choice"], self.screen_states), ("passed", "MET", []))
+        state, q = self.look_asks[0]
+        self.assertNotIn("screens", state)  # sorted on its text alone: shown screens, Jev judges a token criterion by the look
+        self.assertEqual((q["c0"]["criteria"], q["c0"]["instructions"]["criterion"]), (fc.fc_figma.fc_figmashots.LOOK_CHOICES, "Shows the total"))
+        res = self.judge(("UNCLEAR", 0.0), [("MET", 0.0)], look="STRUCTURE")
+        self.assertEqual((res["status"], res["criteria"][0]["choice"]), ("failed", "UNCLEAR"))
+        res = self.judge(("UNCLEAR", 0.0), [("MET", 0.0)], look=("LOOK", 0.72))  # a named style: a look, but not surely
+        self.assertEqual((res["status"], self.screen_states), ("failed", []))
+        res = self.judge(("MET", 0.0), [("MET", 0.0)], look="MAYBE")
+        self.assertEqual(res["status"], "blocked")
+        self.assertIn("which a screen can decide", res["judge_errors"][0]["evidence"])
+
+    def test_a_node_with_no_screen_is_never_missing_from_the_screens(self):
+        (self.proj / "results" / "001.screens" / "screens.json").write_text(json.dumps({"screens": [["1:2", "1-2.png"]], "missing": ["3:4"]}))
+        self.judge(("MET", 0.0), [("MET", 0.0)])
+        self.assertIn("(3:4)", self.screen_states[0][1]["c0"]["instructions"]["rules"])
 
 
 class FigmaConnectorBriefs(unittest.TestCase):

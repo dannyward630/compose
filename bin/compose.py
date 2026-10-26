@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fc_cost, fc_mcp  # noqa: E402
-import fc_core, fc_proc, fc_readguard, fc_libapi, fc_green, fc_gate, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_claude, fc_models, fc_route, fc_quick, fc_herdr, fc_worktree, fc_layers, fc_blockers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_decide, fc_hooks, fc_pin, fc_reports, fc_crew, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_format, fc_implement, fc_shrink, fc_jev, fc_accept, fc_verify, fc_taskreview, fc_ship, fc_prove, fc_run, fc_status, fc_tiers, fc_tierpin, fc_budget, fc_spec, fc_watch, fc_history, fc_yolo, fc_bench, fc_setup, fc_update  # noqa: E402
+import fc_core, fc_proc, fc_readguard, fc_libapi, fc_green, fc_gate, fc_config, fc_tasks, fc_linear, fc_linear_cmd, fc_delivery, fc_factorystate, fc_factoryturn, fc_factory, fc_claude, fc_models, fc_route, fc_quick, fc_herdr, fc_worktree, fc_layers, fc_blockers, fc_stack, fc_change, fc_frame0, fc_f0pages, fc_ask, fc_decide, fc_hooks, fc_pin, fc_reports, fc_crew, fc_toolbug, fc_init, fc_clean, fc_figma, fc_briefs, fc_buildercheck, fc_reconcile, fc_format, fc_implement, fc_shrink, fc_jev, fc_accept, fc_verify, fc_taskreview, fc_ship, fc_prove, fc_run, fc_status, fc_tiers, fc_tierpin, fc_budget, fc_spec, fc_watch, fc_history, fc_yolo, fc_bench, fc_setup, fc_update, fc_readiness  # noqa: E402
 
 DETACHED = ("run", "verify", "resume")  # the long commands: a closed tab or a crashed session must not end them
 
@@ -92,12 +92,15 @@ def main():
                             ("resume", fc_run.cmd_resume, "continue a run or verify that stopped on PAYMENT REQUIRED"),
                             ("done", fc_status.cmd_done, "record tasks the team lead finished by hand: --only ids --note why"),
                             ("sync", fc_linear.cmd_sync, "store the feature and its tasks, read from Linear with the workspace key; --stdin reads them as JSON instead"),
-                            ("linear", fc_linear_cmd.cmd_linear, "read and write Linear with the workspace key: get | list | create | update | comment | labels | project | doc"),
+                            ("linear", fc_linear_cmd.cmd_linear, "read and write Linear with the workspace key: get | list | create | update | comment | cancel | labels | project | doc"),
                             ("tasks", fc_spec.cmd_tasks, "the task list to review before dispatch: ids, titles, files, after, tests; warns on shared files"),
                             ("route", fc_route.cmd_route, "route each task: a workflow and a depth, project policies first, Jev for the rest; --recalculate recomputes"),
                             ("quick", fc_quick.cmd_quick, "pin check-only on tasks, stories, or the feature, then route them"),
                             ("spec-check", fc_spec.cmd_spec_check, "check the synced feature, its stories, and its tasks against the spec; --stdin reads the sync JSON"),
                             ("ready", fc_linear.cmd_ready, "mark the stories and features that can start now with the Ready label in Linear, and print them"),
+                            ("delivery", fc_delivery.cmd_delivery, "the product delivery plan across features: seed | order | reconcile | tracks; reconcile makes Linear follow it"),
+                            ("factory", fc_factory.cmd_factory, "the build loop over the repo's Linear project: start | stop | status | watch | pace | plan | decline | night | day | digest; it builds ready stories in roadmap order, by day at a set pace and overnight within your limits"),
+                            ("readiness", fc_readiness.cmd_readiness, "judge whether stories are specced well enough to build (Jev, a stronger model for technical ones) and unblocked; what is missing is asked under each story's ## Open questions"),
                             ("projects", fc_status.cmd_projects, "list every project (feature) with its task progress"),
                             ("cost", fc_status.cmd_cost, "tokens per teammate session and per run provider; --json"),
                             ("status", fc_status.cmd_status, "projects and every task's state, attempts, time, cost, stack layer"),
@@ -110,19 +113,21 @@ def main():
                             ("groundwork", fc_briefs.cmd_groundwork, "print the groundwork teammate's brief; --extra adds the project's notes"),
                             ("explore", fc_briefs.cmd_explore, "print the explore teammate's brief (a fast trail-only map of an existing repo); --extra adds notes"),
                             ("trail", fc_init.cmd_trail, "set trail up in the project's worktree again: wire it for Claude Code and build the graph"),
-                            ("architect", fc_briefs.cmd_architect, "print the architect teammate's brief (questions on one Lavish page); --extra adds the project's notes"),
+                            ("architect", fc_briefs.cmd_architect, "print the change-of-course architect's brief for --change <id> (step 8); --extra adds the project's notes"),
                             ("planner", fc_briefs.cmd_planner, "print the planner teammate's brief; --issue is the ticket (default: the project's feature); --extra adds the project's notes"),
+                            ("buildercheck", fc_buildercheck.cmd_buildercheck, "print the builder check's brief: a fresh builder reads --issue (default: the project's feature) cold and reports the ranked questions it would still need answered; --extra adds the project's notes"),
                             ("testcrews", fc_briefs.cmd_testcrews, "start one test-writing teammate per task in parallel from the groundwork contract"),
                             ("designer", fc_figma.cmd_designer, "print the designer teammate's brief; --figma stores the file key, --extra adds notes"),
                             ("designcrews", fc_figma.cmd_designcrews, "start one design-NNN builder per open design task"),
                             ("triage", fc_run.cmd_triage, "fast-model look at each passed task: clean or flag (run does this at its end)"),
                             ("reflect", fc_change.cmd_reflect, "screen the settled decisions against evidence with Jev: HOLDS | BROKEN | UNCLEAR per line"),
-                            ("hold", fc_change.cmd_hold, "hold tasks back from dispatch while the plan changes: --only ids --reason why; --release ids|all"),
+                            ("hold", fc_change.cmd_hold, "hold tasks back from dispatch while the plan changes: --only ids|--rests-on refs --reason why; --release ids|all"),
                             ("away", fc_yolo.cmd_yolo, "the product owner is away until their first message: [--push] [words] enters, `decided \"<q>: <a>\"` logs an answer taken, --clear-words empties the words, `digest` prints the digest, `off` prints it and archives"),
                             ("yolo", fc_yolo.cmd_yolo, "the engineering manager answers until an explicit off, and the product owner may steer: [--push] [words] enters, `decided \"<q>: <a>\"` logs an answer taken, --clear-words empties the words, `digest` prints the digest, `off` prints it and archives"),
-                            ("change", fc_change.cmd_change, "start | done | undo a change of course: what changed in Linear and why, undoable"),
+                            ("change", fc_change.cmd_change, "start | done | undo | keep|part|discard <task id> [--files a,b] a change of course: what changed in Linear and why, undoable; settle paused work"),
                             ("decisions", fc_decide.cmd_decisions, "print the project's pending-decisions page: every open card in full, when it was asked, and the decisions so far; --issue picks another map"),
                             ("decide", fc_decide.cmd_decide, "record the product owner's answers on the map (`\"Q1: A\" ...` or --accept-all) with their words attached: --quote \"<what they said>\"; without it, only under away or yolo, as unconfirmed"),
+                            ("reconcile", fc_reconcile.cmd_reconcile, "the one-time cleanup of a messy Linear project: list | check --file | show | apply --go | notices"),
                             ("crew", fc_crew.cmd_crew, "start | list | focus | stop teammates, the Claude sessions in the project's herdr space (the team lead, the architect, helpers)"),
                             ("report", fc_crew.cmd_report, "a teammate session reports up: working | needs-user | blocked | done, with one line"),
                             ("tool-bug", fc_toolbug.cmd_tool_bug, "file a tool bug (file) or open its fix's PR (pr --worktree): scrub --body and post it on the maintainer's machine or with --approved, else save a draft; --comment N or --new skips the search"),
@@ -153,13 +158,34 @@ def main():
         if name == "sync":
             s.add_argument("--stdin", action="store_true", help="read the sync JSON from stdin instead of Linear")
         if name == "linear":
-            s.add_argument("action", choices=("get", "list", "create", "update", "comment", "labels", "project", "doc"))
+            s.add_argument("action", choices=("get", "list", "create", "update", "comment", "cancel", "labels", "project", "doc"))
             s.add_argument("target", nargs="*")
             for flag in ("--body", "--comments", "--json", "--append", "--description", "--any-project", "--fresh"):
                 s.add_argument(flag, action="store_true")
-            s.add_argument("--label", action="append")
-            for flag in ("--parent", "--search", "--state", "--priority", "--title", "--blocked-by", "--file", "--section", "--expect", "--create"):
+            for flag in ("--label", "--add-label", "--drop-label"):
+                s.add_argument(flag, action="append")
+            for flag in ("--parent", "--search", "--state", "--priority", "--title", "--blocked-by", "--file", "--section", "--expect", "--create", "--into"):
                 s.add_argument(flag)
+        if name == "delivery":
+            s.add_argument("action", choices=("seed", "order", "reconcile", "tracks"))
+            s.add_argument("--file")
+            s.add_argument("--quote")
+            for flag in ("--dry-run", "--json"):
+                s.add_argument(flag, action="store_true")
+        if name == "factory":
+            s.add_argument("action", choices=("start", "stop", "status", "watch", "pace", "plan", "decline", "loop", "night", "day", "digest", "answer", "prep"))
+            s.add_argument("target", nargs="?")
+            s.add_argument("--hold")
+            s.add_argument("--done", action="store_true")
+            s.add_argument("--timeout", type=float)
+            s.add_argument("--json", action="store_true")
+            s.add_argument("--until", metavar="HH:MM", help="night: when it drains (default factory.night_until)")
+            s.add_argument("--budget", type=float, help="night: dollars of real spend before it drains (default factory.night_budget)")
+            s.add_argument("--stop-when", help="night: drain once a verified story meets these words")
+            s.add_argument("--now", action="store_true", help="stop: at night, stop at once instead of draining")
+            s.add_argument("--at", help=argparse.SUPPRESS)
+            s.add_argument("--nth", type=int, default=0, help=argparse.SUPPRESS)
+            s.add_argument("--ticket", help=argparse.SUPPRESS)
         if name == "cost":
             s.add_argument("--json", action="store_true", help="print the rows and their total as JSON")
         if name == "tier":
@@ -180,6 +206,11 @@ def main():
             s.add_argument("ids", nargs="+", help="task ids, task or story Linear ids, or the feature id")
         if name == "spec-check":
             s.add_argument("--stdin", action="store_true", help="read the sync JSON from stdin instead of the project's cache")
+        if name == "readiness":
+            s.add_argument("stories", nargs="+", help="story Linear ids")
+            s.add_argument("--refresh", action="store_true", help="judge again even where the story text is unchanged since the last verdict")
+            s.add_argument("--dry-run", action="store_true", help="write nothing to Linear")
+            s.add_argument("--json", action="store_true", help="print the results as a JSON list")
         if name == "run":
             s.add_argument("--only", help="comma-separated task ids")
             s.add_argument("--attempts", type=int, default=3)
@@ -236,10 +267,10 @@ def main():
             s.add_argument("--parallel", type=int, default=4)
             s.add_argument("--tests", action="store_true", help="measure test writers instead: each model writes each task's protected test")
             s.add_argument("--base", help="with --tests: the revision the protected tests are reset to and scored against")
-        if name in ("groundwork", "architect", "explore", "planner", "designer"):
+        if name in ("groundwork", "architect", "explore", "planner", "buildercheck", "designer"):
             s.add_argument("--extra", help="project-specific notes appended to the brief; `-` reads them from stdin")
-        if name == "planner":
-            s.add_argument("--issue", help="the ticket to plan (default: the project's feature)")
+        if name in ("planner", "buildercheck"):
+            s.add_argument("--issue", help="the ticket to plan or check (default: the project's feature)")
         if name == "designer":
             s.add_argument("--figma", help="the target Figma file's url or key: stored in linear.json before the brief prints")
         if name == "designcrews":
@@ -249,7 +280,8 @@ def main():
             s.add_argument("--max", type=int, help="most builders to start at once (default: design_concurrency in verify.json, else parallel in ~/.compose/config.json, else 3)")
             s.add_argument("--force", action="store_true", help="start the builders although the Mac runs on its battery")
         if name == "architect":
-            s.add_argument("--change", help="an open change of course, e.g. C2: its own page, asking only what the evidence questions")
+            s.add_argument("--change", required=True, help="an open change of course, e.g. C2: its own page, asking only what the evidence questions; "
+                                                          "shaping a feature is the engineering manager's brainstorm (sections/0b.md), not an architect")
         if name == "testcrews":
             s.add_argument("--contract", help="default: .compose/<project>/results/contract.md")
             s.add_argument("--only", help="comma-separated task ids")
@@ -267,6 +299,7 @@ def main():
             s.add_argument("--against", action="append", help="a Linear line the evidence contradicts, quoted; repeatable")
         if name == "hold":
             s.add_argument("--only", help="comma-separated task ids to hold")
+            s.add_argument("--rests-on", dest="rests_on", help="comma-separated refs: an issue id, a tech doc title, a decision id (D3), or reflect; holds every unfinished task resting on them")
             s.add_argument("--reason", help="one line: why they wait")
             s.add_argument("--release", help="comma-separated task ids, or all")
         if name in ("away", "yolo"):
@@ -274,16 +307,23 @@ def main():
             s.add_argument("--clear-words", action="store_true", help="empty the words, keeping since, push, and the decisions")
             s.add_argument("words", nargs="*", help="what pre-answers questions, verbatim; or `decided <q>: <a>`; or `digest`; or `off`")
         if name in ("decisions", "decide"):
-            s.add_argument("--issue", help="the map to read (default: the project's feature issue)")
+            s.add_argument("--issue", help="the issue to read (default: the project's feature issue)")
+        if name == "reconcile":
+            s.add_argument("action", choices=("list", "check", "show", "apply", "notices"))
+            s.add_argument("--file", help="check: the sheet of how every open ticket is sorted (outside the repo)")
+            s.add_argument("--go", help="apply: the product owner's words, verbatim")
         if name == "decide":
-            s.add_argument("answers", nargs="*", help='"<card id>: <letter or answer>", one per card, e.g. "Q1: A" "Q2: own JWT"')
+            s.add_argument("answers", nargs="*", help='"<card id>: <letter or answer>", one per card, e.g. "Q1: A" "Q2: own JWT"; a bare id ("Q3", "D2") confirms the line already recorded')
+            s.add_argument("--new", action="append", default=[], help="a decision reached in conversation, with no card: recorded as the issue's next D<n> under Decisions so far; repeat for more")
+            s.add_argument("--replaces", help="with exactly one --new: the live D<n> decision it replaces; the old line is struck through, (replaced by D<m>)")
             s.add_argument("--quote", help="the product owner's words, verbatim: the decision is recorded only with them")
             s.add_argument("--accept-all", action="store_true", help="record every open card's recommendation (answers given win)")
             s.add_argument("--change", help="the open change of course these cards belong to, e.g. C2: the line each card supersedes is struck through")
         if name == "change":
-            s.add_argument("action", choices=("start", "done", "undo"))
-            s.add_argument("id", nargs="?", help="undo: the change to undo, e.g. C2")
+            s.add_argument("action", choices=("start", "done", "undo", "keep", "part", "discard"))
+            s.add_argument("id", nargs="?", help="undo: the change to undo, e.g. C2; keep|part|discard: the paused task id")
             s.add_argument("--why", help="start: one line, the reason for the change")
+            s.add_argument("--files", help="part: comma-separated files of the paused work to keep")
         if name == "crew":
             s.add_argument("action", choices=("start", "list", "focus", "stop"))
             s.add_argument("--role", help="orchestrator (the team lead), architect, or a helper's job; the agent is named <slug>-<role>")
@@ -366,7 +406,6 @@ def main():
         fc_herdr.herdr_attach()
         ap.print_help(sys.stderr)
         sys.exit(2)
-    sys.argv[1] = next((new for new, olds in fc_config.OLD_NAMES.items() if sys.argv[1] in olds), sys.argv[1])  # `compose wayfinder` is `compose architect`
     a, extra = ap.parse_known_args()
     if a.cmd == "verify" and (a.prove or a.prototype):  # their own flows, with their own reports
         a.fn = fc_prove.cmd_prove if a.prove else fc_prove.cmd_prototype

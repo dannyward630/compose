@@ -168,7 +168,6 @@ def cmd_crew(a):
         fc_load.wait(fc_core.say, getattr(a, "force", False))
     if a.action in ("start", "stop"):
         fc_herdr.herdr_manager_claim(proj, getattr(a, "takeover", False))
-    a.role = next((new for new, olds in fc_config.OLD_NAMES.items() if a.role in olds), a.role)  # `--role wayfinder` starts the architect
     name = fc_herdr.agent_name(slug, re.sub(r"[^a-z0-9_-]+", "-", a.role.lower()).strip("-"))
     rec = crew_dir(proj) / f"{name}.json"
     if a.action == "focus":

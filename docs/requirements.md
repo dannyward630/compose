@@ -52,7 +52,7 @@ Setup does not install these for you by default.
 
 | Tool | Unlocks | Install |
 |---|---|---|
-| Framelink (`framelink-figma` MCP server) | every Figma read: the designer, its builders and reviewer, `figma check`, `figma tree` | pick the designer rows in `compose setup`; they need Claude Code. By hand: a Figma personal access token in `~/.config/figma-context-mcp/.env` as one line `FIGMA_API_KEY=<token>` (mode 600), then `claude mcp add framelink-figma --scope user -- npx -y figma-developer-mcp --stdio --env ~/.config/figma-context-mcp/.env --no-telemetry` |
+| Framelink (`framelink-figma` MCP server) | every Figma read: the designer, its builders and reviewer, `figma check`, `figma tree` (its token also renders the screens the figma judge shows Jev) | pick the designer rows in `compose setup`; they need Claude Code. By hand: a Figma personal access token in `~/.config/figma-context-mcp/.env` as one line `FIGMA_API_KEY=<token>` (mode 600), then `claude mcp add framelink-figma --scope user -- npx -y figma-developer-mcp --stdio --env ~/.config/figma-context-mcp/.env --no-telemetry` |
 | Frame0 1.7.0+ | wireframes for prototype questions (macOS) | [frame0.app](https://frame0.app); compose talks to the app's own API, no MCP server |
 | OpenCode | an alternative implementer per task, a `bench` column | `curl -fsSL https://opencode.ai/install \| bash` |
 
@@ -64,7 +64,7 @@ They format a task's files.
 When the pi herdr extension `~/.pi/agent/extensions/herdr-agent-state.ts` is present, pi implementers use it to report their state to herdr.
 
 `npx` fetches three tools on every use, with no pinned version.
-They are `lavish-axi` (the architect page) and `figma-developer-mcp` (Framelink).
+They are `lavish-axi` (the shaping and change-of-course pages) and `figma-developer-mcp` (Framelink).
 
 ## Keys
 

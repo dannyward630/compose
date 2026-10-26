@@ -94,6 +94,28 @@ class SpecCheck(unittest.TestCase):
             ok, level, gaps = check([task("ENG-3", "001")], SETTLED.replace("None", none, 1))["ENG-1"]
             self.assertEqual((ok, gaps), (True, []), none)
 
+    DESIGN = ("## Intent\n\nA shop.\n\n## Goals\n\n- sell\n\n## Non-goals\n\n- rent\n\n## Anti-goals\n\n- ads\n\n## Constraints\n\n- one box\n\n"
+              "## Decided by the product owner\n\n- D1\n\n## My calls\n\n- SQLite\n\n## Left to the builder\n\n- names\n\n## Open questions\n\n"
+              "## Decisions so far\n\n- D1: one store (product owner, 2026-10-25; said: \"one\")\n"
+              "- D2: the design on ENG-1 is approved (product owner, 2026-10-25; said: \"go\")\n\n"
+              "### Codebase brief\n\nWhere things live.\n\n## Plan\n\nThe plan.")
+
+    def test_a_brainstormed_design_without_not_yet_specified_is_settled(self):
+        ok, level, gaps = check([task("ENG-3", "001")], self.DESIGN)["ENG-1"]
+        self.assertEqual((ok, gaps), (True, []))
+
+    def test_an_open_question_left_on_the_design_fails_it(self):
+        desc = self.DESIGN.replace("## Open questions\n\n", "## Open questions\n\nWhich payment provider?\n\n")
+        ok, level, gaps = check([task("ENG-3", "001")], desc)["ENG-1"]
+        self.assertEqual((ok, len(gaps), has(gaps, "Open questions"), has(gaps, "Which payment provider?")), (False, 1, True, True))
+
+    def test_open_cards_under_not_yet_specified_still_fail_and_an_empty_section_is_settled(self):
+        card = "## Not yet specified\n\nQ1. Which auth?\nA. Clerk - affects: billing\nB. JWT - affects: work\nRecommendation: A\n\n"
+        ok, _, gaps = check([task("ENG-3", "001")], card + self.DESIGN)["ENG-1"]
+        self.assertEqual((ok, has(gaps, "Not yet specified"), has(gaps, "Q1. Which auth?")), (False, True, True))
+        ok, _, gaps = check([task("ENG-3", "001")], "## Not yet specified\n\n" + self.DESIGN)["ENG-1"]
+        self.assertEqual((ok, gaps), (True, []))
+
     def test_tasks_chained_by_blocked_by_may_share_a_file(self):
         issues = [task("ENG-3", "001", files="a.go"), task("ENG-4", "002", ["ENG-3"], files="a.go"), task("ENG-5", "003", ["ENG-4"], files="a.go")]
         self.assertFalse(has(check(issues)["ENG-1"][2], "a.go"))

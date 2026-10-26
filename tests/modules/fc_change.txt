@@ -11,6 +11,15 @@ last_change_done
 evidence_cut
 evidence_since
 reflect
+TECH_DOC_RE
+DECISION_ID
+rests_on
+TEAMMATE_PAUSE
+TEAMMATE_RELEASE
+steer_teammate
+save_hold
+hold_tasks
+false_alarm
 cmd_hold
 CHANGE_SYNC_MAX
 CHANGE_CONTENT
@@ -29,6 +38,10 @@ change_start
 change_done
 undo_edits
 change_undo
+paused_tasks
+SETTLE_KEYS
+settle
+unsettle
 cmd_change
 cmd_reflect
 reflect_counts

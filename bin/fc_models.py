@@ -1,4 +1,4 @@
-import json, os, re, subprocess, sys, time, urllib.error, urllib.request
+import base64, json, os, re, subprocess, sys, time, urllib.error, urllib.request, uuid
 from pathlib import Path
 import fc_core, fc_config, fc_claude, fc_harness, fc_proc, fc_readguard, fc_providers, fc_tiers, fc_notify
 
@@ -499,14 +499,40 @@ def confirm_call(env, system, user, max_tokens=500, key="confirmed"):
     return bool(v[key]), str(v.get("evidence", ""))[:300]
 
 
+class Image:
+    """A PNG or JPEG file put anywhere in a Jev state: jev_ask sends it as an image asset and writes its reference in its place."""
+    def __init__(self, path):
+        self.path = Path(path)
+
+def with_assets(value, assets):
+    """`value` with every Image replaced by a fresh reference, its file added to `assets` once (Jev's `assets` map)."""
+    if isinstance(value, Image):
+        ref = next((r for r, a in assets.items() if a["path"] == value.path), None)
+        if not ref:
+            ref = f"img-{uuid.uuid4().hex}"
+            fmt = value.path.suffix.lower().lstrip(".")
+            assets[ref] = {"path": value.path, "type": "image", "format": "jpg" if fmt == "jpeg" else fmt,
+                           "data_base64": base64.b64encode(value.path.read_bytes()).decode()}
+        return ref
+    if isinstance(value, dict):
+        return {k: with_assets(v, assets) for k, v in value.items()}
+    if isinstance(value, list):
+        return [with_assets(v, assets) for v in value]
+    return value
+
 def jev_ask(env, cfg, state, questions, label):
-    """One TypeSafe (Jev) request: choice questions against one state, on the cost ledger. Returns Jev's whole reply."""
+    """One TypeSafe (Jev) request: choice questions against one state, on the cost ledger. Returns Jev's whole reply.
+    An Image in the state or the questions goes as an image asset, with the header that turns images on."""
     key = fc_config.typesafe_key(env, label)
-    req = urllib.request.Request("https://api.typesafe.ai/v1/systemone",
-                                 data=fc_core.scrub(json.dumps({"model": env.get("TYPESAFE_MODEL", "jev-latest"), "state": state,
-                                                                "questions": questions})).encode(),
-                                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
-    out = http_json(req, f"typesafe ({label})")
+    assets = {}
+    body = json.loads(fc_core.scrub(json.dumps({"model": env.get("TYPESAFE_MODEL", "jev-latest"), "state": with_assets(state, assets),
+                                                "questions": with_assets(questions, assets)})))
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    if assets:  # the image bytes are never scrubbed: a secret cannot be in them, and a replaced byte would break the file
+        body["assets"] = {r: {k: v for k, v in a.items() if k != "path"} for r, a in assets.items()}
+        headers["TypeSafe-Danger-Zone-Images"] = "true"
+    req = urllib.request.Request("https://api.typesafe.ai/v1/systemone", data=json.dumps(body).encode(), headers=headers)
+    out = http_json(req, f"typesafe ({label})", timeout=180 if assets else 90)
     u = out.get("usage", {}) or {}
     price = (cfg.get("prices") or {}).get("typesafe_per_call")
     fc_core.LEDGER.add("typesafe", u.get("input_tokens") or u.get("prompt_tokens") or u.get("total_tokens") or 0, u.get("output_tokens") or 0,

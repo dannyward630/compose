@@ -1,6 +1,6 @@
 import json, os, re, sys, threading, time
 from pathlib import Path
-import fc_core, fc_config, fc_tasks, fc_worktree, fc_linear, fc_models, fc_stack
+import fc_core, fc_config, fc_herdr, fc_tasks, fc_worktree, fc_linear, fc_models, fc_stack
 
 
 # ---------- changing course: reflect, hold, change ----------
@@ -81,7 +81,8 @@ def reflect(proj, trigger, evidence, against=()):
                          for i, l in enumerate(lines)}
             with REFLECT_LOCK:
                 seen = evidence_since(proj)
-            out = fc_models.jev_ask(env, cfg, {"destination": map_section(desc, "Destination"), "evidence": seen}, questions, "Jev reflect")
+            aim = map_section(desc, "Destination") or map_section(desc, "Intent")  # a brainstormed design states its aim as Intent
+            out = fc_models.jev_ask(env, cfg, {"destination": aim, "evidence": seen}, questions, "Jev reflect")
             for i, l in enumerate(lines):
                 a = out.get("answers", {}).get(f"d{i}") or {}
                 p = a.get("probabilities", {})
@@ -94,48 +95,161 @@ def reflect(proj, trigger, evidence, against=()):
     while True:  # claim the name: another process screening in the same second never overwrites this one
         path = proj / "results" / f"reflect-{stamp}-{n:02d}.json"
         try:
-            with open(path, "x") as f:
-                f.write(fc_core.scrub(json.dumps(rec, indent=2)))
+            tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+            fc_core.atomic_write(tmp, fc_core.scrub(json.dumps(rec, indent=2)))
+            try:
+                os.link(tmp, path)  # whole or absent, and the name claimed: another process in the same second never overwrites this one
+            finally:
+                tmp.unlink(missing_ok=True)
             return path, rec
         except FileExistsError:
             n += 1
 
-def cmd_hold(a):
-    """Hold tasks back from dispatch while the plan they rest on is in question, or release them. A running task finishes;
-    one the run is still preparing goes back to pending before its first turn (fc_implement.run_task)."""
-    proj = fc_core.project_dir(a)
+TECH_DOC_RE = re.compile(r"^(\S+): tech doc$")
+DECISION_ID = re.compile(r"[A-Z]{1,3}-?\d+\b")
+
+def rests_on(proj, refs):
+    """{unfinished task id: why} for the tasks that rest on a changed story, tech doc, decision or the newest reflect: an issue id
+    (the task is it, or sits under it), a tech doc title (its story), the feature (every task), a decision id (the briefs citing it,
+    every task when none does), `reflect` (the decision ids its newest file flagged). A task after an affected one is affected too."""
+    cache = fc_tasks.linear_cache(proj)
+    tasks, issues, feature = cache["tasks"], cache.get("issues", {}), (cache.get("feature") or {}).get("id")
+    live = [m.group(0) for l in decision_lines((cache.get("feature") or {}).get("description")) if (m := DECISION_ID.match(l.lstrip("*_ ")))]
+    flagged = []
+    for path in sorted((proj / "results").glob("reflect-*.json"), reverse=True):  # the newest readable one
+        try:
+            lines = [(v.get("line") if isinstance(v, dict) else v) for v in json.loads(path.read_text()).get("flagged", [])]
+        except (OSError, ValueError):
+            continue
+        flagged = [m.group(0) for l in lines if (m := DECISION_ID.match(l.lstrip("*_ ")))]
+        break
+    found = {}
+    def add(m, why):
+        found.setdefault(m["id"], why)
+    def parents(issue_id):
+        seen = set()
+        while issue_id and issue_id not in seen:  # a parentId cycle ends
+            seen.add(issue_id)
+            yield issue_id
+            issue_id = (issues.get(issue_id) or {}).get("parentId")
+    for ref in [d for r in refs for d in (flagged if r == "reflect" else [r])]:
+        ref = (TECH_DOC_RE.match(ref) or [None, ref])[1]
+        if ref == feature:
+            for m in tasks:
+                add(m, f"under {ref}")
+        elif ref in issues:
+            for m in tasks:
+                if m.get("linear") == ref:
+                    add(m, f"is {ref}")
+                elif ref in parents((issues.get(m.get("linear")) or {}).get("parentId")):
+                    add(m, f"under {ref}")
+        elif ref in live or ref in flagged:
+            cited = [m for m in tasks if re.search(rf"(?<![\w-]){re.escape(ref)}(?![\w-])", m.get("body", ""))]
+            for m in cited or tasks:
+                add(m, f"cites {ref}" if cited else f"{ref} cited by no brief")
+    for _ in tasks:  # a task after an affected task is affected
+        for m in tasks:
+            for dep in filter(None, m.get("after", "").split(",")):
+                if dep in found:
+                    add(m, f"after {dep}")
+    def done(m):  # its result file, read once; a missing or corrupt one is not finished
+        try:
+            return json.loads((proj / "results" / f"{m['id']}.json").read_text()).get("status") in fc_tasks.FINISHED
+        except (OSError, ValueError):
+            return False
+    return {m["id"]: found[m["id"]] for m in tasks if m["id"] in found and not done(m) and (m.get("linear_state") or "").lower() not in fc_tasks.CANCELED}
+
+TEAMMATE_PAUSE = "Paused: {reason}. Stop now, keep what you wrote, and wait for the next prompt."
+TEAMMATE_RELEASE = "Released: carry on. Read your brief again first, it may have changed: compose linear get {issue} --body."
+
+def steer_teammate(proj, tid, text, release=False):
+    """Interrupt the task's live test teammate and send it `text`; False when there is none (or outside herdr) or, unless it is
+    a `release`, when its turn is over. A release only prompts: the teammate the pause stopped is idle (`done`), waiting for it."""
+    agent = fc_herdr.agent_name(proj.name, f"tests-{tid}")
+    got = fc_herdr.herdr("agent", "get", agent)
+    if got is None or (not release and (got.get("agent") or {}).get("agent_status") == "done"):
+        return False
+    if not release:
+        fc_herdr.herdr("agent", "send-keys", agent, "esc")
+    return fc_herdr.herdr("agent", "prompt", agent, text) is not None
+
+def save_hold(proj, hold):
+    """hold.json, written whole: a run re-reading mid-write never sees a torn file, and two holds never share a temp name."""
+    tmp = proj / "results" / f"hold.json.{os.getpid()}.{threading.get_ident()}.tmp"
+    fc_core.atomic_write(tmp, json.dumps(hold, indent=2))
+    os.replace(tmp, proj / "results" / "hold.json")
+
+def hold_tasks(proj, ids, reason):
+    """Hold the tasks, pausing a running one and its live test teammate; returns the lines to print."""
     tasks = {m["id"]: m for m in fc_tasks.load_tasks(proj, required=True)}
-    hold = fc_tasks.held(proj)
-    def save():
-        tmp = proj / "results" / "hold.json.tmp"
-        fc_core.atomic_write(tmp, json.dumps(hold, indent=2))
-        os.replace(tmp, proj / "results" / "hold.json")  # atomic: a run re-reading mid-write never sees a torn file
+    hold, placed, lines = fc_tasks.held(proj), [], []
+    for tid in ids:
+        if tid not in tasks:
+            lines.append(f"{tid}: no such task (run `compose sync` if it is new on Linear)")
+            continue
+        paused = {"teammate": True} if (hold.get(tid) or {}).get("teammate") else {}  # a re-hold keeps the teammate an earlier hold paused
+        hold[tid] = {**paused, "reason": reason, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+        placed.append(tid)
+    save_hold(proj, hold)  # before reading `running`: run_task writes `running` before it reads the holds
+    steered = []
+    for tid in placed:
+        res = proj / "results" / f"{tid}.json"
+        status = json.loads(res.read_text()).get("status") if res.exists() else None
+        late = "; it is running now: the run pauses it within seconds and keeps its work" if status == "running" and fc_tasks.run_alive(proj) else ""
+        # an unproven fix's tests-<id> is its regression writer, which the hold leaves to finish its proof
+        if status != "unproven" and steer_teammate(proj, tid, TEAMMATE_PAUSE.format(reason=reason)):
+            steered.append(tid)  # the release prompts exactly the teammates a hold paused
+            late += "; its test teammate is paused"
+        lines.append(f"{tid} held  {reason}{late}")
+        fc_linear.linear_note(tasks[tid], f"Held: {reason}{late}")
+    if steered:  # read again: a hold or release that landed during the herdr calls stands, and only the flags are added
+        hold = fc_tasks.held(proj)
+        for tid in [t for t in steered if t in hold]:
+            hold[tid]["teammate"] = True
+        save_hold(proj, hold)
+    return lines
+
+def false_alarm(proj, tid):
+    """Mark a paused task released with no change open: it keeps all its work, and no change waits on its settle."""
+    res = proj / "results" / f"{tid}.json"
+    try:
+        data = json.loads(res.read_text())
+    except (OSError, ValueError):
+        return
+    if data.get("status") == "paused" and isinstance(data.get("paused"), dict) and not data["paused"].get("choice"):
+        data["paused"]["released"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        fc_core.atomic_write(res, json.dumps(data, indent=2))
+
+def cmd_hold(a):
+    """Hold tasks back from dispatch while the plan they rest on is in question, or release them. A running task is paused
+    (its work kept on a ref) and goes back to pending; one the run is still preparing goes back to pending before its first turn (fc_implement.run_task).
+    A live test teammate is paused too. `--rests-on` holds what rests on a changed story, tech doc, decision or the newest reflect."""
+    proj = fc_core.project_dir(a)
     if a.release:
+        tasks = {m["id"]: m for m in fc_tasks.load_tasks(proj, required=True)}
+        hold, no_change = fc_tasks.held(proj), not open_change(proj)
         for tid in (list(hold) if a.release == "all" else [x.strip() for x in a.release.split(",") if x.strip()]):
-            if hold.pop(tid, None) is None:
+            entry = hold.pop(tid, None)
+            if entry is None:
                 print(f"{tid} was not held")
                 continue
             print(f"{tid} released")
+            if entry.get("teammate"):  # only a teammate this hold paused: one that started since is mid-turn and left alone
+                steer_teammate(proj, tid, TEAMMATE_RELEASE.format(issue=(tasks.get(tid) or {}).get("linear", tid)), release=True)
+            if no_change:
+                false_alarm(proj, tid)
             fc_linear.linear_note(tasks.get(tid), "Released")
-        save()
-    else:
-        if not a.only or not a.reason:
-            sys.exit('hold needs --only <ids> and --reason "<one line>", or --release <ids|all>')
-        placed = []
-        for tid in [x.strip() for x in a.only.split(",") if x.strip()]:
-            if tid not in tasks:
-                print(f"{tid}: no such task (run `compose sync` if it is new on Linear)")
-                continue
-            hold[tid] = {"reason": a.reason, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
-            placed.append(tid)
-        save()  # before reading `running`: run_task writes `running` before it reads the holds, so one of the two sees the other
-        for tid in placed:
-            res = proj / "results" / f"{tid}.json"
-            running = res.exists() and json.loads(res.read_text()).get("status") == "running" and fc_tasks.run_alive(proj)
-            late = "; it is running now: the hold applies to its next start" if running else ""
-            print(f"{tid} held  {a.reason}{late}")
-            fc_linear.linear_note(tasks[tid], f"Held: {a.reason}{late}")
-
+        save_hold(proj, hold)
+        return
+    if not (a.only or a.rests_on) or not a.reason:
+        sys.exit('hold needs --only <ids> or --rests-on <refs>, with --reason "<one line>", or --release <ids|all>')
+    ids = [x.strip() for x in (a.only or "").split(",") if x.strip()]
+    for ref in [x.strip() for x in (a.rests_on or "").split(",") if x.strip()]:
+        found = rests_on(proj, [ref])
+        print(f"rests on {ref}: " + ", ".join(f"{t} ({w})" for t, w in found.items()) if found else f"rests on nothing: {ref}")
+        ids += [t for t in found if t not in ids]
+    for line in hold_tasks(proj, ids, a.reason):
+        print(line)
 
 CHANGE_SYNC_MAX = 300  # seconds: a change of course is read from the last sync, so that sync must be this fresh
 CHANGE_CONTENT = ("title", "description", "blockedBy")  # what a change of course edits; status moves are the run's own
@@ -227,6 +341,10 @@ def change_comment(rec):
     parts = ([f"Superseded: {'; '.join(d['superseded'])}."] if d["superseded"] else []) + \
             [f"{name} {', '.join(issue_label(i, issues.get(i)) for i in d[key])}."
              for name, key in (("Canceled", "canceled"), ("New", "new"), ("Edited", "edited")) if d[key]]
+    if rec.get("settled"):
+        words = {"keep": "kept", "part": "part", "discard": "discarded"}
+        parts.append("Paused work: " + ", ".join(f"{t} {words[s['choice']]}" + (f" ({', '.join(s['keep'])})" if s["choice"] == "part" else "")
+                                                for t, s in sorted(rec["settled"].items())) + ".")
     return f"{rec['id']}: {rec['why']}. {' '.join(parts) or 'No changes: the plan stays as it was.'} Evidence: {rec.get('reflect') or 'none recorded'}."
 
 def change_start(a, proj, repo):
@@ -240,6 +358,13 @@ def change_done(a, proj, repo):
     if not cid:
         sys.exit('no change is open; `compose change start --why "<one line>"` opens one')
     rec, cache = load_change(proj, cid), fc_tasks.linear_cache(proj)
+    # a block that already carries a choice was settled by an earlier change: it waits for its next run, not for this change
+    # a task released with no change open was a false alarm: it keeps all, unless a hold placed since asks again
+    held = fc_tasks.held(proj)
+    open_ids = sorted(t for t, b in paused_tasks(proj).items() if not b.get("choice") and t not in rec.get("settled", {})
+                      and not (b.get("released") and t not in held))
+    if open_ids:
+        sys.exit(f"paused and not settled: {', '.join(open_ids)}: compose change keep|part|discard <id>")
     if (cache.get("synced_at") or "") <= rec["started_at"]:
         sys.exit(f"sync after your Linear edits: {cid} is read from a sync newer than its start ({rec['started_at']})")
     rec["after"] = {"feature": cache["feature"], "issues": cache.get("issues", {})}
@@ -300,6 +425,7 @@ def change_undo(a, proj, repo):
             if tid in rec.get("results", {}):
                 fc_core.atomic_write((proj / "results" / f"{tid}.json"), json.dumps(rec["results"][tid], indent=2))
             reset.append(tid)
+    unsettle(proj, rec, a.id)
     if reset:
         fc_core.say(f"{cid} reset {', '.join(reset)} to their tips from before {a.id}")
         try:
@@ -327,12 +453,72 @@ def change_undo(a, proj, repo):
             print(f"  {ident}: {json.dumps(fields)}")
     print(f"{cid} open: undo {a.id}. Sync, then `compose change done`.")
 
+def paused_tasks(proj):
+    """{task id: its result's `paused` block} for the results whose status is `paused`; an unreadable result is skipped."""
+    found = {}
+    for f in sorted((proj / "results").glob("*.json")):
+        try:
+            data = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get("status") == "paused" and isinstance(data.get("paused"), dict):
+            found[f.stem] = data["paused"]
+    return found
+
+SETTLE_KEYS = ("choice", "keep", "change")
+
+def settle(proj, tid, choice, files=()):
+    """Decide what the open change does with a paused task's kept work: `keep` all of it, `part` of it (`files`), or `discard`
+    it (it stays on its ref). Recorded on the change and in the result's `paused` block, where the task's next run reads it."""
+    cid = open_change(proj)
+    if not cid:
+        sys.exit('no change is open; `compose change start --why "<one line>"` opens one')
+    res = proj / "results" / f"{tid}.json"
+    block = paused_tasks(proj).get(tid)
+    if not block:
+        sys.exit(f"{tid} is not paused: only paused work is settled")
+    if choice == "part":
+        stray = [f for f in files if f not in block["files"]]
+        if stray or not files:
+            sys.exit(f"{tid} paused with {', '.join(block['files'])}; {', '.join(stray) or 'no file'} is not among them")
+    keep = list(block["files"]) if choice == "keep" else list(files) if choice == "part" else []
+    rec = load_change(proj, cid)
+    original = {k: v for k, v in block.items() if k not in SETTLE_KEYS}
+    data = json.loads(res.read_text())  # the result first: the rerun reads the choice there, and a crash before the record never keeps a discard
+    data["paused"] = {**original, "choice": choice, "keep": keep, "change": cid}
+    fc_core.atomic_write(res, json.dumps(data, indent=2))
+    rec.setdefault("settled", {})[tid] = {"choice": choice, "keep": keep, "paused": original}
+    write_change(proj, rec)
+    return f"{tid} {choice}  " + {"keep": f"{len(keep)} files", "part": ", ".join(keep),
+                                   "discard": f"its work stays on {block['ref']} until clean"}[choice]
+
+def unsettle(proj, rec, undone):
+    """Put the paused blocks a change settled back as they were, in a result still paused under that change; a task that
+    has run or paused again since keeps its result, and the line says its work stays on the ref."""
+    for tid, s in sorted(rec.get("settled", {}).items()):
+        res = proj / "results" / f"{tid}.json"
+        try:
+            data = json.loads(res.read_text())
+        except (OSError, ValueError):
+            data = {}
+        if data.get("status") == "paused" and (data.get("paused") or {}).get("change") == undone:
+            data["paused"] = dict(s["paused"])
+            fc_core.atomic_write(res, json.dumps(data, indent=2))
+        else:
+            print(f"{tid} ran since {undone}; its paused work stays on {s['paused']['ref']}")
+
 def cmd_change(a):
     """A change of course as one recorded unit: `start` snapshots Linear as last synced, `done` records what changed and why on
     the feature, `undo C<n>` puts back what C<n> touched, as a new change."""
     proj = fc_core.project_dir(a); repo = Path(a.repo).resolve()
     if a.action == "undo" and not a.id:
         sys.exit("usage: compose change undo C<n>")
+    if a.action in ("keep", "part", "discard"):
+        files = tuple(f.strip() for f in (a.files or "").split(",") if f.strip())
+        if not a.id or (a.action == "part") != bool(files):
+            sys.exit(f"usage: compose change {a.action} <task id>" + (" --files a,b" if a.action == "part" else " (no --files: only part takes them)"))
+        print(settle(proj, a.id, a.action, files))
+        return
     {"start": change_start, "done": change_done, "undo": change_undo}[a.action](a, proj, repo)
 
 def cmd_reflect(a):
@@ -354,6 +540,11 @@ def cmd_reflect(a):
     for v in rec["verdicts"]:
         print(f"  {v['choice'] or '?':8} broken {v['p_broken']:.2f} unclear {v['p_unclear']:.2f}  {v['line']}")
     print(f"reflect {path}  " + (f"error: {rec['error']}" if rec.get("error") else f"flagged {len(rec['flagged'])} of {len(rec['verdicts'])}"))
+    for v in rec["flagged"]:  # what each flagged decision's change would hold: the team lead confirms, then `compose hold --rests-on`
+        if m := DECISION_ID.match(v["line"].lstrip("*_ ")):
+            found = rests_on(proj, [m.group(0)])
+            if found:
+                print(f"rests on {m.group(0)}: " + ", ".join(f"{t} ({w})" for t, w in found.items()))
 
 def reflect_counts(rec):
     """(broken, unclear) among a screen's flagged lines; BROKEN wins when both pass the threshold."""

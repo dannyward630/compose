@@ -8,7 +8,8 @@ import fc_core, fc_tasks, fc_linear, fc_linear_cmd, fc_plan, fc_herdr, fc_change
 OPEN, DECIDED = "Not yet specified", "Decisions so far"
 UNCONFIRMED = "({mode} recommendation, unconfirmed, {date})"  # the tag on a line the engineering manager decided for the product owner
 CONFIRMED = '(product owner, {date}; said: "{quote}")'       # the tag on a line the product owner decided, their words attached
-ANSWER = re.compile(rf"^\s*({fc_ask.CARD_ID})\s*[:=.]\s*(.+?)\s*$")  # `Q1: A`, `Q2: B, but keep the old route`
+ANSWER = re.compile(rf"^\s*({fc_ask.CARD_ID}|D\d+)(?:\s*[:=.]\s*(.+?))?\s*$")  # `Q1: A`, `Q2: B, but keep the old route`; a bare `Q3` or `D2` confirms the line already recorded
+TAG = re.compile(r"\s*\([^()]*\)\s*$")  # the tag a decision line ends with
 KEEP = re.compile(r"^keep\b", re.I)  # a change-of-course option that leaves the superseded line standing
 
 def map_issue(proj, a):
@@ -85,12 +86,12 @@ def cmd_decisions(a):
 
 # ---------- `compose decide`: a decision lands on the map only with the product owner's words, or tagged unconfirmed under away/yolo ----------
 def parse_answers(words):
-    """`Q1: A` pairs -> [(card id, answer)]; a word that is not one is refused."""
+    """`Q1: A` pairs -> [(card id, answer)], the answer None for a bare id; a word that is neither is refused."""
     out = []
     for w in words:
         m = ANSWER.match(w)
         if not m:
-            sys.exit(f'not recorded: {w!r} is not an answer; write each as "<card id>: <letter or answer>", e.g. "Q1: A"')
+            sys.exit(f'not recorded: {w!r} is not an answer; write each as "<card id>: <letter or answer>", e.g. "Q1: A", or a bare id to confirm a recorded line')
         out.append((m.group(1), m.group(2)))
     return out
 
@@ -122,11 +123,21 @@ def record(body, answers, tag, change=None):
     live = lambda: {m.group(1): i for i, m in enumerate(map(fc_change.LIST_ITEM.match, dec)) if m and "~~" not in m.group(1)}
     out = []
     for cid, answer in answers:
-        if cid not in cards:
-            sys.exit(f"not recorded: no card {cid} under Not yet specified; the open cards are {', '.join(cards) or 'none'}")
+        old = decided_line(body, cid)
+        if cid not in cards or answer is None:
+            if not old and cid in cards:
+                sys.exit(f"not recorded: {cid} is an open card with no answer recorded; give one, e.g. \"{cid}: A\"")
+            if not old:
+                sys.exit(f"not recorded: no card {cid} under Not yet specified; the open cards are {', '.join(cards) or 'none'}")
+            if "unconfirmed" not in old:
+                sys.exit(f"not recorded: {cid} is already decided ({old}); a change of a decision goes through `compose change start`")
+            kept = TAG.sub("", re.sub(rf"^[\s*_`(\[]*{re.escape(cid)}[\s*_`)\]]*[:=.]?\s*", "", old))
+            line = f"{cid}: {answer if answer is not None else kept} {tag}"
+            dec[live()[old]] = f"- {line}"
+            out.append(line)
+            continue
         text = answer_text(cid, cards[cid], answer)
         line = f"{cid}: {text} {tag}"
-        old = decided_line(body, cid)
         if old and "unconfirmed" not in old:
             sys.exit(f"not recorded: {cid} is already decided ({old}); a change of a decision goes through `compose change start`")
         if old:
@@ -142,6 +153,24 @@ def record(body, answers, tag, change=None):
     body = fc_plan.replace_section(body, heading_line(body, DECIDED), "\n".join(dec))
     return body, out
 
+def replace_decision(body, old_id, new_id):
+    """The map with the live Decisions so far line `old_id` heads struck through, `~~<old text and tag>~~ (replaced by <new_id>)`."""
+    old = decided_line(body, old_id)
+    dec = fc_change.map_section(body, DECIDED).splitlines()
+    for i, m in enumerate(map(fc_change.LIST_ITEM.match, dec)):
+        if m and m.group(1) == old:
+            dec[i] = f"- ~~{old}~~ (replaced by {new_id})"
+    return fc_plan.replace_section(body, heading_line(body, DECIDED), "\n".join(dec))
+
+def record_new(body, texts, tag):
+    """The map with one `- D<n>: <text> <tag>` line appended under Decisions so far per text, for decisions reached in conversation that
+    no card asked; <n> runs on from the highest D id the section holds, struck lines included. Returns (body, the lines written)."""
+    dec = fc_change.map_section(body, DECIDED).splitlines()
+    top = max((int(n) for n in re.findall(r"^\s*- (?:~~)?D(\d+)\b", "\n".join(dec), re.M)), default=0)
+    lines = [f"D{top + i}: {' '.join(t.split())} {tag}" for i, t in enumerate(texts, 1)]
+    dec = [l for l in dec if l.strip()] + [f"- {l}" for l in lines]
+    return fc_plan.replace_section(body, heading_line(body, DECIDED), "\n".join(dec)), lines
+
 def cmd_decide(a):
     """Record the product owner's answers on the map, their words attached (`--quote`), and tell the team lead. Without --quote it
     refuses, unless away or yolo is on: then the recommendation lands tagged unconfirmed and is logged for the digest. With
@@ -152,10 +181,26 @@ def cmd_decide(a):
     if not quote and not posture:
         sys.exit('not recorded: a decision is recorded only with the product owner\'s words: add --quote "<their message, verbatim>". '
                  "While away or yolo is on, `compose decide` without --quote records the recommendation as unconfirmed.")
-    if not a.answers and not a.accept_all:
-        sys.exit('decide needs answers ("Q1: A" ...) or --accept-all')
+    news = [t for t in (getattr(a, "new", None) or []) if t.strip()]
+    replaces = getattr(a, "replaces", None)
+    if replaces and (len(news) != 1 or not re.fullmatch(r"D\d+", replaces)):
+        sys.exit("not recorded: --replaces D<n> goes with exactly one --new \"<decision>\" that takes its place")
+    if not a.answers and not a.accept_all and not news:
+        sys.exit('decide needs answers ("Q1: A" ...), --new, or --accept-all')
     issue = map_issue(proj, a)
     lid, ident, body = read_map(issue)
+    if replaces:
+        old = decided_line(body, replaces)
+        if not old:
+            sys.exit(f"not recorded: {replaces} is not a live decision on {ident}; --replaces names a D line that is not struck through")
+        if getattr(a, "change", None):
+            sys.exit("not recorded: --replaces does not go with --change; a change of course strikes through the card's Supersedes: line")
+        if [c for c in fc_linear.linear_children(ident) if ((c.get("state") or {}).get("name") or "").lower() not in fc_tasks.CANCELED]:
+            sys.exit(f"not recorded: {ident} already has stories or tasks, so {replaces} changes through a change of course: compose change start")
+        if not quote and "unconfirmed" not in old:
+            sys.exit(f'not recorded: {replaces} is confirmed; replacing it needs the product owner\'s words: add --quote "<their message, verbatim>"')
+    if not quote and any(ans is None for _, ans in parse_answers(a.answers or [])):
+        sys.exit('not recorded: confirming a recorded decision needs the product owner\'s words: add --quote "<their message, verbatim>"')
     cards = fc_ask.cards_in(fc_change.map_section(body, OPEN))
     answers = parse_answers(a.answers or [])
     if a.accept_all:
@@ -164,14 +209,19 @@ def cmd_decide(a):
         if missing:
             sys.exit(f"not recorded: --accept-all needs a recommendation on every open card; {', '.join(missing)} carry none")
         answers += [(cid, c["recommendation"]) for cid, c in cards.items() if cid not in given]
-    if not answers:
+    if not answers and not news:
         sys.exit(f"nothing to record: Not yet specified on {ident} is empty")
     date = time.strftime("%Y-%m-%d")
     tag = CONFIRMED.format(date=date, quote=quote.replace('"', "'")) if quote else UNCONFIRMED.format(mode=posture["mode"], date=date)
     change = getattr(a, "change", None)
     if change:
         tag = f"({change}; " + tag[1:]
-    new_body, lines = record(body, answers, tag, change)
+    new_body, lines = record(body, answers, tag, change) if answers else (body, [])
+    if news:
+        new_body, added = record_new(new_body, news, tag)
+        lines += added
+        if replaces:
+            new_body = replace_decision(new_body, replaces, added[0].split(":")[0])
     fc_linear.linear_gql("mutation($id: String!, $in: IssueUpdateInput!) { issueUpdate(id: $id, input: $in) { success } }", {"id": lid, "in": {"description": new_body}})
     fc_linear_cmd.await_write(lambda: fc_linear.linear_gql("query($id: String!) { issue(id: $id) { description } }", {"id": lid})["issue"]["description"], body, new_body)
     if posture and not quote:
@@ -179,10 +229,13 @@ def cmd_decide(a):
         fc_core.atomic_write(proj / "results" / "yolo.json", json.dumps(posture, indent=2))
     for l in lines:
         print(f"recorded on {ident}: {l}")
-    left = len(cards) - len(answers)
-    print(f"{left} card(s) still open on {ident}" if left else f"Not yet specified on {ident} is empty")
+    left = len(cards) - len([cid for cid, ans in answers if cid in cards and ans is not None])
+    if answers:  # only a card answer moves cards; a --new decision alone leaves them as they were
+        print(f"{left} card(s) still open on {ident}" if left else f"Not yet specified on {ident} is empty")
     lead = fc_herdr.agent_name(proj.name, "orchestrator")
-    note = f"decided on {ident}: {', '.join(cid for cid, _ in answers)}; read the map's Decisions so far and continue (tell the architect, if one is live)"
+    ids = ", ".join([cid for cid, _ in answers] + [l.split(":")[0] for l in lines[len(answers):]])
+    note = (f"recorded on {ident}: {ids}; read Decisions so far. While shaping, wait for `shaped <id>`; a `stories <id> approved` line is "
+            "the planner's go (tell the planner, or the change architect, if live)")
     if fc_herdr.herdr_env() and fc_herdr.herdr("agent", "prompt", lead, note) is not None:
         print(f"told {lead}")
     else:

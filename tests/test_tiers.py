@@ -46,6 +46,9 @@ class Tiers(unittest.TestCase):
         self.assertEqual([T.start_tier(d) for d in ("DEEP", "STANDARD", "FAST")], ["standard", "cheap", "cheap"])
         self.assertEqual(T.start_tier("DEEP", "no-frontier"), "standard")
 
+    def test_builder_check_is_frontier(self):
+        self.assertEqual(T.ceiling("builder-check"), "frontier")
+
     def test_chain_is_a_ceiling(self):
         h, s, o, p = (HAIKU, None), (SONNET, None), (OPUS, "high"), ("pi:a/b", None)
         self.assertEqual(T.chain("standard", [h, s, o]), [h, s])
